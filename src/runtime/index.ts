@@ -9,6 +9,7 @@ export { abi, denySet, type Kind, type ProfileTask, profile, shim } from "./land
 export * as sessionNet from "./session-net.ts";
 export { dispatcherModule, exitHooks, wake } from "./dispatcher.ts";
 export * as tasks from "./tasks.ts";
+export * as vm from "./vm.ts";
 export { net };
 
 /** Logs the Landlock ABI once, takes the proxy ports from config; outside HORTUS_NO_NET flushes stale rules, taps and addresses and sets up hortus0. */

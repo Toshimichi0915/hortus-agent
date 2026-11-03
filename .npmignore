@@ -1,0 +1,8 @@
+node_modules/
+src/
+docs/
+images/
+.claude/
+*.tsbuildinfo
+dist/**/*.test.js
+dist/**/*.test.d.ts
