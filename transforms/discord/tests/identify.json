@@ -1,0 +1,16 @@
+{
+  "request": {
+    "method": "WS",
+    "url": "https://gateway.discord.gg/?v=10&encoding=json",
+    "headers": {},
+    "body": "{\"op\":2,\"d\":{\"token\":\"hortus-secret-discord\",\"intents\":1}}",
+    "stream": false
+  },
+  "template": {
+    "method": "WS",
+    "url": "https://gateway.discord.gg/?v=10&encoding=json",
+    "headers": {},
+    "body": "{\"op\":2,\"d\":{\"token\":\"{secret:discord}\",\"intents\":1}}",
+    "stream": false
+  }
+}

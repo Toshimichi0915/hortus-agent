@@ -1,0 +1,7 @@
+{
+  "name": "telegram",
+  "credentials": {
+    "telegram": { "type": "token", "hosts": ["api.telegram.org"], "locations": ["path:/bot{}/"] }
+  },
+  "consequential": ["POST api.telegram.org/bot*/deleteMessage", "POST api.telegram.org/bot*/leaveChat"]
+}

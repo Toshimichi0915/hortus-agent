@@ -1,0 +1,11 @@
+{
+  "name": "discord",
+  "credentials": {
+    "discord": {
+      "type": "token",
+      "hosts": ["discord.com", "gateway.discord.gg"],
+      "locations": ["header:Authorization", "ws:text"]
+    }
+  },
+  "consequential": ["DELETE discord.com/api/**"]
+}
