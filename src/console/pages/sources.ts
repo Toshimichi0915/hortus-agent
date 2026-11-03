@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { PlannerStatus } from "../../planner/planner.ts";
 import type { ConnectorStatus } from "../../types.ts";
 import { button, error, h, layout, type Page, time, tryCall } from "../html.ts";
 
@@ -62,10 +63,17 @@ export const sources: Page = async (ctx) => {
   );
   const tf = await tryCall<{ notes: string[] }>("transforms.status", {});
   const tfNotes = tf.ok ? tf.value.notes.map((n) => h`<p class="error">${n}</p>`) : [];
+  const ps = await tryCall<PlannerStatus>("planner.status", {});
+  const p = ps.ok ? ps.value : undefined;
+  const planner = !p
+    ? ""
+    : h`<section class="source" id="planner"><h2>Planner</h2><p>last batch ${time(p.last)} · events routed today ${String(
+        p.routed,
+      )} · tokens today ${p.tokens.toLocaleString("en")} / ${p.cap.toLocaleString("en")}${p.tokens >= p.cap ? " (cap reached: batches skipped)" : ""}</p></section>`;
   return layout(
     ctx,
     "sources",
     "Sources",
-    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${tfNotes}${rows.length ? rows : h`<p class="empty">no sources</p>`}</div>`,
+    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${tfNotes}${planner}${rows.length ? rows : h`<p class="empty">no sources</p>`}</div>`,
   );
 };

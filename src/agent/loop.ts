@@ -226,7 +226,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
         "budget_exceeded",
         `budget exceeded: ${tokens}/${task.budget.tokens} tokens, ${hours().toFixed(2)}/${task.budget.hours} hours`,
       );
-    if (end === "stop" || emptyDone) return 0;
+    // a Planner batch has no summary: its verdicts were RPCs and its final text is discarded
+    if (end === "stop" || emptyDone || task.kind === "planner") return 0;
     try {
       await summarize(agent, task, session.getState().messages, join(dir, "out", "summary.md"));
     } catch (e) {

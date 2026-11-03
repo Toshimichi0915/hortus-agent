@@ -16,14 +16,15 @@ import { now } from "../db.ts";
 import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
-import type { OutboxMsg, StdoutLine, TaskKind } from "../types.ts";
+import type { Config } from "../config.ts";
+import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
 import { type Child, type Exit, agentCmd, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
 import { missingImage, startVm } from "./vm.ts";
 
-/** Per kind: the Landlock profile and whether every stdout line is a chat reply. */
+/** Per kind: the Landlock profile and whether every stdout line is a chat reply. `planner` runs through runPlanner. */
 const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
   chat: { profile: "chat", chat: true },
   unattended: { profile: "unattended", chat: false },
@@ -31,7 +32,8 @@ const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
   planner: { profile: "unattended", chat: false },
 };
 
-/** Called after an exit that produced a `result` (step 4 wakes the Planner for non-chat tasks; 3c closes empty runs). */
+/** Called after an exit that produced a `result` or `budget_exceeded` (step 4 wakes the Planner for non-chat tasks; 3c
+ * closes empty runs). */
 export const exitHooks = {
   onResult(_task: tasks.TaskRow, _msg: OutboxMsg): void {},
   /** After every session exit with the fresh row and the new outbox messages (3c: a run's accounting and close). */
@@ -78,7 +80,7 @@ function tick(): void {
   try {
     if (existsSync(paths.paused())) return;
     const rows = db()
-      .prepare("SELECT * FROM tasks WHERE status = 'queued' ORDER BY updated")
+      .prepare("SELECT * FROM tasks WHERE status = 'queued' AND kind != 'planner' ORDER BY updated")
       .all() as unknown as tasks.TaskRow[];
     let vms = [...running.values()].filter((r) => r.vm).length;
     for (const row of rows) {
@@ -360,7 +362,50 @@ async function finish(
       } catch (e) {
         log().error("exit hook failed", e, { task: id });
       }
-  for (const m of msgs) if (m.type === "result") exitHooks.onResult(tasks.get(id), m);
+  for (const m of msgs) if (m.type !== "reply") exitHooks.onResult(tasks.get(id), m);
+}
+
+/** Where a Planner batch runs (`planner.runtime`, 15-planner.md); a Worker VM (3g) is the same `vm` row. */
+const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => void) => Promise<Child>> = {
+  host: async (task, onStdout) => {
+    const env = await loopbackLink(task.id, "planner");
+    env.PATH = `${join(paths.ctl(task.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
+    const c = ctx?.config as Config;
+    return spawnSandboxed({
+      task,
+      kind: KINDS.planner.profile,
+      cmd: agentCmd(task.id),
+      cwd: task.paths.work,
+      env,
+      config: c,
+      onStdout,
+    });
+  },
+  vm: (task) => startVm({ task, config: ctx?.config as Config, deadlineMs: task.budget.hours * 3.6e6 }),
+};
+
+/**
+ * One Planner batch: `row` (kind planner, inserted `running` by the planner module, which deletes it and its directory
+ * afterwards) runs to its exit as role `planner`; returns the tokens its session used. Stdout goes to console.log only.
+ */
+export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "host" | "vm"): Promise<number> {
+  if (!ctx || stopping) throw new Error("dispatcher not started");
+  tasks.prepare(ctx.config, task);
+  const consoleLog = join(paths.out(row.id), "console.log");
+  let release = () => {};
+  const entry: Running = { vm: runtime === "vm", done: new Promise<void>((r) => (release = r)) };
+  running.set(row.id, entry);
+  try {
+    entry.child = await RUNTIMES[runtime](task, (l) => void appendFile(consoleLog, `${l}\n`).catch(() => {}));
+    const exit = await entry.child.wait();
+    const { tokens } = scan(join(paths.out(row.id), "sessions"));
+    log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
+    return tokens;
+  } finally {
+    releaseLinks(row.id);
+    running.delete(row.id);
+    release();
+  }
 }
 
 export const dispatcherModule: Module = {

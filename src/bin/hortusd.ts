@@ -9,19 +9,22 @@ import { logger } from "../log.ts";
 import { RpcError } from "../types.ts";
 import * as paths from "../paths.ts";
 import { browserModule } from "../browser/login-view.ts";
-import { consoleModule } from "../console/index.ts";
-import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
+import { consoleModule, consoleUrl } from "../console/index.ts";
+import { gatewayModule, ownerDm, wireGateway } from "../gateway/gateway.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
 import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
-import { cgroup, dispatcherModule, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
+import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
+import "../planner/tools.ts";
+import { cgroup, dispatcherModule, exitHooks, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
 import { schedulesModule } from "../schedules/schedules.ts";
 import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
  * then the transforms DOF (ship, then load the enabled rows from its worktree: needs the mirror's commit) before the
  * proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
- * sessions) once the proxy and links are up; the schedules tick after it (3c); the console last. */
+ * sessions) once the proxy and links are up; the schedules tick and the Planner after it (its batches are dispatcher
+ * sessions); the browser (login views) and the console last. */
 const modules: Module[] = [
   mirrorModule,
   vaultModule,
@@ -31,6 +34,7 @@ const modules: Module[] = [
   gatewayModule,
   dispatcherModule,
   schedulesModule,
+  plannerModule,
   browserModule,
   consoleModule,
 ];
@@ -73,7 +77,13 @@ async function main(): Promise<void> {
     hasRef: (ref) => ctx.db.prepare("SELECT 1 FROM task_refs WHERE ref = ?").get(ref) !== undefined,
     fetch: () => coreFetch,
     ws: coreSocket,
+    // the gateway calls it only for `mirror.wake && !bot` (loop guard)
+    wake: wakePlanner,
   });
+  // a non-chat Worker's result or budget_exceeded is Planner input
+  exitHooks.onResult = (t) => {
+    if (t.kind !== "chat") wakePlanner();
+  };
   // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
   sessionNet.init({
     db: ctx.db,
@@ -85,6 +95,14 @@ async function main(): Promise<void> {
   devLink();
   // approval decisions (and later merge/rebase notes) reach the task's inbox, which re-queues a waiting task
   gateDeps.inboxWrite = (id, msg) => void tasks.inboxWrite(id, msg);
+  // owner.notify: a one-line DM per new pending approval; the bot's DM is mirrored and never wakes the Planner
+  gateDeps.notify = (text) => {
+    const dof = ctx.config.owner.notify;
+    if (!dof) return;
+    ownerDm(dof, `${text} ${consoleUrl()}/approvals`).catch((e) => log.error("owner.notify failed", e, { dof }));
+  };
+  // planner.runtime = "vm" (and 3g's Worker VMs): the proxy finds a VM by its tap address
+  vm.init({ links });
 
   const started: Module[] = [];
   let stopping = false;

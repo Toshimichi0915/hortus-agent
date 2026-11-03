@@ -6,14 +6,15 @@ import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { TaskJson } from "../types.ts";
 import { type KindPlugin, runTask } from "./loop.ts";
+import { plannerPlugin } from "./planner-plugin.ts";
 import { taskPlugin } from "./plugin.ts";
 import { readTask } from "./task.ts";
 
-/** The one place a kind picks its plugin; the planner kind (15-planner.md) adds its case here. */
+/** The one place a kind picks its plugin. */
 export function pluginFor(task: TaskJson, dir: string): KindPlugin {
   switch (task.kind) {
     case "planner":
-      throw new Error("kind planner: the planner plugin is not implemented yet (15-planner.md)");
+      return () => plannerPlugin(task);
     default:
       return (onDone) => taskPlugin(task, dir, onDone);
   }

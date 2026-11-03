@@ -58,6 +58,9 @@ const migrations: string[] = [
   `,
   // 3h: a capture's metadata (cookie name, Domain/Path/Expires, the request host, the capturing task and role)
   "ALTER TABLE captured ADD COLUMN meta TEXT;",
+  // step 4: the Planner's batch line (Event.summary, Event.refs as JSON) and which result rows a batch has read
+  `ALTER TABLE events ADD COLUMN summary TEXT; ALTER TABLE events ADD COLUMN refs TEXT;
+  ALTER TABLE outbox ADD COLUMN consumed INTEGER DEFAULT 0;`,
 ];
 
 export function openDb(path: string): DatabaseSync {

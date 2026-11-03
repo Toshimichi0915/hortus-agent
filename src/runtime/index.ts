@@ -7,7 +7,7 @@ export * as cgroup from "./cgroup.ts";
 export { agentCmd, type Child, type Exit, type SpawnOpts, sandboxEnv, spawnSandboxed } from "./host.ts";
 export { abi, denySet, type Kind, type ProfileTask, profile, shim } from "./landlock.ts";
 export * as sessionNet from "./session-net.ts";
-export { dispatcherModule, exitHooks, wake } from "./dispatcher.ts";
+export { dispatcherModule, exitHooks, runPlanner, wake } from "./dispatcher.ts";
 export * as tasks from "./tasks.ts";
 export * as vm from "./vm.ts";
 export { net };
