@@ -325,7 +325,11 @@ const commands: Record<string, Command> = {
   },
   image: {
     usage: "image build [--no-browser]          build the Worker VM image (sudo)",
-    run: async (a) => (await import("../runtime/image.ts")).imageBuild(a),
+    run: async (a) => {
+      if (a[0] !== "build" || a.slice(1).some((x) => x !== "--no-browser"))
+        throw new Usage("usage: hortus image build [--no-browser]");
+      await (await import("../runtime/image.ts")).imageBuild(a);
+    },
   },
   install: {
     usage: "install [--ca] [--force]            install the systemd unit (and the CA system-wide)",

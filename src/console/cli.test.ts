@@ -110,6 +110,7 @@ test("hortus approvals approve: not found and already decided exit 1", async () 
   assert.equal(done.code, 1);
   assert.equal(done.err, "already decided\n");
   assert.equal((await run(["approvals", "maybe", "1"])).code, 64);
+  assert.equal((await run(["image"])).code, 64);
 });
 
 test("hortus help: stdout, exit 0; unknown command: named, usage, exit 64; <cmd> --help: its usage; sync says so", async () => {
