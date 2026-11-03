@@ -134,6 +134,30 @@ test("patch merges frontmatter, null removes, missing file is skipped", async ()
   assert.equal(existsSync(join(paths.dof("slack"), "C2/T/missing.md")), false);
 });
 
+test("recover: a stale index.lock is dropped; commits made without indexing (a crash) are indexed once", async () => {
+  await commit("rec", [msg("C1/T1/M1.md", "kept body"), msg("C1/T1/M2.md", "doomed body")], "indexed");
+  // as after a crash: two commits whose diffs never reached the index, then a git killed mid-commit
+  const repo = await import("./repo.ts");
+  const fts = await import("./fts.ts");
+  await repo.commit(null, "rec", [msg("C1/T1/M3.md", "orphanbody")], "not indexed");
+  await repo.commit(null, "rec", [{ op: "delete", path: "C1/T1/M2.md" }, msg("C1/T1/M1.md", "kept edit")], "x");
+  const lock = join(paths.dofRepo("rec"), "worktrees", "rec", "index.lock");
+  writeFileSync(lock, "");
+  await repo.recover(db, "rec");
+  assert.equal(existsSync(lock), false);
+  assert.deepEqual(
+    fts.search(db, { q: "body", in: "rec" }).map((h) => h.path),
+    ["C1/T1/M3.md"],
+  );
+  assert.deepEqual(
+    fts.search(db, { q: "kept edit", in: "rec" }).map((h) => h.path),
+    ["C1/T1/M1.md"],
+  );
+  await repo.recover(db, "rec"); // idempotent
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM search_meta WHERE dof = 'rec'").get() as { n: number }).n, 2);
+  assert.ok(await commit("rec", [msg("C1/T1/M4.md", "after")], "the lock is gone"));
+});
+
 test("path safety drops bad changes, keeps the rest", async () => {
   for (const p of ["../x.md", "/etc/x", "a/b\0c", "C1/../../m.md", "C1/a/b/m.md", ".git/config"]) {
     assert.ok(unsafe(p), p);

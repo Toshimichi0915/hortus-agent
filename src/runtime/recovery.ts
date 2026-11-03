@@ -26,7 +26,10 @@ export async function recover(c: Ctx): Promise<void> {
     else tasks.setStatus(id, "queued");
     log.info("recovered", { task: id, kind });
   }
-  const stale = c.db.prepare("SELECT address FROM links WHERE kind = 'session'").all() as { address: string }[];
+  // a VM's tap link too: its tap is gone (net.flushStale), the row would map the address to a dead task
+  const stale = c.db.prepare("SELECT address FROM links WHERE kind IN ('session', 'vm')").all() as {
+    address: string;
+  }[];
   for (const { address } of stale) links.release(address);
   let dirs: string[] = [];
   try {

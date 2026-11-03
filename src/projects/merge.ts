@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { bus } from "../console/events.ts";
+import { crashPoint } from "../crash.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
@@ -144,7 +145,19 @@ async function landNow(id: number): Promise<string | null> {
     // the checks, the ff and the update-ref on the project's sync chain: a sync in between (another task's start)
     // would carry the checkout's new main into the origin first and send this entry a rebase notice
     return await serialized(s.project, async () => {
-      if (row()?.status !== "approved") return `main moved; ${s.branch} must be rebased`;
+      const landed = () => {
+        db.prepare("UPDATE approvals SET status = 'landed', reason = NULL WHERE id = ?").run(id);
+        bus.emit("approvals", { id });
+        log.info("merge landed", { id, project: s.project, sha: s.sha });
+        tell(`merged ${s.sha}`, { landed: true, sha: s.sha });
+        mainMoved(s.project, s.sha, id);
+        return null;
+      };
+      const status = row()?.status;
+      if (status === "landed") return null; // the sync above completed a landing a crash cut short (mainMoved)
+      if (status !== "approved") return `main moved; ${s.branch} must be rebased`;
+      // a crash after the origin's update-ref, before the entry said so
+      if ((await revParse(origin, `refs/heads/${p.main}`)) === s.sha) return landed();
       const git_ = isGit(p);
       const co = resolve(p.path);
       const g = git_ ? (a: string[]) => git(["-C", co, ...a]) : (a: string[]) => inShadow(s.project, p.path, a);
@@ -161,6 +174,7 @@ async function landNow(id: number): Promise<string | null> {
       } catch (e) {
         return fail(`merge --ff-only refused: ${(e as Error).message.slice(0, 500)}`);
       }
+      crashPoint("merge.after-ff");
       try {
         await git(["--git-dir", origin, "update-ref", `refs/heads/${p.main}`, s.sha, s.main_sha]);
       } catch (e) {
@@ -168,12 +182,8 @@ async function landNow(id: number): Promise<string | null> {
         log.error("checkout moved but the origin did not", e, { id });
         return fail(`update-ref refused: ${(e as Error).message.slice(0, 500)}`);
       }
-      db.prepare("UPDATE approvals SET status = 'landed', reason = NULL WHERE id = ?").run(id);
-      bus.emit("approvals", { id });
-      log.info("merge landed", { id, project: s.project, sha: s.sha });
-      tell(`merged ${s.sha}`, { landed: true, sha: s.sha });
-      mainMoved(s.project, s.sha, id);
-      return null;
+      crashPoint("merge.after-update-ref");
+      return landed();
     });
   } catch (e) {
     return fail(e instanceof Error ? e.message.slice(0, 500) : String(e));

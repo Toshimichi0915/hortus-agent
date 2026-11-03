@@ -127,6 +127,30 @@ async function syncNow(name: string, force: boolean): Promise<{ main: string; mo
  */
 export function mainMoved(name: string, main: string, except?: number): void {
   const db = ctx().db;
+  // an approved entry for this very sha: a landing a crash cut between the checkout's ff and the origin's update-ref
+  // (this sync carried the rest); it landed, it is not "replaced"
+  const done = db
+    .prepare(
+      `UPDATE approvals SET status = 'landed', reason = NULL WHERE category = 'merge' AND status = 'approved'
+        AND json_extract(summary, '$.project') = ? AND json_extract(summary, '$.sha') = ? AND id IS NOT ?
+        RETURNING id, task_id`,
+    )
+    .all(name, main, except ?? null) as { id: number; task_id: string | null }[];
+  for (const r of done) {
+    log.info("merge landed (completed by a sync)", { id: r.id, project: name, sha: main });
+    if (r.task_id)
+      try {
+        deps.inboxWrite(r.task_id, {
+          from: "merge",
+          trusted: true,
+          text: `merged ${main}`,
+          data: { approval: r.id, landed: true, sha: main },
+        });
+      } catch (e) {
+        log.error("inbox write failed", e, { id: r.id, task: r.task_id });
+      }
+  }
+  if (done.length) bus.emit("approvals", {});
   const rows = db
     .prepare(
       `SELECT id, task_id FROM approvals WHERE category = 'merge' AND status IN ('pending', 'approved')
