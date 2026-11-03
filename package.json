@@ -1,0 +1,37 @@
+{
+  "name": "hortus-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hortus v6: hortusd (daemon, vault, proxy, console), hortus-agent (Worker/Planner), hortus (CLI), dof",
+  "type": "module",
+  "bin": {
+    "hortusd": "dist/bin/hortusd.js",
+    "hortus": "dist/bin/hortus.js",
+    "hortus-agent": "dist/bin/hortus-agent.js",
+    "dof": "dist/bin/dof.js"
+  },
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "build": "sh scripts/build.sh",
+    "test": "sh scripts/build.sh && node --test 'dist/**/*.test.js'",
+    "lint": "biome lint",
+    "format": "biome format --write"
+  },
+  "dependencies": {
+    "@hortus/core": "^1.2.0",
+    "@simplewebauthn/server": "^14.0.0",
+    "croner": "^11.0.0",
+    "quickjs-emscripten": "^0.32.0",
+    "ws": "^8.22.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "pnpm@12.16.1"
+}
