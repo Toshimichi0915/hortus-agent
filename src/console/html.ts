@@ -1,7 +1,7 @@
 /** HTML for the console pages: `h` escapes every interpolation; `raw()` opts out. */
 import type { Ctx } from "../ctx.ts";
 import { call } from "../rpc.ts";
-import { RpcError } from "../types.ts";
+import { type Caller, RpcError } from "../types.ts";
 
 export class Raw {
   constructor(readonly html: string) {}
@@ -122,6 +122,8 @@ export interface Params {
   /** regex captures of the route */
   m: string[];
   q: URLSearchParams;
+  /** who asks: `remote` and `session` are set on the remote listener */
+  caller?: Caller;
 }
 
 export type Page = (ctx: Ctx, p: Params) => string | Promise<string>;

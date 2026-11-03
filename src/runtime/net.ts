@@ -27,6 +27,8 @@ export const ports = { https: 8443, http: 8080, dns: 8053 };
 export const PROXY = "10.77.0.1";
 export const SESSIONS = "10.77.1.0/24";
 const CONSOLE_PORT = 7700;
+/** The remote console listener's port while it runs (console/remote.ts): dropped on every address for sessions. */
+export const remoteConsole = { port: 0 };
 
 const log = logger("net");
 
@@ -173,6 +175,7 @@ export async function sessionRules(
       nat(`ip daddr ${address} tcp dport 443 dnat ip to ${address}:${p.https}`) +
       s(`ip daddr ${address} tcp dport { ${p.http}, ${p.https} } accept`) +
       s(`ip daddr ${address} udp dport ${p.dns} accept`) +
+      (remoteConsole.port ? s(`tcp dport ${remoteConsole.port} drop`) : "") +
       s(`ip daddr 127.0.0.1 tcp dport ${CONSOLE_PORT} drop`) +
       s("ip daddr 127.0.0.0/8 accept") +
       s(`ip6 daddr ::1 tcp dport ${CONSOLE_PORT} drop`) +

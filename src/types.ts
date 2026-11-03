@@ -13,6 +13,9 @@ export type Role = "owner" | "core" | "worker" | "planner" | "login";
 export interface Caller {
   role: Role;
   task?: string;
+  /** console: the request came through the remote listener (10-remote-console.md); `session` is its row's hash */
+  remote?: boolean;
+  session?: string;
 }
 
 export type RpcCode = "not_found" | "forbidden" | "invalid" | "failed";

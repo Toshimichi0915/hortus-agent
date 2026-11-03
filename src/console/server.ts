@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import type { Ctx } from "../ctx.ts";
 import { logger } from "../log.ts";
 import { call, isStream } from "../rpc.ts";
-import { RpcError } from "../types.ts";
+import { type Caller, RpcError } from "../types.ts";
 import { bus } from "./events.ts";
 import { h, layout, type Page, tryCall } from "./html.ts";
 import { approvals } from "./pages/approvals.ts";
@@ -22,6 +22,7 @@ import { settings } from "./pages/settings.ts";
 import { sources } from "./pages/sources.ts";
 import { task } from "./pages/task.ts";
 import { tasks } from "./pages/tasks.ts";
+import { gate } from "./remote.ts";
 
 const log = logger("console");
 export const MAX_BODY = 1024 * 1024;
@@ -53,16 +54,20 @@ const HEADERS = {
 const STATUS: Record<RpcError["code"], number> = { invalid: 400, forbidden: 403, not_found: 404, failed: 500 };
 
 const staticDir = new URL("./static/", import.meta.url);
-const TYPES: Record<string, string> = { "app.js": "text/javascript", "app.css": "text/css" };
+const TYPES: Record<string, string> = {
+  "app.js": "text/javascript",
+  "app.css": "text/css",
+  "webauthn.js": "text/javascript",
+};
 
-function send(res: ServerResponse, status: number, type: string, body: string): void {
+export function send(res: ServerResponse, status: number, type: string, body: string): void {
   res.writeHead(status, { ...HEADERS, "Content-Type": `${type}; charset=utf-8` }).end(body);
 }
 
-const json = (res: ServerResponse, status: number, v: unknown) =>
+export const json = (res: ServerResponse, status: number, v: unknown) =>
   send(res, status, "application/json", JSON.stringify(v));
 
-function readBody(req: IncomingMessage): Promise<string | null> {
+export function readBody(req: IncomingMessage): Promise<string | null> {
   return new Promise((resolve, reject) => {
     if (Number(req.headers["content-length"] ?? 0) > MAX_BODY) {
       req.resume();
@@ -83,7 +88,7 @@ function readBody(req: IncomingMessage): Promise<string | null> {
   });
 }
 
-async function api(method: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function api(method: string, req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<void> {
   const text = await readBody(req);
   if (text === null) return json(res, 413, { error: { code: "invalid", message: "body over 1 MB" } });
   let input: unknown;
@@ -93,7 +98,7 @@ async function api(method: string, req: IncomingMessage, res: ServerResponse): P
     return json(res, 400, { error: { code: "invalid", message: `malformed JSON: ${(e as Error).message}` } });
   }
   try {
-    const result = await call(method, input, { role: "owner" });
+    const result = await call(method, input, caller);
     if (isStream(result)) {
       await result[Symbol.asyncIterator]().return?.();
       return json(res, 400, { error: { code: "invalid", message: `${method} streams: use /events or the socket` } });
@@ -137,9 +142,18 @@ function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage
   });
 }
 
-async function handle(ctx: Ctx, port: () => number, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(
+  ctx: Ctx,
+  port: () => number,
+  remote: boolean,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   const host = req.headers.host ?? "";
-  const hosts = [`127.0.0.1:${port()}`, `localhost:${port()}`, ctx.config.console?.host];
+  const ch = ctx.config.console?.host;
+  const hosts = remote
+    ? [`${ch}:${port()}`, port() === 443 ? ch : undefined]
+    : [`127.0.0.1:${port()}`, `localhost:${port()}`, ch];
   if (!hosts.includes(host)) return send(res, 421, "text/plain", "misdirected request");
   const site = req.headers["sec-fetch-site"];
   if (site !== undefined && site !== "same-origin" && site !== "none")
@@ -153,15 +167,23 @@ async function handle(ctx: Ctx, port: () => number, req: IncomingMessage, res: S
       req.resume();
       return send(res, 403, "text/plain", "missing X-Hortus or JSON");
     }
+  }
+  const caller: Caller = { role: "owner" };
+  if (remote) {
+    const session = await gate(ctx, req, res, url);
+    if (session === undefined) return;
+    Object.assign(caller, { remote: true, session });
+  }
+  if (req.method === "POST") {
     const m = /^\/api\/([\w.-]+)$/.exec(path);
     if (!m) return send(res, 404, "text/plain", "not found");
-    return api(m[1] as string, req, res);
+    return api(m[1] as string, req, res, caller);
   }
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "text/plain", "method not allowed");
 
   const ev = /^\/events\/(\w+)$/.exec(path);
   if (ev) return events(ctx, ev[1] as string, url.searchParams, req, res);
-  const st = /^\/static\/(app\.(?:js|css))$/.exec(path);
+  const st = /^\/static\/(app\.(?:js|css)|webauthn\.js)$/.exec(path);
   if (st) {
     const file = st[1] as string;
     return send(res, 200, TYPES[file] as string, readFileSync(new URL(file, staticDir), "utf8"));
@@ -174,7 +196,7 @@ async function handle(ctx: Ctx, port: () => number, req: IncomingMessage, res: S
   }
   for (const [re, page] of routes) {
     const m = re.exec(path);
-    if (m) return send(res, 200, "text/html", await page(ctx, { m: [...m], q: url.searchParams }));
+    if (m) return send(res, 200, "text/html", await page(ctx, { m: [...m], q: url.searchParams, caller }));
   }
   send(res, 404, "text/html", layout(ctx, "", "Not found", h`<p>No page at <code>${path}</code>.</p>`));
 }
@@ -185,14 +207,19 @@ export interface Console {
   close(): Promise<void>;
 }
 
-export async function startServer(ctx: Ctx, port: number, address = "127.0.0.1"): Promise<Console> {
-  const server = createServer((req, res) => {
-    handle(ctx, () => (server.address() as AddressInfo).port, req, res).catch((e) => {
+/** The request listener of both listeners; `remote` adds the cookie gate (remote.ts) and `console.host` as Host. */
+export function handler(ctx: Ctx, port: () => number, remote: boolean) {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    handle(ctx, port, remote, req, res).catch((e) => {
       log.error("request failed", e, { url: req.url });
       if (!res.headersSent) send(res, 500, "text/plain", `error: ${e instanceof Error ? e.message : String(e)}`);
       else res.end();
     });
-  });
+  };
+}
+
+export async function startServer(ctx: Ctx, port: number, address = "127.0.0.1"): Promise<Console> {
+  const server: Server = createServer(handler(ctx, () => (server.address() as AddressInfo).port, false));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, address, () => {

@@ -129,3 +129,11 @@ if (st) {
 }
 if (["approvals", "chat", "tasks"].includes(page)) sse("approvals", refresh);
 if (page === "tasks") sse("tasks", refresh);
+
+// Settings › Remote: the enrolment code's countdown
+setInterval(() => {
+  for (const el of document.querySelectorAll("[data-expires]")) {
+    const s = Math.max(0, Math.round((Date.parse(el.dataset.expires) - Date.now()) / 1000));
+    el.textContent = s ? `expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "expired";
+  }
+}, 1000);
