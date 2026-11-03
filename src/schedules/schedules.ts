@@ -8,6 +8,7 @@ import { existsSync, rmSync } from "node:fs";
 import { Cron } from "croner";
 import { z } from "zod";
 import { bus } from "../console/events.ts";
+import { crashPoint } from "../crash.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
@@ -208,6 +209,7 @@ export function tick(): void {
         continue;
       }
       runs.start(row, fired);
+      crashPoint("schedules.after-fire");
     } catch (e) {
       log().error("firing failed", e, { id: row.id });
     }

@@ -2,9 +2,12 @@
  * The mirror module: DOF repos, the search index and the `logs` DOF, bound to hortusd's DB at `start`. Other modules
  * call `commit` (gateway), `publishLog` (dispatcher), `writeLog` and `search`; Workers reach `search` as `dof.search`.
  */
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
 import type { DatabaseSync } from "../db.ts";
+import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
 import * as fts from "./fts.ts";
@@ -56,6 +59,14 @@ export const mirrorModule: Module = {
   name: "mirror",
   async start(c) {
     ctx = c;
+    let names: string[] = [];
+    try {
+      names = readdirSync(join(paths.home(), "dof"))
+        .filter((f) => f.endsWith(".git"))
+        .map((f) => f.slice(0, -4));
+    } catch {}
+    for (const n of names)
+      await repo.recover(c.db, n).catch((e) => c.log("mirror").error("recovery failed", e, { dof: n }));
     define("dof.search", { roles: ["owner", "worker", "planner"], input: Query, run: (q) => search(q) });
   },
   async stop() {},

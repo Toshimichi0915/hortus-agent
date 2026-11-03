@@ -17,6 +17,7 @@ import { recover } from "../runtime/recovery.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Caller, OutboxMsg } from "../types.ts";
+import { bind as bindVault } from "../vault/vault.ts";
 import * as runs from "./runs.ts";
 import { clock, schedulesModule, tick } from "./schedules.ts";
 
@@ -43,6 +44,7 @@ let T = Date.parse("2026-06-01T00:00:00Z");
 
 before(async () => {
   tasks.bind(ctx);
+  bindVault(ctx);
   await mirrorModule.start(ctx);
   await schedulesModule.start(ctx);
   clock.now = () => T;
@@ -304,10 +306,23 @@ test("recovery: a run killed before its first model call is closed failed (not r
     `${JSON.stringify({ type: "message", message: { role: "assistant", text: "", toolCalls: [], usage: { input: 10, output: 5 } } })}\n`,
   );
   const fire = row(id)?.fire_at;
+  // a crashed session's and VM's links go (their address and tap are gone); a login view's is the browser's own
+  const link = ctx.db.prepare("INSERT INTO links(address, role, task_id, kind) VALUES (?, 'worker', ?, ?)");
+  link.run("10.77.1.9", late.id, "session");
+  link.run("10.77.2.9", late.id, "vm");
+  link.run("10.77.3.9", null, "login");
   await recover(ctx);
   assert.equal(tasks.get(early.id).status, "failed");
   assert.equal(tasks.get(late.id).status, "queued");
   assert.equal(row(id)?.fire_at, fire);
+  assert.deepEqual(
+    ctx.db
+      .prepare("SELECT kind FROM links")
+      .all()
+      .map((r) => r.kind),
+    ["login"],
+  );
+  ctx.db.exec("DELETE FROM links");
 });
 
 test("PAUSED skips ticks; un-pausing fires each overdue row once and every advances past now", async () => {

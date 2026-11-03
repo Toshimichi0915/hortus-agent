@@ -22,6 +22,13 @@ export const vaultModule: Module = {
     bind(c);
     // a crash mid-install (submit.ts › approveTransform) puts the entry back before the owner: approving re-installs
     c.db.prepare("UPDATE approvals SET status = 'pending' WHERE status = 'installing'").run();
+    // a crash mid-landing (merge.ts › landNow) leaves an approved merge without a reason, which the console shows
+    // without its Retry; a retry finishes a landing that got as far as the checkout or the origin
+    c.db
+      .prepare(
+        "UPDATE approvals SET reason = 'interrupted by a restart: retry' WHERE category = 'merge' AND status = 'approved' AND reason IS NULL",
+      )
+      .run();
     await ca.ensure();
     await transforms.load();
     timer = setInterval(() => {

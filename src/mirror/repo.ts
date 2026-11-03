@@ -3,9 +3,10 @@
  * turns Changes into files (temp + rename, so a reader never sees a half file) and one commit, serialized per DOF.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { crashPoint } from "../crash.ts";
 import type { DatabaseSync } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
@@ -24,6 +25,36 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return (await p).stdout;
 }
 
+/** The last commit whose diff is in the search index; trails `main` only after a crash between the two. */
+const INDEXED = "refs/hortus/indexed";
+
+/** `<status>\0<path>\0…` pairs */
+function entries(z: string[]): DiffEntry[] {
+  const diff: DiffEntry[] = [];
+  for (let i = 0; i + 1 < z.length; i += 2) diff.push({ status: z[i] as DiffEntry["status"], path: z[i + 1] ?? "" });
+  return diff;
+}
+
+/**
+ * At start, before any commit: drop the index lock a git killed with hortusd left (every later commit would fail), and
+ * index what a crash between a commit and its indexing left out (a re-sync of the same content commits nothing).
+ */
+export async function recover(db: DatabaseSync, name: string): Promise<void> {
+  const tree = paths.dof(name);
+  if (!existsSync(join(tree, ".git"))) return;
+  rmSync(join(paths.dofRepo(name), "worktrees", basename(tree), "index.lock"), { force: true });
+  const head = (await git(tree, "rev-parse", "HEAD")).trim();
+  const from = (await git(tree, "rev-parse", "-q", "--verify", INDEXED).catch(() => "")).trim();
+  if (from === head) return;
+  // no ref yet (a repo from before it existed): taken as indexed
+  if (from) {
+    const diff = entries((await git(tree, "diff", "--no-renames", "-z", "--name-status", from, head)).split("\0"));
+    index(db, name, tree, diff);
+    log.info("indexed commits a crash left out", { dof: name, from, to: head, files: diff.length });
+  }
+  await git(tree, "update-ref", INDEXED, head);
+}
+
 /** Create the bare repo and its worktree with an empty root commit on `main`; no-op when both exist. */
 export async function init(name: string): Promise<void> {
   const gitDir = paths.dofRepo(name);
@@ -39,6 +70,7 @@ export async function init(name: string): Promise<void> {
     const empty = (await git(gitDir, "mktree")).trim();
     const root = (await git(gitDir, "commit-tree", empty, "-m", `init(${name})`)).trim();
     await git(gitDir, "update-ref", "refs/heads/main", root);
+    await git(gitDir, "update-ref", INDEXED, root);
   }
   await git(gitDir, "worktree", "prune");
   await git(gitDir, "worktree", "add", "-q", tree, "main");
@@ -125,11 +157,13 @@ async function commitNow(db: DatabaseSync | null, name: string, changes: Change[
   await git(root, "commit", "-q", "--no-verify", "-m", message);
   // -z: "<sha>\0<status>\0<path>\0…", paths unquoted
   const [sha = "", ...rest] = (await git(root, "diff-tree", "-r", "-z", "--name-status", "HEAD")).split("\0");
-  const diff: DiffEntry[] = [];
-  for (let i = 0; i + 1 < rest.length; i += 2)
-    diff.push({ status: rest[i] as DiffEntry["status"], path: rest[i + 1] ?? "" });
+  const diff = entries(rest);
+  crashPoint(`mirror.after-commit:${name}`);
   // inside the chain: the files still hold this commit's content
-  if (db) index(db, name, root, diff);
+  if (db) {
+    index(db, name, root, diff);
+    await git(root, "update-ref", INDEXED, sha);
+  }
   return { sha, diff };
 }
 
