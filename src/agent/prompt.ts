@@ -37,6 +37,10 @@ export function prompt(task: TaskJson): string {
     chat &&
       task.cwd &&
       `The owner's shell is in ${task.cwd}; when that is inside one of the projects, it is the one they mean.`,
+    !chat &&
+      p.clone &&
+      `# Project
+The project is checked out at ${p.clone} on branch hortus/${task.id} (origin ${task.clone_url ?? "the project origin"}; if the directory is missing, \`git clone --reference <the project path> ${task.clone_url ?? "<origin>"} ${p.clone}\` and \`git checkout -b hortus/${task.id}\`). Work only on hortus/${task.id}; you cannot push any other ref. Commit and \`git push -f origin hortus/${task.id}\` before every turn ends, so the owner always sees your latest work. When the work is done, push, then call \`merge()\` on its own (not in the same batch of tool calls as the push: calls in one batch run together) and end your turn: \`from=merge\` "merged <sha>" means it landed (then \`done\`); a reason means it did not (wait, or fix what it names); \`from=rebase\` means main moved: \`git fetch origin && git rebase origin/HEAD\`, resolve conflicts, force-push, and call \`merge()\` again. What you cannot resolve, report with \`send\` (and in the originating thread); the branch stays in the origin for the owner.`,
     `# Searching
 Sources are mirrored as Markdown files under ${p.dof}/<dof>/<channel>/<thread>/<message>.md. Use \`dof search <words>\` (flags: --in <dof/path>, --author, --since, --until, -n) for full-text search across them, and \`grep -r\`, \`ls\`, \`read\` for anything else. Read the thread before acting on a message in it.`,
     `# Writing to sources

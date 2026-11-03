@@ -30,6 +30,17 @@ ${s.rendered ? h`<pre class="rendered">${str(s.rendered)}</pre>` : ""}
 ${body ? (body.length > 300 ? details(`body (${body.length} chars)`, body) : h`<pre>${body}</pre>`) : ""}`;
 }
 
+/** project, `hortus/<id>` → main at main_sha[:7], `+a −r in n files`, the first 40 patch lines, the patch folded. */
+function mergeView(s: Summary): Raw {
+  const patch = str(s.patch);
+  const lines = patch.split("\n");
+  const n = Number(s.files ?? 0);
+  return h`<p class="req"><b>${str(s.project)}</b> <code>${str(s.branch)}</code> → <code>main</code> at <code>${str(s.main_sha).slice(0, 7)}</code> (tip <code>${str(s.sha).slice(0, 7)}</code>)</p>
+<p class="stat">+${str(s.added)} −${str(s.removed)} in ${String(n)} file${n === 1 ? "" : "s"}</p>
+<pre class="patch">${lines.slice(0, 40).join("\n")}${lines.length > 40 ? "\n…" : ""}</pre>
+${details(`full diff${s.truncated ? " (first 64 KB)" : ""}`, patch)}${details("stat", str(s.stat))}`;
+}
+
 /** One case per kind; merge (3b), transforms (3f) and login (3h) fall back to the JSON until their steps add a view. */
 export function summaryView(
   kind: string | null,
@@ -39,6 +50,7 @@ export function summaryView(
 ): Raw {
   const s = summary ?? {};
   if (category === "transforms") return transformView(s as TransformSummary);
+  if (category === "merge") return mergeView(s);
   switch (kind) {
     case "request":
       return requestView(s);
@@ -85,6 +97,15 @@ function judgeLine(a: ApprovalRow): Raw {
 
 function decidedLine(a: ApprovalRow): Raw {
   if (a.status === "pending") return raw("");
+  if (a.category === "merge") {
+    const sha = str(parse<Summary>(a.summary)?.sha).slice(0, 7);
+    if (a.status === "landed")
+      return h`<p class="decided">landed <code>${sha}</code>${a.decided_at ? h` (approved ${time(a.decided_at)})` : ""}</p>`;
+    if (a.status === "replaced") return h`<p class="decided">replaced${a.reason ? h` — ${a.reason}` : ""}</p>`;
+    // approved but not landed: the reason, and a retry (a dirty checkout is transient)
+    if (a.status === "approved" && a.decided_by === "owner" && a.reason)
+      return h`<p class="decided error">approved, not landed — ${a.reason}</p><div class="actions">${button("Retry", "merge.retry", { id: a.id })}</div>`;
+  }
   const verb =
     a.status === "rejected"
       ? "rejected"
