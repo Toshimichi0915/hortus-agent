@@ -23,8 +23,30 @@ const form = h`<form class="cred" data-call="credential.set" data-reset>
 <fieldset class="f-aws">${pw("keyId", "Key id")}${pw("secret", "Secret")}</fieldset>
 <button>Save</button></form>`;
 
+/** `captured.list` rows (browser/login-view.ts): cookies and tokens the proxy captured, per site */
+interface Origin {
+  origin: string;
+  cookies: number;
+  tokens: number;
+  last_use: string | null;
+}
+
 export const credentials: Page = async (ctx) => {
   const r = await tryCall<Cred[]>("credential.list", {});
+  const o = await tryCall<Origin[]>("captured.list", {});
+  const sites = o.ok
+    ? o.value.length
+      ? h`<table><thead><tr><th>Site</th><th>Cookies</th><th>Tokens</th><th>Last use</th><th></th></tr></thead><tbody>${o.value.map(
+          (s) =>
+            h`<tr><td>${s.origin}</td><td>${s.cookies}</td><td>${s.tokens}</td><td>${time(s.last_use)}</td><td>${button(
+              "Forget",
+              "captured.forget",
+              { origin: s.origin },
+              { confirm: true },
+            )}</td></tr>`,
+        )}</tbody></table>`
+      : h`<p class="empty">no captured logins</p>`
+    : error(o.error);
   const list = r.ok ? r.value : [];
   // durable grants (the `auto` gate's one click per credential)
   const enabled = new Set(
@@ -51,6 +73,6 @@ export const credentials: Page = async (ctx) => {
             )}</tbody></table>`
           : h`<p class="empty">no credentials</p>`
         : error(r.error)
-    }</div><h2>Add or replace</h2><p class="hint">Values are write-only: they are never shown again.</p>${form}`,
+    }<h2>Captured logins</h2><p class="hint">Cookies and tokens sites set for the browsers; forgetting a site logs every task out of it.</p>${sites}</div><h2>Add or replace</h2><p class="hint">Values are write-only: they are never shown again.</p>${form}`,
   );
 };

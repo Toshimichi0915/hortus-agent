@@ -197,7 +197,7 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   assert.equal(tj.paths.schedule, paths.schedule(id));
   assert.ok(existsSync(paths.schedule(id)));
   assert.equal(tj.script, "echo hi");
-  assert.deepEqual(tj.features, ["schedule"]);
+  assert.ok(tj.features.includes("schedule"));
 });
 
 test("scope: a chat parent's run on a project is an unattended host task (never in place); without one, a VM task", async () => {

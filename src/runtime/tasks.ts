@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { jar } from "../browser/jar.ts";
 import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
@@ -230,6 +231,8 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
   const sdir = sid && paths.schedule(sid.slice("schedule:".length));
   const schedule = sdir && existsSync(sdir) ? sdir : undefined;
   const script = row.kind === "run" ? readOr(join(paths.ctl(row.id), "script.sh")) : undefined;
+  // 3h: the placeholder jar (own captures, and logins of the origins the task holds a grant on)
+  const cookies = bound ? jar(bound.db, row.id) : [];
   return {
     id: row.id,
     kind: row.kind,
@@ -262,8 +265,9 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
           ...(row.cwd ? { cwd: row.cwd } : {}),
         }
       : {}),
+    ...(cookies.length ? { cookies } : {}),
     rpc: "https://hortusd.internal",
-    features: row.kind === "planner" ? [] : ["schedule"],
+    features: row.kind === "planner" ? [] : ["schedule", "browser"],
   };
 }
 

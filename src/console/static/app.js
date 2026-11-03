@@ -141,3 +141,105 @@ setInterval(() => {
     el.textContent = s ? `expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "expired";
   }
 }, 1000);
+
+// Approvals › login view: screencast frames from /events/login onto the canvas, mouse and keys back as login.input
+const lv = $("[data-login]");
+if (lv) {
+  const id = Number(lv.dataset.login);
+  const cv = lv.querySelector("canvas");
+  const g = cv.getContext("2d");
+  const status = lv.querySelector("[data-lv-status]");
+  const idle = lv.querySelector("[data-idle]");
+  let until = 0;
+  const es = new EventSource(`/events/login?id=${id}`);
+  es.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.until) until = d.until;
+    if (d.error || d.closed) {
+      status.textContent = d.error || `closed (${d.closed}): reload to open it again`;
+      until = 0;
+      return es.close();
+    }
+    if (!d.frame) return;
+    const img = new Image();
+    img.onload = () => {
+      if (cv.width !== d.w || cv.height !== d.h) [cv.width, cv.height] = [d.w, d.h];
+      g.drawImage(img, 0, 0, d.w, d.h);
+    };
+    img.src = `data:image/jpeg;base64,${d.frame}`;
+    status.textContent = "live";
+  };
+  // in order: a keyUp must not overtake its keyDown
+  let queue = Promise.resolve();
+  const send = (input) => {
+    queue = queue
+      .then(() => post("login.input", { id, ...input }))
+      .then((r) => {
+        if (r?.until) until = r.until;
+      })
+      .catch((err) => say(err.message, true));
+  };
+  const at = (e) => {
+    const r = cv.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) * cv.width) / r.width, y: ((e.clientY - r.top) * cv.height) / r.height };
+  };
+  const button = (e) => ["left", "middle", "right"][e.button] ?? "left";
+  cv.addEventListener("contextmenu", (e) => e.preventDefault());
+  cv.addEventListener("pointerdown", (e) => {
+    cv.focus();
+    e.preventDefault();
+    send({ type: "mouse", event: "mousePressed", ...at(e), button: button(e), clickCount: 1 });
+  });
+  cv.addEventListener("pointerup", (e) =>
+    send({ type: "mouse", event: "mouseReleased", ...at(e), button: button(e), clickCount: 1 }),
+  );
+  let moved = 0;
+  cv.addEventListener("pointermove", (e) => {
+    if (Date.now() - moved < 50) return;
+    moved = Date.now();
+    send({ type: "mouse", event: "mouseMoved", ...at(e), button: e.buttons & 1 ? "left" : "none" });
+  });
+  cv.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      send({ type: "mouse", event: "mouseWheel", ...at(e), deltaX: e.deltaX, deltaY: e.deltaY });
+    },
+    { passive: false },
+  );
+  const key = (e, event) =>
+    send({
+      type: "key",
+      event,
+      key: e.key,
+      code: e.code,
+      keyCode: e.keyCode,
+      modifiers: (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0),
+    });
+  cv.addEventListener("keydown", (e) => {
+    e.preventDefault();
+    key(e, "keyDown");
+  });
+  cv.addEventListener("keyup", (e) => {
+    e.preventDefault();
+    key(e, "keyUp");
+  });
+  // the text box: phones (no keyboard for a canvas) and pasting; editing keys pass through as keys
+  const box = lv.querySelector(".lv-keys input");
+  box.addEventListener("input", () => {
+    if (!box.value) return;
+    send({ type: "text", text: box.value });
+    box.value = "";
+  });
+  box.addEventListener("keydown", (e) => {
+    if (!["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key))
+      return;
+    e.preventDefault();
+    key(e, "keyDown");
+    key(e, "keyUp");
+  });
+  setInterval(() => {
+    const s = Math.max(0, Math.round((until - Date.now()) / 1000));
+    idle.textContent = until ? `· closes after ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} idle` : "";
+  }, 1000);
+}

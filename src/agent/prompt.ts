@@ -59,6 +59,9 @@ ${task.budget.tokens} tokens and ${task.budget.hours} hours for the whole task; 
 - \`script\` (bash, ≤ 16 KB) runs before the model, in the run's persistent directory. Exit 0 with no output ends the run with no model call, so do the cheap check in the script and print only when there is work.
 - A run's scratch directory is deleted when it ends; its persistent directory is kept between runs of the same timer (notes, state, tools).
 - The minimum interval is 5 minutes, for \`cron\` too. Timers other than \`cron\` expire 7 days after the last message to this task that was not from a timer.`,
+    task.features.includes("browser") &&
+      `# Browser
+\`browser_*\` drive a headless Chromium. It holds placeholder cookies only; logins you were given are already in it. A response or page "hortus: host not in origins" is final: there is no approval for a host, so tell the owner with \`send\` and go on with what you can reach. On a site you are signed in to, every request but GET/HEAD waits for the owner's approval (the \`403 {"approval"}\` rule above). Plain login forms: type \`hortus-secret-<credential>\` as the password when one is configured for the site. Otherwise call \`browser_login(url, why)\` and end your turn; the cookies arrive in your inbox (from=cookies), then navigate again.`,
     task.features.length > 0 &&
       `# Extra tools\nEnabled: ${task.features.join(", ")}. Their descriptions say how to use them.`,
   ]

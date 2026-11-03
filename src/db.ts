@@ -56,6 +56,8 @@ const migrations: string[] = [
   ALTER TABLE schedules_new RENAME TO schedules;
   CREATE INDEX schedules_fire ON schedules(fire_at);
   `,
+  // 3h: a capture's metadata (cookie name, Domain/Path/Expires, the request host, the capturing task and role)
+  "ALTER TABLE captured ADD COLUMN meta TEXT;",
 ];
 
 export function openDb(path: string): DatabaseSync {

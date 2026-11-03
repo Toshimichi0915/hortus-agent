@@ -8,6 +8,7 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import { RpcError } from "../types.ts";
 import * as paths from "../paths.ts";
+import { browserModule } from "../browser/login-view.ts";
 import { consoleModule } from "../console/index.ts";
 import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
@@ -30,6 +31,7 @@ const modules: Module[] = [
   gatewayModule,
   dispatcherModule,
   schedulesModule,
+  browserModule,
   consoleModule,
 ];
 

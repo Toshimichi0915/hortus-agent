@@ -180,3 +180,28 @@ output {
   min-height: 1.4em;
   margin-top: 1rem;
 }
+/* login view (14-browser.md): the canvas keeps the page's aspect ratio and fits the screen */
+a.button {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.2rem 0.7rem;
+  text-decoration: none;
+}
+a.button.ok {
+  color: var(--ok);
+}
+.login-view canvas {
+  display: block;
+  width: 100%;
+  max-width: 1280px;
+  height: auto;
+  border: 1px solid var(--line);
+  touch-action: none;
+  cursor: default;
+}
+.login-view canvas:focus {
+  outline: 2px solid var(--ok);
+}
+.lv-keys input {
+  width: min(30rem, 100%);
+}

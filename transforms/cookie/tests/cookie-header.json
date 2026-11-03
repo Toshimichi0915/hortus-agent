@@ -1,0 +1,16 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://app.example.co.uk/home",
+    "headers": { "cookie": "session=hortus-secret-c-1; lang=en", "authorization": "Bearer hortus-secret-c-2" },
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://app.example.co.uk/home",
+    "headers": { "cookie": "session={secret:c-1}; lang=en", "authorization": "Bearer {secret:c-2}" },
+    "body": null,
+    "stream": false
+  }
+}

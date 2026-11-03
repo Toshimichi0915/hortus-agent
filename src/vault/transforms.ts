@@ -158,8 +158,10 @@ export function request(name: string, req: Req, ctx: { now: number; nonce: strin
   return req.stream ? { ...t, body: null, stream: true } : t;
 }
 
-export function response(name: string, res: Res, req: Req, code?: string): ResponseResult {
-  return shaped(name, "response", ResultShape, invoke(name, "response", [res, req], code ? { code } : undefined));
+/** `site`: the site manifest's data, handed to the `cookie` layer as a third argument (3h). */
+export function response(name: string, res: Res, req: Req, code?: string, site?: unknown): ResponseResult {
+  const args = site === undefined ? [res, req] : [res, req, site];
+  return shaped(name, "response", ResultShape, invoke(name, "response", args, code ? { code } : undefined));
 }
 
 export function render(name: string, template: Template): string | undefined {

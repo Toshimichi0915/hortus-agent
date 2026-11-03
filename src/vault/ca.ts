@@ -87,7 +87,11 @@ export function hostContext(host: string): Promise<SecureContext> {
       const crt = join(hostsDir(), `${h}.crt`);
       // ponytail: a cached leaf is reused until restart even past expiry; re-mint by age when daemons run 398 days
       if (!existsSync(key) || !existsSync(crt)) await mint(h, key, crt);
-      return createSecureContext({ key: readFileSync(key), cert: readFileSync(crt) });
+      // the chain carries the CA too: Chromium's SPKI pin (3h) matches a certificate in the presented chain
+      return createSecureContext({
+        key: readFileSync(key),
+        cert: Buffer.concat([readFileSync(crt), readFileSync(caCert())]),
+      });
     })();
     contexts.set(h, p);
     p.catch(() => contexts.delete(h));

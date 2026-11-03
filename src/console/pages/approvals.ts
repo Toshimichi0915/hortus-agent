@@ -42,7 +42,15 @@ export function summaryView(
   switch (kind) {
     case "request":
       return requestView(s);
+    case "login":
+      return h`<p class="req">sign in to <b>${str(s.origin)}</b>: <code>${str(s.url)}</code></p><p class="why">${str(s.why)}</p>`;
     case "grant":
+      if (category?.startsWith("origin:"))
+        return h`<p>reuse the stored login for <b>${category.slice(7)}</b> in this task${
+          s.cookies ? h` (${str(s.cookies)} cookies)` : ""
+        }${s.url ? h`: <code>${str(s.url)}</code>` : ""}</p>${s.why ? h`<p class="why">${str(s.why)}</p>` : ""}${
+          s.method ? requestView(s) : ""
+        }`;
       return h`<p class="grant">${
         taskId
           ? h`allow <b>${grantName(category, s)}</b> for this task only (outside its scope.credentials)`
@@ -101,14 +109,21 @@ ${summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id)}
 ${
   a.status === "pending" && a.category === "transforms"
     ? transformForm(a.id, parse<TransformSummary>(a.summary) ?? {})
-    : a.status === "pending"
-      ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${button(
+    : a.status === "pending" && a.kind === "login"
+      ? h`<div class="actions"><a class="button ok" href="/approvals/${a.id}/login">Open login view</a>${button(
           "Reject",
-          "approval.decide",
-          { id: a.id, decision: "reject" },
+          "login.reject",
+          { id: a.id },
           { cls: "bad" },
         )}</div>`
-      : decidedLine(a)
+      : a.status === "pending"
+        ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${button(
+            "Reject",
+            "approval.decide",
+            { id: a.id, decision: "reject" },
+            { cls: "bad" },
+          )}</div>`
+        : decidedLine(a)
 }</article>`;
 }
 
