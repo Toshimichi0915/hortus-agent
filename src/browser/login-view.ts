@@ -151,7 +151,7 @@ async function start(id: number): Promise<View> {
       args: net.args,
       ...(net.cmd ? { cmd: net.cmd } : {}),
     });
-    const cdp = await connect(browser.ws);
+    const cdp = await connect(browser);
     const session = await page(cdp);
     const b = browser;
     const v: View = {

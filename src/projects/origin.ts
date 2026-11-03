@@ -8,7 +8,8 @@ import { chmodSync, existsSync, renameSync, statSync, writeFileSync } from "node
 import { isAbsolute, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { z } from "zod";
-import { type Config, ProjectConfig, save } from "../config.ts";
+import { type Config, PROJECT_NAME, PROJECT_NAME_HINT, ProjectConfig, save } from "../config.ts";
+import { bus } from "../console/events.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { type Client, type IncomingRequest, internalRoutes, listen, type Out } from "../proxy/index.ts";
@@ -23,7 +24,7 @@ const { git } = shadow;
 const log = logger("projects");
 
 /** A project name: one path segment, no `..`. */
-export const NAME = /^(?!.*\.\.)[A-Za-z0-9][\w.-]{0,63}$/;
+export const NAME = PROJECT_NAME;
 
 // Workers may push only hortus/<their task> (force allowed); core (hortusd) anything; nobody else. Deletions are
 // refused by receive.denyDeletes before this runs.
@@ -78,7 +79,12 @@ export const revParse = (dir: string, ref: string): Promise<string> =>
  */
 export function sync(name: string, force = false): Promise<{ main: string; moved: boolean }> {
   // one at a time per project: a task start, a merge request and a landing may sync together (shadow commit, ref lock)
-  const next = (syncing.get(name) ?? Promise.resolve()).then(() => syncNow(name, force));
+  return serialized(name, () => syncNow(name, force));
+}
+
+/** `fn` on `name`'s sync chain: no sync of the project runs meanwhile (a landing's ff and update-ref). */
+export function serialized<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  const next = (syncing.get(name) ?? Promise.resolve()).then(fn);
   const tail = next.catch(() => {});
   syncing.set(name, tail);
   void tail.then(() => syncing.get(name) === tail && syncing.delete(name));
@@ -127,6 +133,7 @@ export function mainMoved(name: string, main: string, except?: number): void {
         AND json_extract(summary, '$.project') = ? AND json_extract(summary, '$.main_sha') != ? AND id IS NOT ?`,
     )
     .all(name, main, except ?? null) as { id: number; task_id: string | null }[];
+  if (rows.length) bus.emit("approvals", {});
   for (const r of rows) {
     db.prepare("UPDATE approvals SET status = 'replaced', reason = ? WHERE id = ?").run(
       `main moved to ${main.slice(0, 7)}`,
@@ -265,7 +272,7 @@ internalRoutes.push(
 // RPCs, role owner (the Projects page and `hortus sync --force`)
 
 const owner = ["owner" as const];
-const Name = z.object({ name: z.string().regex(NAME, "a project name: one path segment, no ..") });
+const Name = z.object({ name: z.string().regex(NAME, PROJECT_NAME_HINT) });
 
 async function writeConfig(change: (c: Config) => void): Promise<void> {
   const c = ctx();

@@ -12,6 +12,7 @@ import type { Module } from "../ctx.ts";
 import { type DatabaseSync, now } from "../db.ts";
 import { fetchRepo } from "../projects/repos.ts";
 import { coreFetch } from "../proxy/index.ts";
+import { localWebhook } from "../runtime/net.ts";
 import type { Connector, Event, Forge, Log } from "../types.ts";
 import { connectorOf } from "./gateway.ts";
 
@@ -192,6 +193,9 @@ export const webhooksModule: Module = {
     // ponytail: a busy port is logged, not fatal (parallel test daemons); the Sources page then shows no deliveries
     await module
       .start(Number(process.env.HORTUS_WEBHOOK_PORT ?? 7701))
+      .then((port) => {
+        localWebhook.port = port; // dropped for sessions, like the console
+      })
       .catch((e) => ctx.log("webhooks").error("listen failed", e));
   },
   async stop() {

@@ -5,10 +5,9 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { Config, load } from "../config.ts";
@@ -20,13 +19,14 @@ import type { Client } from "../proxy/index.ts";
 import { internal } from "../proxy/internal.ts";
 import { writeOut } from "../proxy/server.ts";
 import { call } from "../rpc.ts";
-import { taskJson, type TaskRow } from "../runtime/tasks.ts";
+import { type TaskRow, taskJson } from "../runtime/tasks.ts";
+import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { gate } from "../vault/index.ts";
 import { bind } from "../vault/vault.ts";
 import { prepareClone, sync } from "./origin.ts";
 
-const root = mkdtempSync(join(tmpdir(), "hortus-projects-"));
+const root = tempDir("hortus-projects-");
 process.env.HORTUS_HOME = join(root, "home");
 // the owner's ~/.gitconfig (signing, url rewrites) stays out of every git here, hortusd's included
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
@@ -277,6 +277,7 @@ test("merge (git): entry with stat and patch → approve → the checkout has it
   await deliver("ta", "g", "CHANGELOG.md", "- first\n- second\n", w);
   const second = (await mergeAs("ta")).approval;
   writeFileSync(join(checkout, "README.md"), "dirty\n");
+  writeFileSync(join(checkout, "untracked.log"), "the owner's own file\n"); // untracked: not a reason to refuse
   await approve(second);
   assert.equal(entry(second).status, "approved");
   assert.equal(entry(second).reason, "checkout is not clean");
@@ -284,6 +285,7 @@ test("merge (git): entry with stat and patch → approve → the checkout has it
   assert.equal(readFileSync(join(checkout, "CHANGELOG.md"), "utf8"), "- first\n");
   g(checkout, "checkout", "--", "README.md");
   assert.deepEqual(await call("merge.retry", { id: second }, owner), { landed: true, reason: null });
+  rmSync(join(checkout, "untracked.log"));
   assert.equal(readFileSync(join(checkout, "CHANGELOG.md"), "utf8"), "- first\n- second\n");
 });
 

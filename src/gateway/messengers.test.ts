@@ -4,8 +4,7 @@
  * outside its adapter.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -13,14 +12,14 @@ import { Config } from "../config.ts";
 import { create as discord } from "../connectors/discord.ts";
 import { create as telegram, timing as tgTiming } from "../connectors/telegram.ts";
 import { openDb } from "../db.ts";
+import { directFetch } from "../test/direct.ts";
 import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, ConnectorFactory } from "../types.ts";
-import { directFetch } from "../test/direct.ts";
 import { createGateway } from "./gateway.ts";
 
-const home = mkdtempSync(join(tmpdir(), "hortus-messengers-"));
+const home = tempDir("hortus-messengers-");
 process.env.HORTUS_HOME = home;
 const db = openDb(join(home, "db.sqlite"));
 tgTiming.pollS = 1;
@@ -147,6 +146,7 @@ for (const a of adapters) {
   });
 
   test(`${a.dof}: dedupe — a replayed event inserts no row and commits nothing`, async () => {
+    await gw.reconcile(a.dof); // the start's history pass may still be committing under load
     const n = rows(a.dof).length;
     const c = commits.length;
     a.replay();

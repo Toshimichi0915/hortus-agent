@@ -6,7 +6,7 @@ Spec: v6 › Security › Browser (Chromium, tools, cookies, site transforms, ap
 
 ### CDP client (`src/browser/cdp.ts`)
 
-`launch({ userDataDir, port })` spawns `chromium --headless=new --remote-debugging-port=<port> --user-data-dir=<dir> --no-first-run --no-default-browser-check --disable-gpu --window-size=1280,900` (in the Worker's cgroup and Landlock domain on the host: the profile builder grants `out/work/chrome` rw and the Chromium binary's needs are under `/usr`; in the VM, as is). `connect()` reads `http://127.0.0.1:<port>/json/version` → `webSocketDebuggerUrl` → Node's `WebSocket`; `send(method, params, sessionId?)` with ids, `on(event)`; `Target.attachToTarget` with `flatten: true` for the page. Used by both the Worker's tools and hortusd's login view.
+`launch({ userDataDir })` spawns `chromium --headless=new --remote-debugging-pipe --user-data-dir=<dir> --no-first-run --no-default-browser-check --disable-gpu --window-size=1280,900` (in the Worker's cgroup and Landlock domain on the host: the profile builder grants `out/work/chrome` rw and the Chromium binary's needs are under `/usr`; in the VM, as is). `connect(browser)` speaks NUL-separated JSON on the child's fds 3/4 (a pipe, not a port: sessions reach `127.0.0.0/8`, and a DevTools port has no authentication); `send(method, params, sessionId?)` with ids, `on(event)`; `Target.attachToTarget` with `flatten: true` for the page. Used by both the Worker's tools and hortusd's login view.
 
 ### Worker tools (F5 feature `browser`)
 

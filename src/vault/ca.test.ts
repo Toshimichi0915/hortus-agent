@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import * as paths from "../paths.ts";
+import { tempDir } from "../test/until.ts";
 import { caCert, ensure, hostContext, validHost } from "./ca.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-ca-"));
+process.env.HORTUS_HOME = tempDir("hortus-ca-");
 const run = promisify(execFile);
 
 test("100 parallel hostContext calls mint once; files are 0600", async () => {

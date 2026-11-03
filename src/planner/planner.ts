@@ -18,6 +18,7 @@ import { define } from "../rpc.ts";
 import { runPlanner, tasks } from "../runtime/index.ts";
 import { missingImage } from "../runtime/vm.ts";
 import type { OutboxMsg, TaskJson } from "../types.ts";
+import { read as readVault } from "../vault/vault.ts";
 
 export const DEBOUNCE_MS = 2000;
 const CAP_LOG_MS = 3600_000;
@@ -146,6 +147,11 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
       `${tokens(parse<{ tokens?: number }>(t.usage)?.tokens ?? 0)} tokens`,
     ];
     if (refs.length) what.push(`refs: ${refs.join(" ")}`);
+    // a task waiting on its own timer is not finished: closing it deletes them
+    const { n: timers } = c.db.prepare("SELECT COUNT(*) AS n FROM schedules WHERE task_id = ?").get(t.id) as {
+      n: number;
+    };
+    if (timers) what.push(`${timers} timer${timers > 1 ? "s" : ""}`);
     const summary = t.summary ? ` — ${oneLine(t.summary, 300)}` : "";
     return `- ${t.id} ${JSON.stringify(t.title)} (${what.filter(Boolean).join(", ")})${summary}`;
   });
@@ -170,6 +176,10 @@ async function batch(): Promise<boolean> {
     log().error("planner.provider and planner.model must be set (Settings): batch skipped");
     return false;
   }
+  if (!readVault()[cfg.provider]) {
+    log().error(`planner.provider ${cfg.provider} is not a credential in vault.json: batch skipped`);
+    return false;
+  }
   // checked before anything is consumed: a batch that cannot start must not lose its events
   const noImage = cfg.runtime === "vm" ? missingImage() : null;
   if (noImage) {
@@ -183,7 +193,8 @@ async function batch(): Promise<boolean> {
     .prepare(
       `SELECT o.task_id, o.seq, o.body FROM outbox o JOIN tasks t ON t.id = o.task_id
        WHERE o.consumed = 0 AND t.kind NOT IN ('chat', 'planner')
-       AND json_extract(o.body, '$.type') IN ('result', 'budget_exceeded') ORDER BY o.created`,
+       AND json_extract(o.body, '$.type') IN ('result', 'budget_exceeded') AND json_extract(o.body, '$.text') != ''
+       ORDER BY o.created`,
     )
     .all() as unknown as (ResultRow & { seq: number })[];
   if (!events.length && !results.length) return false;

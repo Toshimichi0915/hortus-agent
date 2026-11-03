@@ -3,7 +3,17 @@
  * writes. Statuses: queued → running → waiting → (queued → running …) → done | failed. The dispatcher starts and ends
  * sessions; this file never spawns anything. The owner's RPCs (task.open, task.send, …) are defined at the bottom.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,12 +160,13 @@ export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">): numbe
   const db = ctx().db;
   const t = get(id);
   if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is ${t.status}`);
-  const { n } = db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM inbox WHERE task_id = ?").get(id) as {
-    n: number;
-  };
-  const full: InboxMsg = { seq: n, ...msg, ts: now() };
   const dir = join(paths.ctl(id), "inbox");
   mkdirSync(dir, { recursive: true });
+  // past the files too: a crash between the rename and the INSERT must not hand the next message the same seq
+  const files = readdirSync(dir).map((f) => (/^\d{6}\.json$/.test(f) ? Number(f.slice(0, 6)) : 0));
+  const { m } = db.prepare("SELECT COALESCE(MAX(seq), 0) AS m FROM inbox WHERE task_id = ?").get(id) as { m: number };
+  const n = Math.max(m, ...files) + 1;
+  const full: InboxMsg = { seq: n, ...msg, ts: now() };
   const name = `${String(n).padStart(6, "0")}.json`;
   writeFileSync(join(dir, `.${name}.tmp`), json(full));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
@@ -344,14 +355,29 @@ define("task.open", {
       ...(cwd ? { cwd } : {}),
     });
     inboxWrite(t.id, { from: "owner", trusted: true, text });
+    ownerLine(t.id, text);
     return { id: t.id };
   },
 });
 
+/** A chat's stream shows the owner's own words too (a `replies` row of type `owner`, between the Worker's lines). */
+function ownerLine(id: string, text: string): void {
+  ctx()
+    .db.prepare(
+      "INSERT INTO replies(task_id, seq, body, created) SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ? FROM replies WHERE task_id = ?",
+    )
+    .run(id, JSON.stringify({ type: "owner", text }), now(), id);
+  bus.emit(`chat:${id}`);
+}
+
 define("task.send", {
   roles: [...owner],
   input: z.object({ id: z.string(), text: z.string().min(1) }),
-  run: ({ id, text }) => ({ seq: inboxWrite(id, { from: "owner", trusted: true, text }) }),
+  run({ id, text }) {
+    const seq = inboxWrite(id, { from: "owner", trusted: true, text });
+    if (get(id).kind === "chat") ownerLine(id, text);
+    return { seq };
+  },
 });
 
 define("task.message", {
@@ -366,7 +392,7 @@ define("task.stop", {
   input: Id,
   run({ id }) {
     stop(id);
-    return { ok: true };
+    return { ok: true, message: "stopping: the task halts after its current tool (killed after 30 s)" };
   },
 });
 

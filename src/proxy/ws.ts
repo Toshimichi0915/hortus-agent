@@ -13,7 +13,7 @@ import * as wsLib from "ws";
 import { logger } from "../log.ts";
 import type { Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
-import { handles, resolvable, resolveHandle } from "../vault/ops.ts";
+import { HANDLE, handles, resolvable, resolveHandle } from "../vault/ops.ts";
 import * as transforms from "../vault/transforms.ts";
 import { effectiveHosts, manifestEntry, PREFIX, read as readVault, touch } from "../vault/vault.ts";
 import type { Client } from "./links.ts";
@@ -44,6 +44,7 @@ const MAX_FRAME = 16 * 1024 * 1024;
 /** A client text frame → the text to send upstream, or why it is refused. */
 export function frameOut(p: Prepared, text: string): { text: string } | { refuse: string } {
   if (p.scrub.find(text)) return { refuse: "raw credential" };
+  if (text.search(HANDLE) !== -1) return { refuse: "handle syntax: use hortus-secret-<name> placeholders" };
   let body = text;
   if (text.includes(PREFIX) && p.tf) {
     const req = { method: "WS", url: p.template.url, headers: {}, body: text, stream: false };
@@ -70,7 +71,7 @@ export function frameOut(p: Prepared, text: string): { text: string } | { refuse
     const entry = vault[h.name];
     // ponytail: captured (`c-`) credentials never ride in frames; a cookie-session WebSocket service would add them
     if (!entry) return { refuse: `unknown credential ${h.name}` };
-    const manifest = (entry.transform && transforms.get(entry.transform)?.manifest) || p.tf?.manifest;
+    const manifest = transforms.credentialManifest(h.name, entry, p.tf?.manifest);
     if (!effectiveHosts(h.name, entry, manifest).includes(host)) return { refuse: `destination: ${h.name}` };
     if (!manifestEntry(h.name, entry, manifest)?.locations.includes("ws:text"))
       return { refuse: `location: ${h.name} may not ride in ws:text` };
@@ -121,10 +122,12 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   );
   fromClient.on("ping", (d) => toUp.ping(d, true));
   fromClient.on("pong", (d) => toUp.pong(d, true));
-  fromUp.on("ping", (d) => toClient.ping(d, false));
-  fromUp.on("pong", (d) => toClient.pong(d, false));
+  fromUp.on("ping", (d) => toClient.ping(p.scrub.bytes(d), false));
+  fromUp.on("pong", (d) => toClient.pong(p.scrub.bytes(d), false));
   fromClient.on("conclude", (code, reason) => toUp.close(code === 1005 ? undefined : code, reason, true));
-  fromUp.on("conclude", (code, reason) => toClient.close(code === 1005 ? undefined : code, reason, false));
+  fromUp.on("conclude", (code, reason) =>
+    toClient.close(code === 1005 ? undefined : code, p.scrub.text(reason.toString("utf8")), false),
+  );
   fromClient.on("error", kill);
   fromUp.on("error", kill);
   if (head.length) fromClient.write(head);
@@ -154,8 +157,12 @@ export async function relay(client: Client, req: IncomingRequest, socket: Duplex
   }
   if ("status" in p) return writeOut(socket, p);
   const prepared = p;
-  const wsText = Object.values(prepared.tf?.manifest.credentials ?? {}).some((c) => c.locations.includes("ws:text"));
-  // the frame relay reads plain frames: no permessage-deflate on a `ws:text` connection
+  // frames are relayed one by one (swapped, scrubbed) on a `ws:text` host and on any credentialed handshake (whose
+  // upstream may echo the credential); bytes pass through only on a connection that carries no secret
+  const wsText =
+    prepared.secrets.size > 0 ||
+    Object.values(prepared.tf?.manifest.credentials ?? {}).some((c) => c.locations.includes("ws:text"));
+  // the frame relay reads plain frames: no permessage-deflate there
   if (wsText) delete prepared.template.headers["sec-websocket-extensions"];
   let up: ReturnType<typeof upstream>;
   try {

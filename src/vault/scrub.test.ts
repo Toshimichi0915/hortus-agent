@@ -50,3 +50,10 @@ test("stream with onMatch errors instead of replacing", async () => {
   const st = s.stream(() => new Error("raw"));
   await assert.rejects(text(Readable.from([Buffer.from("x xoxb-"), Buffer.from("real y")]).pipe(st)), /raw/);
 });
+
+test("encoded echoes of a value are scrubbed too: URL-encoded and JSON-escaped", () => {
+  const s = new Scrubber([{ value: "ab/cd+ef=gh", placeholder: "hortus-secret-x" }]);
+  assert.equal(s.text("q=ab%2Fcd%2Bef%3Dgh"), "q=hortus-secret-x");
+  assert.equal(s.text('{"t":"ab\\/cd+ef=gh"}'), '{"t":"hortus-secret-x"}');
+  assert.equal(s.find("ab%2Fcd%2Bef%3Dgh"), "hortus-secret-x");
+});

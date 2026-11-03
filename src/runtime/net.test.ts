@@ -142,14 +142,22 @@ if (!enabled) {
     await net.ensureDummy();
     await net.ensureTable();
     assert.equal(ruleset().match(/ip daddr 10\.77\.1\.0\/24 drop/g)?.length, 1);
+    // input: session addresses only from lo and the taps (a LAN host or a container never poses as a session)
+    assert.match(ruleset(), /iifname != "hortustt\*" ip daddr 10\.77\.0\.0\/16 drop/);
   });
 
   test("a session reaches its proxy, loopback and DNS (DNAT), nothing else", async () => {
     const s1 = await cgroup.create("S1");
     const other = await cgroup.create("X");
+    // a LAN host stand-in on the test's dummy interface (outside 10.77/16)
+    spawnSync("ip", ["addr", "add", "192.0.2.7/32", "dev", NAMES.iface]);
     lan = createServer((_, res) => res.end("lan"));
-    await new Promise<void>((r) => lan.listen(0, net.PROXY, r));
-    const lanUrl = `http://${net.PROXY}:${(lan.address() as { port: number }).port}/`;
+    await new Promise<void>((r) => lan.listen(0, "192.0.2.7", r));
+    const lanPort = (lan.address() as { port: number }).port;
+    const lanUrl = `http://192.0.2.7:${lanPort}/`;
+    const proxyLan = createServer((_, res) => res.end("proxy-lan"));
+    await new Promise<void>((r) => proxyLan.listen(0, net.PROXY, r));
+    const proxyLanUrl = `http://${net.PROXY}:${(proxyLan.address() as { port: number }).port}/`;
     const a = await sessionNet.open("S1", "worker", s1, ["192.0.2.7/32", `${net.PROXY}/32`]);
     assert.equal(a, "10.77.1.2");
     assert.deepEqual(
@@ -170,6 +178,9 @@ if (!enabled) {
     assert.equal((await curl(s1, `http://127.0.0.1:${cp}/`)).code, 28, "console: dropped, timed out");
     assert.equal((await curl(s1, `http://${b}/`)).code, 28, "another session's address");
     assert.equal((await curl(s1, lanUrl)).out, "lan", "in S1's chat.allow");
+    assert.equal((await curl(s1, proxyLanUrl)).code, 28, "10.77/16 stays dropped even in chat.allow");
+    proxyLan.close();
+    assert.equal((await curl(s1, "telnet://127.0.0.53:53")).code, 28, "TCP DNS to a local resolver");
     assert.equal((await curl(s2, lanUrl)).code, 28, "not in S2's chat.allow");
     assert.equal((await curl(other, lanUrl)).out, "lan", "no rules for other cgroups");
     assert.notEqual((await curl(s1, "http://[2606:4700::1111]/")).code, 0, "IPv6");

@@ -4,9 +4,7 @@
  * connectors), 127.0.0.6 as a worker of task T.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import { WebSocket } from "ws";
 import { Config } from "../config.ts";
@@ -18,14 +16,14 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { FakeDiscord } from "../test/fakes/discord.ts";
 import { FakeTelegram } from "../test/fakes/telegram.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Connector, Incoming } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
 import { coreFetch, coreSocket, links, listen, proxyModule } from "./index.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-ws-"));
+process.env.HORTUS_HOME = tempDir("hortus-ws-");
 process.env.HORTUS_NO_NET = "1";
 tgTiming.pollS = 1;
 
@@ -162,6 +160,14 @@ test("a placeholder outside IDENTIFY's token is unmapped (1008); a worker's IDEN
   assert.deepEqual({ ...row }, { category: "credential:discord", task_id: "T" });
 });
 
+test("a client frame writing handle syntax itself is refused (1008)", async () => {
+  const n = dc.identifies.length;
+  const r = await closeOf(JSON.stringify({ op: 2, d: { token: "{secret:discord}" } }));
+  assert.equal(r.code, 1008);
+  assert.match(r.reason, /handle syntax/);
+  assert.equal(dc.identifies.length, n);
+});
+
 test("binary frames and heartbeats pass through the relay", async () => {
   const ws = socket("wss://gateway.discord.gg/?v=10&encoding=json");
   const ack = new Promise<number>((resolve) =>
@@ -194,7 +200,7 @@ test("telegram: the path token is swapped; a token in a header is refused", asyn
     headers: { "x-token": "{secret:telegram}" },
   });
   assert.equal(handle.status, 403);
-  assert.match(await handle.text(), /location: telegram may not ride in header:x-token/);
+  assert.match(await handle.text(), /handle syntax in the request/); // handles come from transforms only
   assert.ok(tg.calls.every((c) => !c.authorization?.includes(tg.token)));
 });
 

@@ -6,13 +6,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { WebSocket, WebSocketServer } from "ws";
@@ -23,14 +23,15 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
+import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
-import { write as writeVault } from "../vault/vault.ts";
+import { read as readVault, write as writeVault } from "../vault/vault.ts";
 import { coreFetch, links, listen, proxyModule } from "./index.ts";
 import { egress, hashTemplate } from "./pipeline.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-proxy-"));
+process.env.HORTUS_HOME = tempDir("hortus-proxy-");
 const run = promisify(execFile);
 const owner = { role: "owner" as const };
 
@@ -59,6 +60,10 @@ const fake = http.createServer((req, res) => {
     if (req.url === "/api/auth.test") return json({ ok: true, echo: req.headers.authorization });
     if (req.url === "/api/chat.postMessage") return json({ ok: true, channel: "C1", ts: "111.222" });
     if (req.url === "/zod") return json({ name: "zod", leaked: "xoxb-real" });
+    if (req.url === "/gz") {
+      res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
+      return res.end(gzipSync(JSON.stringify({ leaked: "xoxb-real" })));
+    }
     if (req.url?.includes("git-receive-pack")) {
       res.writeHead(200, { "content-type": "application/x-git-receive-pack-result" });
       return res.end(`n=${n}`);
@@ -89,7 +94,7 @@ wss.on("connection", (ws) => ws.on("message", (m, isBinary) => ws.send(m, { bina
 // ---------------------------------------------------------------------------------------------------------------------
 // fixture transforms
 
-const fixtures = mkdtempSync(join(tmpdir(), "hortus-proxy-tf-"));
+const fixtures = tempDir("hortus-proxy-tf-");
 function fixture(name: string, hosts: string[], code: string, locations = ["header:Authorization"]) {
   mkdirSync(join(fixtures, name), { recursive: true });
   const manifest = { name, credentials: { [name]: { type: "token", hosts, locations } } };
@@ -114,6 +119,7 @@ fixture(
   return { ...req, headers: { ...req.headers, "x-seen": JSON.stringify([req.body, req.stream]) } };
 }`,
 );
+fixture("lh", ["localhost"], bearer);
 fixture("loop", ["loop.test"], "export function request() { for (;;) {} }");
 fixture("oom", ["oom.test"], "export function request() { return { s: 'x'.repeat(100 * 1024 * 1024) }; }");
 fixture("str", ["str.test"], "export function request() { return 'x'; }");
@@ -587,6 +593,96 @@ test("the session's own model credential: no gate, placeholders in its body (the
     });
     assert.equal(s.status, 403);
     assert.match(s.body, /approval/);
+  } finally {
+    ctx.config.worker.provider = prev;
+  }
+});
+
+test("a credential without a transform follows only a manifest naming it, never another's same-type entry", async () => {
+  const prev = ctx.config.worker.provider;
+  writeVault({
+    slack: { type: "token", value: "xoxb-real", transform: "slack" },
+    gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
+    anth: { type: "token", value: "sk-anth-real-1" },
+  });
+  ctx.config.worker.provider = "anth"; // the model-call bypass must not carry it to another API either
+  try {
+    const r = await send({
+      host: "api.gh.test",
+      path: "/user",
+      headers: { authorization: "Bearer hortus-secret-anth" },
+    });
+    assert.equal(r.status, 403);
+    assert.match(r.body, /destination/);
+  } finally {
+    ctx.config.worker.provider = prev;
+    writeVault({
+      slack: { type: "token", value: "xoxb-real", transform: "slack" },
+      gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
+    });
+  }
+});
+
+test("'*' egress: IPv4-mapped IPv6 spellings of private addresses are private too", async () => {
+  for (const host of ["::ffff:7f00:1", "::ffff:a00:1", "::ffff:127.0.0.1", "64:ff9b::a00:1"]) {
+    const t = await egress({ role: "worker", task: "T" }, host, false, undefined);
+    assert.ok("status" in t && t.status === 403, host);
+  }
+  // and a public address stays public (no IPv4 caught by an IPv6 range)
+  for (const host of ["93.184.216.34", "::ffff:5db8:d822"]) {
+    const t = await egress({ role: "worker", task: "T" }, host, false, undefined);
+    assert.ok(!("status" in t), host);
+  }
+});
+
+test("handle syntax written by a client is refused: handles come from transforms only", async () => {
+  const r = await send({
+    host: "api.gh.test",
+    path: "/repos/o/r/collaborators/evil",
+    method: "PUT",
+    headers: { authorization: 'Bearer {sign:installation-token({"name":"gh","admin":true})}' },
+  });
+  assert.equal(r.status, 403);
+  assert.match(r.body, /handle syntax/);
+  const b = await send({ host: "slack.com", path: "/api/chat.postMessage", method: "POST", body: "{secret:slack}" });
+  assert.equal(b.status, 403);
+  assert.match(b.body, /handle syntax/);
+});
+
+test("a compressed response (sent despite accept-encoding: identity) is decoded, then scrubbed", async () => {
+  const r = await send({ host: "registry.npmjs.org", path: "/gz" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers["content-encoding"], undefined);
+  assert.equal(JSON.parse(r.body).leaked, "hortus-secret-slack");
+});
+
+test("a credential never goes over plain http (outside dev.upstreams)", async () => {
+  const prev = ctx.config;
+  ctx.config = Config.parse({ ...prev, chat: { allow: ["127.0.0.0/8", "::1"] } });
+  writeVault({
+    slack: { type: "token", value: "xoxb-real", transform: "slack" },
+    gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
+    lh: { type: "token", value: "lh-real-value", transform: "lh" },
+  });
+  try {
+    const r = await send({ host: "localhost", tls: false, headers: { authorization: "Bearer hortus-secret-lh" } });
+    assert.equal(r.status, 403);
+    assert.match(r.body, /plain http/);
+  } finally {
+    ctx.config = prev;
+    writeVault({
+      slack: { type: "token", value: "xoxb-real", transform: "slack" },
+      gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
+    });
+  }
+});
+
+test("credential.delete refuses a name the config still uses", async () => {
+  const prev = ctx.config.worker.provider;
+  ctx.config.worker.provider = "gh";
+  try {
+    await assert.rejects(call("credential.delete", { name: "gh" }, owner), /in use by worker\.provider/);
+    assert.ok(readVault().gh);
   } finally {
     ctx.config.worker.provider = prev;
   }

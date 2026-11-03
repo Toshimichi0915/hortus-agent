@@ -52,6 +52,8 @@ function line(ev: unknown): string | null {
       return red(s(l.message));
     case "status":
       return grey(s(l.text));
+    case "owner":
+      return `> ${s(l.text).replace(/\n/g, "\n> ")}`;
     case "thinking":
     case "tool_result":
     case "message":
@@ -61,10 +63,31 @@ function line(ev: unknown): string | null {
   }
 }
 
-function isText(ev: unknown): boolean {
+/** The line's type (`text`, `owner`, …) of a stream event or a replies row. */
+function typeOf(ev: unknown): unknown {
   const r = ev as Row | null;
-  if (typeof r?.body === "string") return r.body.startsWith('{"type":"text"');
-  return (r?.type ?? (r?.body as Row | undefined)?.type) === "text";
+  if (typeof r?.body === "string") return /^\{"type":"(\w+)"/.exec(r.body)?.[1];
+  return r?.type ?? (r?.body as Row | undefined)?.type;
+}
+const isText = (ev: unknown) => typeOf(ev) === "text";
+
+/** Lines as the REPL shows them: text deltas run together, every other line starts on a fresh one. */
+function printer(): { print(ev: unknown): void; end(): void } {
+  let mid = false;
+  return {
+    print(ev) {
+      const out = line(ev);
+      if (out === null) return;
+      if (isText(ev)) {
+        process.stdout.write(out);
+        mid = !out.endsWith("\n");
+      } else {
+        console.log(mid ? `\n${out}` : out);
+        mid = false;
+      }
+    },
+    end: () => void (mid && process.stdout.write("\n")),
+  };
 }
 
 function errorText(e: unknown): string {
@@ -86,23 +109,21 @@ async function chat(args: string[], rpc: RpcClient): Promise<void> {
   const positionals = id === undefined ? args : args.slice(2);
   let closing = false;
   let interrupts = 0;
+  let lastError = "";
+  // the stream and the send can fail for the same reason (no such task): said once, and the exit code says it too
+  const report = (e: unknown) => {
+    const t = errorText(e);
+    if (t !== lastError) console.error(red(t));
+    lastError = t;
+    process.exitCode = 1;
+  };
   const follow = async (task: string) => {
     try {
-      // text arrives as deltas: written as is; any other line starts on a fresh one
-      let mid = false;
-      for await (const ev of rpc.stream("task.stream", { id: task })) {
-        const out = line(ev);
-        if (out === null) continue;
-        if (isText(ev)) {
-          process.stdout.write(out);
-          mid = !out.endsWith("\n");
-        } else {
-          console.log(mid ? `\n${out}` : out);
-          mid = false;
-        }
-      }
+      const p = printer();
+      // the owner's own lines: the REPL user typed them
+      for await (const ev of rpc.stream("task.stream", { id: task })) if (typeOf(ev) !== "owner") p.print(ev);
     } catch (e) {
-      if (!closing) console.error(red(errorText(e)));
+      if (!closing) report(e);
     }
   };
   let chain: Promise<void> = Promise.resolve();
@@ -117,12 +138,22 @@ async function chat(args: string[], rpc: RpcClient): Promise<void> {
           void follow(id);
         } else await rpc.call("task.send", { id, text });
       } catch (e) {
-        console.error(red(errorText(e)));
+        report(e);
         if (!(e instanceof RpcError)) process.exit(1);
       }
     });
   };
-  if (id !== undefined) void follow(id);
+  if (id !== undefined) {
+    // an unknown or closed id fails here, before the REPL (not as a stream error nobody waits for)
+    try {
+      const { task } = (await rpc.call("task.get", { id })) as { task: Row };
+      if (task.status === "done" || task.status === "failed") throw new Error(`task ${id} is ${s(task.status)}`);
+    } catch (e) {
+      report(e);
+      return;
+    }
+    void follow(id);
+  }
   if (positionals.length) say(positionals.join(" "));
   const rl = createInterface({ input: process.stdin, terminal: false });
   const interrupt = () => {
@@ -171,10 +202,9 @@ const commands: Record<string, Command> = {
       if (c.summary) console.log(`\n${c.summary}`);
       for (const a of c.approvals) console.log(`\npending approval #${s(a.id)} ${s(a.category)}`);
       if (c.replies.length) console.log("");
-      for (const r of c.replies) {
-        const out = line(r);
-        if (out !== null) console.log(out);
-      }
+      const p = printer();
+      for (const r of c.replies) p.print(r);
+      p.end();
     },
   },
   chat: {

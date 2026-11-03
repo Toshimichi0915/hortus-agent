@@ -14,7 +14,7 @@ const pw = (name: string, label: string) =>
 
 /** Fields per type are shown by CSS (`form:has(option[value=…]:checked)`); empty fields are not sent. */
 const form = h`<form class="cred" data-call="credential.set" data-reset>
-<label>Name <input name="name" required pattern="[A-Za-z0-9_.\\-]+"></label>
+<label>Name <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" title="lowercase letters, digits, _ and -"></label>
 <label>Type <select name="type"><option value="token">token</option><option value="github-app">github-app</option><option value="webhook-secret">webhook-secret</option><option value="aws">aws</option></select></label>
 <label>Transform <input name="transform"></label>
 <label>Hosts <input name="hosts" data-list placeholder="comma-separated" pattern="[A-Za-z0-9.\\-]+(\\s*,\\s*[A-Za-z0-9.\\-]+)*"></label>

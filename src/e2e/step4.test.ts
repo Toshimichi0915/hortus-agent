@@ -8,26 +8,17 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { createServer } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -205,8 +196,8 @@ const taskRow = (id: string) =>
 
 before(async () => {
   if (!hasScope) return;
-  home = mkdtempSync(join(tmpdir(), "hortus-step4-"));
-  fake = mkdtempSync(join(tmpdir(), "hortus-step4fake-"));
+  home = tempDir("hortus-step4-");
+  fake = tempDir("hortus-step4fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -462,9 +453,34 @@ test("PAUSED → no batch; unpause → batches of everything pending, batch_max 
   );
 });
 
+test("planner.provider naming no vault credential: the batch is skipped before anything is consumed", {
+  skip,
+}, async () => {
+  planner(IGNORE_ALL);
+  const count = batches().length;
+  let prev: unknown;
+  await configure((c) => {
+    prev = c.planner?.provider;
+    (c.planner as Record<string, unknown>).provider = "gone";
+  });
+  try {
+    slack.post("C1", { user: "U1", text: "while the key is gone" });
+    const e = await waitEvent("while the key is gone");
+    await sleep(2500);
+    assert.equal(batches().length, count);
+    assert.equal(eventRow("while the key is gone")?.consumed, 0, `event ${e.id} stays for the next batch`);
+  } finally {
+    await configure((c) => {
+      (c.planner as Record<string, unknown>).provider = prev;
+    });
+  }
+  slack.post("C1", { user: "U1", text: "and the next wake" });
+  assert.match(batchText(await nextBatch(count)), /while the key is gone/, "the next batch has it");
+});
+
 test("results: done wakes a batch with ## Results → task_close; budget_exceeded shows as such", { skip }, async () => {
   planner(`export default ({ n, events, batch }) => {
-    if (n > 0) return { text: "ok" };
+    if (n > 0 || events[0]?.text.includes("ignore")) return { text: "ok" };
     const m = /^- \\[(\\S+)\\] (result|budget_exceeded):/m.exec(batch);
     if (m && m[2] === "result") return { calls: [{ name: "task_close", input: { task_id: m[1], outcome: "done" } }] };
     if (m) return { text: "leave it" };
@@ -492,6 +508,16 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
       new RegExp(`- \\[${over}\\] budget_exceeded:\\n<<<quoted\\nbudget exceeded: 15/1 tokens`),
     );
     assert.equal(taskRow(over)?.status, "waiting");
+
+    // a run's done(""): an empty result is no Planner input (v7 › Schedules › Empty result)
+    db((d) =>
+      d
+        .prepare("INSERT INTO outbox(task_id, seq, body, created) VALUES (?, 99, ?, ?)")
+        .run(over, JSON.stringify({ seq: 99, type: "result", text: "", ts: "" }), new Date().toISOString()),
+    );
+    slack.post("C1", { user: "U1", text: "please ignore this" });
+    b = await nextBatch(count++);
+    assert.doesNotMatch(batchText(b), new RegExp(`\\[${over}\\] result:`));
   } finally {
     await configure((c) => {
       (c.worker as { budget: { tokens: number } }).budget.tokens = 2e6;

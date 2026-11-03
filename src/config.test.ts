@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Config, load, policyFor, save } from "./config.ts";
 import * as paths from "./paths.ts";
+import { tempDir } from "./test/until.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-config-"));
+process.env.HORTUS_HOME = tempDir("hortus-config-");
 
 test("missing file → defaults", () => {
   const c = load(join(paths.home(), "absent.json"));
@@ -69,4 +69,9 @@ test("save: atomic, 0600, unknown keys survive a round trip", () => {
   assert.equal((back.dofs.s as Record<string, unknown>).extra, "x");
   assert.equal(back.vm.cpus, 8);
   assert.ok(existsSync(file));
+});
+
+test("a project name outside letters, digits, . _ - is refused by the config schema", () => {
+  assert.throws(() => Config.parse({ projects: { "<b>x</b>": { path: "/tmp" } } }), /a project name: letters/);
+  assert.ok(Config.parse({ projects: { "my-app.v2": { path: "/tmp" } } }).projects["my-app.v2"]);
 });

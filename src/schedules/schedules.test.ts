@@ -4,8 +4,7 @@
  * directly. The Worker-driven cases (the v6 done-when, scripts, `/schedule` persistence) are in e2e/step3c.test.ts.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { Config } from "../config.ts";
@@ -16,15 +15,15 @@ import * as paths from "../paths.ts";
 import { call } from "../rpc.ts";
 import { recover } from "../runtime/recovery.ts";
 import * as tasks from "../runtime/tasks.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Caller, OutboxMsg } from "../types.ts";
 import * as runs from "./runs.ts";
 import { clock, schedulesModule, tick } from "./schedules.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-sched-"));
+process.env.HORTUS_HOME = tempDir("hortus-sched-");
 process.env.HORTUS_NO_NET = "1";
 
-const project = mkdtempSync(join(tmpdir(), "hortus-sched-proj-"));
+const project = tempDir("hortus-sched-proj-");
 const log = memLog();
 const ctx: Ctx = {
   config: Config.parse({
@@ -93,6 +92,11 @@ test("validation: exactly one trigger, minimum interval, tz, script size, at in 
     /expire \(.*7 days after the last message\)/,
   );
   await assert.rejects(call("schedule.set", { text: "x", every: 300 }, { role: "planner", task: p.id }), /not allowed/);
+  // a task last spoken to over 7 days ago: an `every` row would be deleted at the next tick, so it is refused now
+  const old = parent();
+  ctx.db.prepare("UPDATE tasks SET created = ? WHERE id = ?").run(new Date(T - 8 * DAY).toISOString(), old.id);
+  await assert.rejects(set(old.id, { every: 300 }), /timers expired at .*use cron/);
+  assert.ok(await set(old.id, { cron: "0 9 * * *" }));
 });
 
 test("DST in America/New_York: the skipped 2:30 is dropped, the repeated 1:30 fires once", async () => {

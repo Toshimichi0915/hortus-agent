@@ -5,13 +5,13 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { outbox, sessionFiles, setup } from "../agent/testkit.ts";
 import * as paths from "../paths.ts";
+import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import * as net from "./net.ts";
 import { init, missingImage, qemuArgs, startVm, vmTaskJson } from "./vm.ts";
@@ -86,7 +86,7 @@ test("qemuArgs: microvm, direct kernel boot, snapshot root, tap, one vhost-user-
 });
 
 test("missingImage names the first missing file and the fix", () => {
-  const d = mkdtempSync(join(tmpdir(), "hortus-img-"));
+  const d = tempDir("hortus-img-");
   assert.equal(missingImage(d), `${join(d, "agent.ext4")} missing: run \`hortus image build\``);
   for (const f of ["agent.ext4", "initramfs.img", "vmlinuz"]) writeFileSync(join(d, f), "");
   assert.equal(missingImage(d), null);
@@ -133,7 +133,7 @@ if (!enabled) {
 } else {
   test("VM boot: the agent runs, /task/ctl is read-only, out/work persists, the VM powers off", async () => {
     const images = process.env.HORTUS_TEST_IMAGES ?? paths.images();
-    const home = mkdtempSync(join(tmpdir(), "hortus-vmhome-"));
+    const home = tempDir("hortus-vmhome-");
     process.env.HORTUS_HOME = home;
     symlinkSync(images, join(home, "images"));
     const links: string[] = [];

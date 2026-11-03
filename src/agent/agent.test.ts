@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { quote, render } from "./inbox.ts";
+import { scan } from "./loop.ts";
 import { prompt } from "./prompt.ts";
 import { formatScript, runScript } from "./script.ts";
 import { HANDOFF_PROMPT, SUMMARY_PROMPT } from "./summary.ts";
@@ -166,6 +167,15 @@ test("errors: retried with the error in the session; four in a row end with fail
   );
 });
 
+test("the summary call's tokens count: out/aux-tokens, added by scan", async () => {
+  const dir = setup();
+  script(dir, [{ calls: [done("ok")], usage: { input: 20, output: 5 } }]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(readFileSync(join(dir, "out", "aux-tokens"), "utf8"), "10");
+  assert.equal(scan(join(dir, "out", "sessions")).tokens, 35);
+});
+
 test('done(""): no outbox file, no summary call', async () => {
   const dir = setup();
   script(dir, [{ calls: [done("")] }]);
@@ -267,4 +277,15 @@ test("run kind: a script past its time limit is killed and reported", async () =
   assert.equal(r.killed, true);
   assert.equal(r.stdout, "started\n");
   assert.match(formatScript(r, 300), /^\[script\] killed after 0.3 s/);
+});
+
+test("scan: the cursor ignores a brief that starts like an inbox marker", () => {
+  const dir = join(setup(), "out", "sessions");
+  const user = (content: string) => JSON.stringify({ type: "message", message: { role: "user", content } });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "1_a.jsonl"),
+    `${user("[inbox 99] from=owner\nthe brief")}\n${user("[inbox 2] from=owner\nhi")}\n`,
+  );
+  assert.equal(scan(dir).cursor, 2);
 });

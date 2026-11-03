@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { request } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { TLSSocket } from "node:tls";
@@ -14,13 +13,14 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call } from "../rpc.ts";
 import { remoteConsole } from "../runtime/net.ts";
+import { tempDir } from "../test/until.ts";
 import { SoftAuthenticator } from "../test/webauthn.ts";
 import { caCert } from "../vault/ca.ts";
 import { consoleModule, consoleUrl } from "./index.ts";
 import { encode } from "./qr.ts";
 import { hourly, parseListen, startRemote, stopRemote } from "./remote.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-remote-"));
+process.env.HORTUS_HOME = tempDir("hortus-remote-");
 process.env.HORTUS_CONSOLE_PORT = "0";
 const HOST = "console.test";
 const ctx: Ctx = {
@@ -266,7 +266,7 @@ test("loopback: no cookie needed; Settings shows the code, its URL and the QR", 
 });
 
 test("console.tls: the configured chain is served, a world-readable key warns, a changed file is re-read", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "hortus-tls-"));
+  const dir = tempDir("hortus-tls-");
   const mint = (name: string) => {
     execFileSync(
       "openssl",

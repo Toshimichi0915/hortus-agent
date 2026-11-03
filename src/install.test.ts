@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { install } from "./install.ts";
+import { tempDir } from "./test/until.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-install-home-"));
+process.env.HORTUS_HOME = tempDir("hortus-install-home-");
 
 test("install writes the unit with sudo tee, refuses a different one without --force", () => {
-  const unitPath = join(mkdtempSync(join(tmpdir(), "hortus-install-")), "hortusd.service");
+  const unitPath = join(tempDir("hortus-install-"), "hortusd.service");
   const calls: string[] = [];
   const out: string[] = [];
   const opts = {

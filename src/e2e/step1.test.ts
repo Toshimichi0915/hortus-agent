@@ -3,15 +3,14 @@
  * Runs the real daemon (HORTUS_NO_NET=1) and the fake Slack through the pipeline (`dev.upstreams`).
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
+import { tempDir } from "../test/until.ts";
 
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const until = async (pred: () => boolean, ms = 10_000) => {
@@ -27,7 +26,7 @@ let fake: FakeSlack;
 let daemon: ReturnType<typeof spawn>;
 
 before(async () => {
-  home = mkdtempSync(join(tmpdir(), "hortus-step1-"));
+  home = tempDir("hortus-step1-");
   process.env.HORTUS_HOME = home;
   fake = await FakeSlack.start();
   fake.user("U1", "alice");

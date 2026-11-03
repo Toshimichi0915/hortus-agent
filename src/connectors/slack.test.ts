@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
 import { backoff } from "./retry.ts";
 import { create, timing } from "./slack.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-slack-"));
+process.env.HORTUS_HOME = tempDir("hortus-slack-");
 
 let fake: FakeSlack;
 let conn: Connector;

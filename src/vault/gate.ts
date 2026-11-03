@@ -4,6 +4,7 @@
  * else for that task only). Statuses: pending → approved | rejected | expired; approved → used on the pass.
  */
 import { policyFor } from "../config.ts";
+import { bus } from "../console/events.ts";
 import { logger } from "../log.ts";
 import { type Caller, type InboxMsg, RpcError } from "../types.ts";
 import { judge } from "./judge.ts";
@@ -156,6 +157,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     );
   const id = Number(r.lastInsertRowid);
   log.info("approval pending", { id, kind, category: input.category, task: requester });
+  bus.emit("approvals", { id, task: requester }); // the Approvals page, a chat's inline entries, the nav badge
   try {
     deps.notify(`approval ${id} pending (${input.category})`);
   } catch (e) {
@@ -182,6 +184,7 @@ export function decide(
   if (r.changes !== 1) throw new RpcError("invalid", "already decided");
   if (row.kind === "grant" && status === "approved" && row.task_id) addToScope(row.task_id, row.category);
   log.info("approval decided", { id, status, by });
+  bus.emit("approvals", { id }); // another tab, the CLI or the phone decided: every open page follows
   // a durable grant entry tells the task whose request opened it
   const taskId = row.task_id ?? (row.payload ? (JSON.parse(row.payload) as { task?: string }).task : undefined);
   if (!taskId) return;
@@ -218,5 +221,6 @@ export function expire(now = Date.now()): number {
   const r = ctx()
     .db.prepare("UPDATE approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ?")
     .run(new Date(now).toISOString(), cutoff);
+  if (r.changes) bus.emit("approvals", {});
   return Number(r.changes);
 }

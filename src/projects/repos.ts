@@ -6,7 +6,7 @@
  * hortusd's own `git fetch` goes through the pipeline as role core like every other upstream call (v7 › Projects):
  * git talks plain HTTP to a one-shot loopback relay that hands each request to `coreFetch` as
  * `https://<host>/<project>.git/…`, so the placeholder in the URL becomes the read-only core installation token in
- * the same place as for a Worker. The relay answers only under a random path prefix and only this project's paths.
+ * the same place as for a Worker. The relay answers only requests carrying its random token (a header from git's environment) and only this project's upload-pack paths.
  */
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -47,18 +47,59 @@ async function fetchNow(dir: string, dof: string, cloneUrl: string, fetch: Fetch
     await git(dir, "config", "gc.auto", "0");
   }
   const up = new URL(cloneUrl);
-  const prefix = `/${randomBytes(16).toString("hex")}`;
+  const { server, port, token } = await relay(up, fetch);
+  try {
+    // the relay's capability is a header from the environment, not a path in argv: a session on this host can read
+    // every process's /proc/<pid>/cmdline and reaches 127.0.0.0/8
+    await run(
+      "git",
+      [
+        "fetch",
+        "-q",
+        `http://x-access-token:hortus-secret-${dof}@127.0.0.1:${port}${up.pathname}`,
+        "+refs/heads/*:refs/heads/*",
+        "+refs/tags/*:refs/tags/*",
+        "+refs/pull/*/head:refs/pull/*/head",
+      ],
+      {
+        cwd: dir,
+        env: {
+          ...env,
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.extraHeader",
+          GIT_CONFIG_VALUE_0: `${RELAY}: ${token}`,
+        },
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}
+
+const RELAY = "X-Hortus-Relay";
+
+/** The loopback relay for one fetch of `up`: only requests carrying `token` in `X-Hortus-Relay`, and only `up`'s
+ * upload-pack paths (a fetch; never a push as core), reach `fetch`. */
+export async function relay(up: URL, fetch: Fetch): Promise<{ server: http.Server; port: number; token: string }> {
+  const token = randomBytes(16).toString("hex");
   const server = http.createServer((req, res) => {
     const path = req.url ?? "";
-    if (!path.startsWith(`${prefix}${up.pathname}/`)) {
+    const rest = path.startsWith(`${up.pathname}/`) ? path.slice(up.pathname.length) : "";
+    const ok =
+      (req.method === "GET" && rest === "/info/refs?service=git-upload-pack") ||
+      (req.method === "POST" && rest === "/git-upload-pack");
+    if (req.headers[RELAY.toLowerCase()] !== token || !ok) {
       req.resume();
       return void res.writeHead(404).end();
     }
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers))
-      if (k !== "host" && k !== "connection" && v !== undefined) headers[k] = [v].flat().join(", ");
+      if (k !== "host" && k !== "connection" && k !== RELAY.toLowerCase() && v !== undefined)
+        headers[k] = [v].flat().join(", ");
     const body = req.method === "POST" ? { body: Readable.toWeb(req) as unknown as BodyInit, duplex: "half" } : {};
-    fetch(`${up.origin}${path.slice(prefix.length)}`, { method: req.method, headers, ...body } as RequestInit).then(
+    fetch(`${up.origin}${path}`, { method: req.method, headers, ...body } as RequestInit).then(
       (r) => {
         res.writeHead(r.status, Object.fromEntries(r.headers));
         if (r.body) pipeline(Readable.fromWeb(r.body as unknown as ReadableStream), res, () => {});
@@ -68,19 +109,5 @@ async function fetchNow(dir: string, dof: string, cloneUrl: string, fetch: Fetch
     );
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const { port } = server.address() as AddressInfo;
-  try {
-    await git(
-      dir,
-      "fetch",
-      "-q",
-      `http://x-access-token:hortus-secret-${dof}@127.0.0.1:${port}${prefix}${up.pathname}`,
-      "+refs/heads/*:refs/heads/*",
-      "+refs/tags/*:refs/tags/*",
-      "+refs/pull/*/head:refs/pull/*/head",
-    );
-  } finally {
-    server.closeAllConnections();
-    server.close();
-  }
+  return { server, port: (server.address() as AddressInfo).port, token };
 }

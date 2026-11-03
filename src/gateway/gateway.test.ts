@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,11 +8,11 @@ import { connectors } from "../connectors/index.ts";
 import { openDb } from "../db.ts";
 import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
 import { createGateway, type GatewayDeps } from "./gateway.ts";
 
-const home = mkdtempSync(join(tmpdir(), "hortus-gateway-"));
+const home = tempDir("hortus-gateway-");
 process.env.HORTUS_HOME = home;
 const db = openDb(join(home, "db.sqlite"));
 const owner = { role: "owner" as const };

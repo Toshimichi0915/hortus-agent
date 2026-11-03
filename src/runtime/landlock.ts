@@ -13,7 +13,8 @@ import type { Config } from "../config.ts";
 import * as paths from "../paths.ts";
 
 export type Kind = "unattended" | "chat";
-type Mode = "ro" | "rw";
+/** `rn`: read-write without connecting to unix sockets (the shim; /tmp holds X11, tmux and ssh-agent sockets) */
+type Mode = "ro" | "rw" | "rn";
 
 export interface ProfileTask {
   id: string;
@@ -78,6 +79,13 @@ export function denySet(config: Pick<Config, "policy">): string[] {
   return [...new Set(list.map(resolve))];
 }
 
+/** What hortusd itself runs (its `dist/` with the shim, its `node_modules`) and the owner's user units: read-only in
+ * every profile, so a chat session cannot unsandbox later sessions or rewrite the daemon. */
+export function readOnlySet(): string[] {
+  const root = fileURLToPath(new URL("../..", import.meta.url)); // dist/runtime/landlock.js → the package root
+  return [join(root, "dist"), join(root, "node_modules"), join(homedir(), ".config", "systemd")].map(resolve);
+}
+
 /** Directives granting `mode` on `dir` minus everything in `deny`. */
 function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   if (deny.some((d) => under(dir, d))) return;
@@ -116,15 +124,19 @@ const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "ptmx", "pts
 /** The directive text for one task under `kind`. */
 export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "policy">): string {
   const deny = denySet(config);
+  const ro = readOnlySet().filter((p) => !deny.some((d) => under(p, d)));
+  const denyRw = [...deny, ...ro]; // every write grant skips them; they are granted read-only below
   const out: string[] = [];
   if (task.cgroup) out.push(`cgroup ${task.cgroup}`);
   const base: Mode = kind === "chat" ? "rw" : "ro";
-  grant("/", base, deny, out);
+  grant("/", base, base === "rw" ? denyRw : deny, out);
   if (kind === "unattended") {
     const h = homedir();
+    // ponytail: a Worker's own sockets under /tmp cannot be connected to either; point TMPDIR at out/ if that bites
     for (const p of ["/tmp", ...RW_DEV, ...RW_HOME.map((p) => join(h, p)), ...(config.policy.cache ?? [])])
-      if (existsSync(p)) grant(resolve(p), "rw", deny, out);
+      if (existsSync(p)) grant(resolve(p), "rn", denyRw, out);
   }
+  for (const p of ro) if (existsSync(p)) grant(p, "ro", deny, out);
   // Carve-outs under the denied HORTUS_HOME, still minus every other deny entry (policy.deny inside out/, say).
   const hortus = [resolve(join(homedir(), ".hortus")), resolve(paths.home())];
   const rest = deny.filter((d) => !hortus.includes(d));

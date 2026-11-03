@@ -11,7 +11,6 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -25,7 +24,7 @@ import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -151,8 +150,8 @@ const turn = async (id: string, text: string) => {
 
 before(async () => {
   if (!hasScope) return;
-  home = mkdtempSync(join(tmpdir(), "hortus-step3-"));
-  fake = mkdtempSync(join(tmpdir(), "hortus-step3fake-"));
+  home = tempDir("hortus-step3-");
+  fake = tempDir("hortus-step3fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -206,7 +205,9 @@ test("chat: open → Worker → replies + SSE → waiting; resume keeps the cont
   await waitStatus(id, "waiting");
   const c = await card(id);
   assert.equal(c.task.project, "foo");
-  assert.equal(c.replies[0]?.body.text, "started");
+  // the owner's own words first (the chat shows both sides), then the Worker's
+  assert.deepEqual(c.replies[0]?.body, { type: "owner", text: "hello zebracorn" });
+  assert.equal(c.replies[1]?.body.text, "started");
   assert.match(texts(c), /echo: hello zebracorn/);
   const task = JSON.parse(readFileSync(join(paths.ctl(id), "task.json"), "utf8"));
   assert.equal(task.cwd, join(project, "sub"));
@@ -305,6 +306,27 @@ test("hostile out/: symlink, 2 MB and unknown-type outbox files ignored; summary
   assert.equal(JSON.parse(rows[0]?.body ?? "{}").text, "good one");
   assert.equal(summary.length, 64 * 1024);
   assert.match(readFileSync(join(fake, "hortusd.log"), "utf8"), /outbox file ignored: not a regular file/);
+});
+
+test("over budget with an undrained message: waiting, no restart loop", { skip }, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "spend" });
+  await waitStatus(id, "waiting");
+  await api("task.budget", { id, tokens: 1 });
+  await api("task.send", { id, text: "one more" });
+  await until(async () => (await card(id)).replies.some((r) => r.body.text === "budget"), 15_000, "budget");
+  await waitStatus(id, "waiting");
+  await new Promise((r) => setTimeout(r, 2500));
+  const c = await card(id);
+  assert.equal(c.task.status, "waiting");
+  assert.equal(c.replies.filter((r) => r.body.text === "started").length, 2, "one start per message, no loop");
+});
+
+test("hostile out/: a link planted at summary.md is never followed by hortusd", { skip }, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "links" });
+  await waitStatus(id, "waiting");
+  await turn(id, `!bash ln -sf ${join(home, "vault.json")} ../summary.md\n!done`); // done(""): no summary rewrite
+  const published = readFileSync(join(home, "dof", "logs", id, "summary.md"), "utf8");
+  assert.ok(!published.includes('"value"'), published);
 });
 
 test("a Worker that dies before any model call: waiting with the error on the card, no restart loop", {

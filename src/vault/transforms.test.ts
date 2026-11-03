@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { tempDir } from "../test/until.ts";
 import * as transforms from "./transforms.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-tf-"));
+process.env.HORTUS_HOME = tempDir("hortus-tf-");
 
-const fixtures = mkdtempSync(join(tmpdir(), "hortus-tf-fixtures-"));
+const fixtures = tempDir("hortus-tf-fixtures-");
 function fixture(name: string, code: string, tests?: Record<string, unknown>) {
   const dir = join(fixtures, name);
   mkdirSync(join(dir, "tests"), { recursive: true });

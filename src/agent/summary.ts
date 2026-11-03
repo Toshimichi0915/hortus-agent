@@ -2,7 +2,10 @@
  * The two tool-less calls (v7 Process): the summary after the loop and the handoff note when the context fills.
  * Direct `provider.complete` with `tools: []`, because core's `run` always passes every tool.
  */
+
+import { dirname, join } from "node:path";
 import type { Agent, Message } from "@hortus/core";
+import { AUX_TOKENS, readCapped } from "../hostile.ts";
 import { writeAtomic } from "../mirror/repo.ts";
 import type { TaskJson } from "../types.ts";
 
@@ -38,6 +41,12 @@ async function complete(agent: Agent, task: TaskJson, system: string, messages: 
     () => {},
     () => {},
   );
+  // not in the session (no tool calls, not context): its tokens go to a sidecar `scan` adds (out/aux-tokens)
+  const used = (reply.usage?.input ?? 0) + (reply.usage?.output ?? 0);
+  if (used) {
+    const f = join(dirname(task.paths.work), AUX_TOKENS);
+    writeAtomic(f, String((Number(readCapped(f, 32)?.text) || 0) + used));
+  }
   return reply.text.trim();
 }
 

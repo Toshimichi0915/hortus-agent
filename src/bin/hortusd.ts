@@ -45,6 +45,11 @@ const modules: Module[] = [
 const log = logger("hortusd");
 
 async function main(): Promise<void> {
+  // HORTUS_NO_NET drops the nftables rules and session addresses: a test switch, never a production daemon's.
+  if (process.env.HORTUS_NO_NET === "1" && process.env.HORTUS_HOME === undefined) {
+    log.error("HORTUS_NO_NET=1 needs HORTUS_HOME (tests only): refusing to run sessions without network rules");
+    process.exit(1);
+  }
   const config = load();
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
 
@@ -84,8 +89,9 @@ async function main(): Promise<void> {
     wake: wakePlanner,
   });
   // a non-chat Worker's result or budget_exceeded is Planner input
-  exitHooks.onResult = (t) => {
-    if (t.kind !== "chat") wakePlanner();
+  // (an empty `done("")` reports nothing: v7 › Schedules › Empty result)
+  exitHooks.onResult = (t, m) => {
+    if (t.kind !== "chat" && m.text) wakePlanner();
   };
   // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
   sessionNet.init({

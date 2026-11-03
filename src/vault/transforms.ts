@@ -240,3 +240,12 @@ export function runTests(name: string): { file: string; ok: boolean; diff?: stri
       }
     });
 }
+
+/**
+ * The manifest a vault credential follows: its own transform's (`transform`, else the one of its name), else the
+ * requested host's manifest only when that manifest names it. Never another manifest's same-type entry: a key saved
+ * without a transform must not ride to every host whose manifest has a token credential.
+ */
+export function credentialManifest(name: string, entry: { transform?: string }, host?: Manifest): Manifest | undefined {
+  return get(entry.transform ?? name)?.manifest ?? (host?.credentials[name] ? host : undefined);
+}

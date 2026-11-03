@@ -98,6 +98,11 @@ export function set(
     throw new RpcError("invalid", `script is ${Buffer.byteLength(script)} bytes; the limit is 16 KB`);
   const now = clock.now();
   const expires = cron === undefined ? lastHuman(taskId) + EXPIRY_MS : undefined;
+  if (expires !== undefined && expires <= now)
+    throw new RpcError(
+      "invalid",
+      `this task's timers expired at ${iso(expires)} (7 days after the last message that was not from a timer); use cron`,
+    );
   let fire: number;
   if (at !== undefined) {
     fire = Date.parse(at);
@@ -167,8 +172,12 @@ export function tick(): void {
   const d = db();
   const expired = d.prepare("SELECT id FROM schedules WHERE expires_at <= ?").all(iso(now)) as { id: number }[];
   for (const { id } of expired) {
-    removeRow(id);
-    log().info("expired", { id });
+    try {
+      removeRow(id);
+      log().info("expired", { id });
+    } catch (e) {
+      log().error("expiring a row failed", e, { id });
+    }
   }
   const due = d
     .prepare("SELECT * FROM schedules WHERE fire_at <= ? ORDER BY fire_at")

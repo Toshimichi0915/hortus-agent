@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { request } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
@@ -12,10 +10,11 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
+import { tempDir } from "../test/until.ts";
 import { bus, consoleModule } from "./index.ts";
 import { sse } from "./server.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-console-"));
+process.env.HORTUS_HOME = tempDir("hortus-console-");
 process.env.HORTUS_CONSOLE_PORT = "0";
 let reloads = 0;
 const ctx: Ctx = {

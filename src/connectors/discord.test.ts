@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
-import { memLog, until } from "../test/until.ts";
-import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
 import { directFetch } from "../test/direct.ts";
+import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
+import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
 import { create } from "./discord.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-discord-"));
+process.env.HORTUS_HOME = tempDir("hortus-discord-");
 
 let fake: FakeDiscord;
 let conn: Connector;

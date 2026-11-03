@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Connector, ConnectorDeps, Incoming } from "../types.ts";
 import { create, timing } from "./telegram.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-telegram-"));
+process.env.HORTUS_HOME = tempDir("hortus-telegram-");
 timing.pollS = 1;
 
 let fake: FakeTelegram;

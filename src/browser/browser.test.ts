@@ -5,9 +5,8 @@
  * and the login flow is driven through its SSE and `login.input` endpoints, as the page's script does.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -21,15 +20,17 @@ import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
-import { fakeSite, PASSWORD, SESSION, TOKEN, USER, type FakeSite } from "../test/fakes/site.ts";
+import { type FakeSite, fakeSite, PASSWORD, SESSION, TOKEN, USER } from "../test/fakes/site.ts";
+import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { invoke } from "../vault/transforms.ts";
+import { flags } from "./cdp.ts";
 import { jar, registrable } from "./jar.ts";
 import { browserModule, IDLE } from "./login-view.ts";
 import { BrowserSession } from "./tools.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-browser-"));
+process.env.HORTUS_HOME = tempDir("hortus-browser-");
 process.env.HORTUS_NO_NET = "1";
 const hasChromium = existsSync("/usr/bin/chromium") || process.env.HORTUS_CHROMIUM !== undefined;
 
@@ -39,7 +40,7 @@ let shared: { https: number; http: number };
 let console_: Awaited<ReturnType<typeof startServer>>;
 const sessions: BrowserSession[] = [];
 /** the fixture site manifest: a form password, a body token capture, `GET /logout` consequential */
-const fixtures = mkdtempSync(join(tmpdir(), "hortus-browser-tf-"));
+const fixtures = tempDir("hortus-browser-tf-");
 
 before(async () => {
   site = await fakeSite();
@@ -446,7 +447,7 @@ test("v6 done-when: browser_login → login view (SSE + login.input) → Done �
   assert.ok(!(JSON.stringify(msg) + (await s.eval("document.cookie"))).includes(String(site.auth)));
 
   // stop and start again: a new process and a fresh profile, only task.json's jar
-  const again = await worker("T", "127.0.0.2", mkdtempSync(join(tmpdir(), "hortus-browser-restart-")));
+  const again = await worker("T", "127.0.0.2", tempDir("hortus-browser-restart-"));
   assert.ok(
     again.task.cookies?.some((c) => c.name === "auth"),
     "task.json carries the jar",
@@ -541,4 +542,10 @@ test("Credentials: captured origins listed; forget deletes them and old placehol
   assert.equal(r.status, 403);
   assert.match(r.body, /unknown credential/);
   rmSync(fixtures, { recursive: true, force: true });
+});
+
+test("cdp: DevTools over a pipe, never a TCP port (sessions reach 127.0.0.0/8)", () => {
+  const f = flags({ userDataDir: "/x" });
+  assert.ok(f.includes("--remote-debugging-pipe"));
+  assert.ok(!f.some((x) => x.startsWith("--remote-debugging-port")));
 });

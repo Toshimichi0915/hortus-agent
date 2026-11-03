@@ -5,6 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { z } from "zod";
+import { dirOf } from "../connectors/forge.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
 import { tasks } from "../runtime/index.ts";
@@ -73,7 +74,9 @@ define("task_create", {
     for (const r of scope.repos ?? []) {
       const [dof = "", name = ""] = r.split(":");
       const d = c.dofs[dof];
-      if (!d || !name || !(d.repos?.includes(name) || existsSync(paths.repo(dof, name))))
+      // `owner/repo` (GitLab: groups/sub/repo), no `..` segment: the name also becomes a path and a scope pattern
+      const shaped = /^[\w.-]+(\/[\w.-]+)+$/.test(name) && !name.split("/").some((x) => x === "." || x === "..");
+      if (!d || !shaped || !(d.repos?.includes(name) || existsSync(paths.repo(dof, dirOf(name)))))
         throw new RpcError("invalid", `unknown repo ${r} (expected <dof>:<project> of a configured forge)`);
     }
     const names = new Set(Object.keys(readVault()));

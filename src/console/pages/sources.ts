@@ -93,9 +93,17 @@ export const sources: Page = async (ctx) => {
   const tfNotes = tf.ok ? tf.value.notes.map((n) => h`<p class="error">${n}</p>`) : [];
   const ps = await tryCall<PlannerStatus>("planner.status", {});
   const p = ps.ok ? ps.value : undefined;
+  const pc = ctx.config.planner;
+  // the batch loop only logs these: the owner should see why nothing is routed
+  const unset =
+    !pc.provider || !pc.model
+      ? "planner.provider and planner.model are not set (Settings): no batch runs"
+      : !readVault()[pc.provider]
+        ? `planner.provider ${pc.provider} is not a credential (Credentials): no batch runs`
+        : "";
   const planner = !p
     ? ""
-    : h`<section class="source" id="planner"><h2>Planner</h2><p>last batch ${time(p.last)} · events routed today ${String(
+    : h`<section class="source" id="planner"><h2>Planner</h2>${unset ? error(unset) : ""}<p>last batch ${time(p.last)} · events routed today ${String(
         p.routed,
       )} · tokens today ${p.tokens.toLocaleString("en")} / ${p.cap.toLocaleString("en")}${p.tokens >= p.cap ? " (cap reached: batches skipped)" : ""}</p></section>`;
   return layout(

@@ -30,6 +30,10 @@ export const ProjectConfig = z.looseObject({
   origins: Strings.optional(),
 });
 
+/** A project name: also a directory, a URL segment and a ref part (projects/origin.ts) */
+export const PROJECT_NAME = /^(?!.*\.\.)[A-Za-z0-9][\w.-]{0,63}$/;
+export const PROJECT_NAME_HINT = "a project name: letters, digits, . _ - only (no ..), starting with a letter or digit";
+
 export const Config = z.looseObject({
   owner: z
     .looseObject({
@@ -88,7 +92,7 @@ export const Config = z.looseObject({
       tls: z.looseObject({ cert: z.string(), key: z.string() }).optional(),
     })
     .optional(),
-  projects: z.record(z.string(), ProjectConfig).default({}),
+  projects: z.record(z.string().regex(PROJECT_NAME, PROJECT_NAME_HINT), ProjectConfig).default({}),
   /** category (`credential:<name>`, `*`, …) → `human` | `auto`, plus the Landlock extensions `deny` and `cache` (path
    * lists, v7 › Security). Read per request: a Settings edit applies to the next one. */
   policy: z.object({ deny: Strings.optional(), cache: Strings.optional() }).catchall(Mode).default({ "*": "human" }),

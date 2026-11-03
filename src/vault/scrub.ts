@@ -22,7 +22,19 @@ export class Scrubber {
 
   constructor(values: Pair[]) {
     const long: Pair[] = [];
-    for (const p of values) {
+    // the encodings an upstream echoes a value back in: URL-encoded (a query string in an error), JSON-escaped
+    // (`\/`, `\u…`). ponytail: base64 (an echoed Basic header) is not covered
+    const variants = values.flatMap((p) =>
+      [
+        ...new Set([
+          p.value,
+          encodeURIComponent(p.value),
+          JSON.stringify(p.value).slice(1, -1),
+          p.value.replaceAll("/", "\\/"),
+        ]),
+      ].map((value) => ({ value, placeholder: p.placeholder })),
+    );
+    for (const p of variants) {
       if (p.value.length >= MIN) long.push(p);
       else if (!warned.has(p.placeholder)) {
         warned.add(p.placeholder);

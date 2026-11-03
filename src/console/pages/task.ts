@@ -1,5 +1,5 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { readCapped } from "../../hostile.ts";
 import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
@@ -19,20 +19,7 @@ const msg = (r: MsgRow) => {
 
 /** The last 64 KB of `out/console.log` (a VM's serial output, an unattended session's stdout and stderr). */
 function tail(f: string): string | null {
-  try {
-    const size = statSync(f).size;
-    const n = Math.min(size, 64 * 1024);
-    const buf = Buffer.alloc(n);
-    const fd = openSync(f, "r");
-    try {
-      readSync(fd, buf, 0, n, size - n);
-    } finally {
-      closeSync(fd);
-    }
-    return buf.toString("utf8");
-  } catch {
-    return null;
-  }
+  return readCapped(f, 64 * 1024, true)?.text ?? null; // the Worker's file: no links, FIFOs
 }
 
 export const task: Page = (ctx, { m }) => {
@@ -69,6 +56,7 @@ export const task: Page = (ctx, { m }) => {
     h`<div data-refresh id="card">
 ${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${details("show console.log", t.error)}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
+${t.brief ? details("Brief", t.brief) : ""}
 <table class="kv">
 <tr><th>Status</th><td>${t.status ?? ""}${t.outcome ? ` (${t.outcome})` : ""}</td></tr>
 <tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Runtime</th><td>${t.runtime ?? "host"}${up}</td></tr>

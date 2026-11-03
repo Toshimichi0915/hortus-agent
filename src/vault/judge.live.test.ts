@@ -5,8 +5,8 @@
  * reached (tokens counted) is.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Config } from "../config.ts";
@@ -14,13 +14,14 @@ import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
+import { tempDir } from "../test/until.ts";
 import { gate, transforms, vaultModule } from "./index.ts";
 import { write as writeVault } from "./vault.ts";
 
 const LIVE = process.env.HORTUS_TEST_LLM === "1";
 
 test("live judge: routine reads and posts allowed, DROP TABLE escalated (soft)", { skip: !LIVE }, async () => {
-  process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-judge-live-"));
+  process.env.HORTUS_HOME = tempDir("hortus-judge-live-");
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
   const key = all["ollama-cloud"]?.apiKey as string | undefined;
   assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");

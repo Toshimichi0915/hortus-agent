@@ -6,12 +6,12 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { createHmac, generateKeyPairSync, randomBytes, randomUUID, verify } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { tempDir } from "../until.ts";
 
 const run = promisify(execFile);
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
@@ -109,7 +109,7 @@ export class FakeGitHub {
   gitAuths: string[] = [];
   /** every REST request: method, path (without /api/v3), the URL as sent, token */
   calls: { method: string; path: string; url: string; token?: string }[] = [];
-  root = mkdtempSync(join(tmpdir(), "hortus-fake-github-"));
+  root = tempDir("hortus-fake-github-");
   private ids = 100;
   private tick = 0;
 

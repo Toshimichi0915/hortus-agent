@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Config } from "../config.ts";
 import { logger } from "../log.ts";
+import { openAppend } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import type { Role, TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
@@ -145,7 +146,9 @@ export async function startVm(o: VmOpts): Promise<Child> {
   const out = paths.out(id);
   mkdirSync(join(out, "work"), { recursive: true });
   writeFileSync(join(paths.ctl(id), "task.json"), JSON.stringify(vmTaskJson(task), null, 2));
-  const logFile = createWriteStream(join(out, "console.log"), { flags: "a" });
+  // opened here (no link followed); QEMU's serial chardev gets the same file as its fd 3
+  const logFd = openAppend(join(out, "console.log"));
+  const logFile = createWriteStream("", { fd: logFd });
   const procs: ChildProcess[] = [];
   const socks: string[] = [];
   let link: Link | null = null;
@@ -207,10 +210,10 @@ export async function startVm(o: VmOpts): Promise<Child> {
       memMb: o.config.vm.mem_mb,
       link,
       sockets,
-      console: join(out, "console.log"),
+      console: "/dev/fd/3",
     });
     log.info("starting", { task: id, tap: link?.tap, vm: link?.vmAddr });
-    const qemu = spawn("qemu-system-x86_64", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const qemu = spawn("qemu-system-x86_64", args, { stdio: ["ignore", "ignore", "pipe", logFd] });
     await attach(qemu);
     const done = new Promise<Exit>((resolve, reject) => {
       const timer =

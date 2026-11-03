@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 import { openDb } from "./db.ts";
 import * as paths from "./paths.ts";
+import { tempDir } from "./test/until.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-db-"));
+process.env.HORTUS_HOME = tempDir("hortus-db-");
 
 const TABLES = [
   "events",

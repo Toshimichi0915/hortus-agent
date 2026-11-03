@@ -140,6 +140,15 @@ define("credential.delete", {
   run: ({ name }) => {
     const v = { ...read() };
     if (!v[name]) throw new RpcError("not_found", `no credential ${name}`);
+    // deleting what the config still names would fail every later start or sync with a puzzling error
+    const c = ctx().config;
+    const users = [
+      c.worker.provider === name && "worker.provider",
+      c.planner.provider === name && "planner.provider",
+      name in c.dofs && `dofs.${name}`,
+    ].filter(Boolean);
+    if (users.length)
+      throw new RpcError("invalid", `${name} is in use by ${users.join(", ")}: change that in Settings first`);
     delete v[name];
     write(v);
     return { ok: true };

@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Worker } from "node:worker_threads";
+import { tempDir } from "../test/until.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-mirror-"));
+process.env.HORTUS_HOME = tempDir("hortus-mirror-");
 
 const { Config } = await import("../config.ts");
 const { openDb } = await import("../db.ts");

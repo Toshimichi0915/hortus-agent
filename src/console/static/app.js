@@ -24,6 +24,18 @@ function sse(name, handler, q = "") {
   return es;
 }
 
+/** <time datetime> (rendered in UTC) in the browser's own time zone. */
+const pad = (n) => String(n).padStart(2, "0");
+function localTimes(root = document) {
+  for (const t of root.querySelectorAll("time[datetime]")) {
+    const d = new Date(t.dateTime);
+    if (Number.isNaN(d.getTime())) continue;
+    t.textContent = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    t.title = d.toString();
+  }
+}
+localTimes();
+
 /** Re-fetch this page and swap every [data-refresh] container (and the nav badge); textareas outside stay. */
 async function refresh() {
   const doc = new DOMParser().parseFromString(await (await fetch(location.href)).text(), "text/html");
@@ -33,12 +45,13 @@ async function refresh() {
   }
   const nav = doc.querySelector("nav");
   if (nav) $("nav").innerHTML = nav.innerHTML;
+  localTimes();
 }
 
 async function act(el, input) {
   try {
     const r = await post(el.dataset.call, input);
-    say("done");
+    say(typeof r?.message === "string" ? r.message : "done");
     if (el.dataset.go) {
       location.href = el.dataset.go.replace("{id}", encodeURIComponent(r?.id ?? r));
       return;
@@ -93,9 +106,10 @@ document.addEventListener("submit", (e) => {
   } catch (err) {
     return say(err.message, true);
   }
-  if (f.classList.contains("composer")) sessionStorage.removeItem(key);
   act(f, input)
     .then(() => {
+      // the draft goes only once the message is in (a failed send keeps it)
+      if (f.classList.contains("composer")) sessionStorage.removeItem(key);
       if (f.elements.text && f.classList.contains("composer")) f.elements.text.value = "";
     })
     .catch(() => {});
@@ -132,7 +146,7 @@ if (st) {
   );
 }
 if (["approvals", "chat", "tasks"].includes(page)) sse("approvals", refresh);
-if (page === "tasks") sse("tasks", refresh);
+if (["tasks", "chat", "task"].includes(page)) sse("tasks", refresh);
 
 // Settings › Remote: the enrolment code's countdown
 setInterval(() => {

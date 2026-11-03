@@ -1,15 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { call, define, rpcClient, serveSocket } from "./rpc.ts";
+import { tempDir } from "./test/until.ts";
 import { RpcError } from "./types.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-rpc-"));
+process.env.HORTUS_HOME = tempDir("hortus-rpc-");
 
 let ran = 0;
 define("t.echo", { roles: ["owner"], input: z.object({ n: z.number() }), run: async ({ n }) => ({ n }) });

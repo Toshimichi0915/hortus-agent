@@ -2,10 +2,11 @@
  * The `logs` DOF: plain files, no repo. `publishLog` renders a task's core sessions into `logs/<id>/session.md`,
  * copies its summary, and upserts both index rows in the same call.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { branch, listSessions, type Message, type SessionEntry } from "@hortus/core";
+import { branch, type Message, type SessionEntry } from "@hortus/core";
 import { type DatabaseSync, now } from "../db.ts";
+import { MAX_SESSION, MAX_SUMMARY, readCapped } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import { upsert } from "./fts.ts";
 import { parse, render } from "./render.ts";
@@ -50,15 +51,16 @@ const entries = (text: string): SessionEntry[] =>
  * ponytail: entries carry no time, so `<ts>` is the session file's start; per-message times need a core change
  */
 export async function renderSession(dir: string): Promise<string> {
-  const leaves = new Map((await listSessions(dir)).map((s) => [s.path, s]));
+  // read here, not with core's listSessions: out/sessions is the Worker's, so no links, FIFOs or unbounded files
   const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".jsonl")).sort();
   const out: string[] = [];
   let seq = 0;
   for (const n of names) {
-    const info = leaves.get(join(dir, n));
-    if (!info) continue;
-    const ts = info.created.toISOString();
-    for (const m of branch(entries(await readFile(info.path, "utf8")), info.leafId).messages) {
+    const all = entries(readCapped(join(dir, n), MAX_SESSION)?.text ?? "");
+    const leaf = all.at(-1);
+    if (!leaf) continue;
+    const ts = new Date(Number(n.split("_")[0]) * 1000).toISOString();
+    for (const m of branch(all, leaf.id).messages) {
       out.push(`## ${++seq} ${m.role} ${ts}\n\n${renderMessage(m)}\n`);
     }
   }
@@ -87,7 +89,7 @@ export async function publishLog(
   events?: string[],
 ): Promise<void> {
   const out = paths.out(taskId);
-  const summary = await readFile(join(out, "summary.md"), "utf8").catch(() => "No summary.\n");
+  const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? "No summary.\n";
   const header = { title, status, ...(events ? { events } : {}), updated: now() };
   writeLog(
     db,

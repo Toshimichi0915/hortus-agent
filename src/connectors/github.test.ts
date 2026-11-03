@@ -6,10 +6,9 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type http from "node:http";
 import https from "node:https";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -22,11 +21,11 @@ import { createWebhooks, type Webhooks } from "../gateway/webhooks.ts";
 import { logger } from "../log.ts";
 import { commit, mirrorModule, parse } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
-import { fetchRepo, repoDir } from "../projects/repos.ts";
+import { fetchRepo, relay, repoDir } from "../projects/repos.ts";
 import { coreFetch, links, listen, proxyModule } from "../proxy/index.ts";
 import { sandboxEnv } from "../runtime/host.ts";
 import { FakeGitHub } from "../test/fakes/github.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Forge, InboxMsg, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
@@ -34,7 +33,7 @@ import { PERMISSIONS } from "../vault/ops.ts";
 import { write as writeVault } from "../vault/vault.ts";
 import { connectors } from "./index.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-github-"));
+process.env.HORTUS_HOME = tempDir("hortus-github-");
 process.env.HORTUS_NO_NET = "1";
 const run = promisify(execFile);
 
@@ -419,7 +418,7 @@ test("scope: in-scope passes, another repo 403; POST /user/repos â†’ approval â†
 });
 
 test("insteadOf clone through the proxy carries the minted token; push asks once per ref update", async () => {
-  const work = mkdtempSync(join(tmpdir(), "hortus-gh-work-"));
+  const work = tempDir("hortus-gh-work-");
   await gitUntil(work, ["clone", "-q", "https://github.com/o/r.git", "r"]);
   const workerToken = fake.mints.find((m) => m.repositories?.join() === "r")?.token;
   assert.ok(workerToken && fake.gitAuths.includes(workerToken), "the fake's git server saw the Worker's token");
@@ -534,4 +533,28 @@ test("sandboxEnv: one insteadOf entry per github DOF", () => {
       ["url.https://x-access-token:hortus-secret-ghe@ghe.test/.insteadOf", "https://ghe.test/"],
     ],
   );
+});
+
+test("repo relay: only its token and the project's upload-pack paths reach core", async () => {
+  const seen: string[] = [];
+  const r = await relay(new URL("https://github.com/o/r.git"), async (url, init) => {
+    seen.push(`${init?.method} ${url}`);
+    return new Response("ok");
+  });
+  const at = (path: string, init: RequestInit = {}) => fetch(`http://127.0.0.1:${r.port}${path}`, init);
+  try {
+    const good = { "X-Hortus-Relay": r.token };
+    assert.equal((await at("/o/r.git/info/refs?service=git-upload-pack")).status, 404);
+    assert.equal(
+      (await at("/o/r.git/info/refs?service=git-upload-pack", { headers: { "X-Hortus-Relay": "x" } })).status,
+      404,
+    );
+    assert.equal((await at("/o/r.git/info/refs?service=git-receive-pack", { headers: good })).status, 404);
+    assert.equal((await at("/o/r.git/git-receive-pack", { method: "POST", headers: good, body: "x" })).status, 404);
+    assert.equal((await at("/o/other.git/info/refs?service=git-upload-pack", { headers: good })).status, 404);
+    assert.equal((await at("/o/r.git/info/refs?service=git-upload-pack", { headers: good })).status, 200);
+    assert.deepEqual(seen, ["GET https://github.com/o/r.git/info/refs?service=git-upload-pack"]);
+  } finally {
+    r.server.close();
+  }
 });

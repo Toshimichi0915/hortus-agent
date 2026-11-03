@@ -6,14 +6,14 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { Config } from "../config.ts";
+import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
@@ -22,13 +22,14 @@ import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
+import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { caCert } from "./ca.ts";
 import { gate, transforms, vaultModule } from "./index.ts";
 import * as judge from "./judge.ts";
 import { read as readVault, write as writeVault } from "./vault.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-gate-"));
+process.env.HORTUS_HOME = tempDir("hortus-gate-");
 const owner = { role: "owner" as const };
 
 // upstream: every API answers ok
@@ -69,7 +70,7 @@ const llm = http.createServer((req, res) => {
   });
 });
 
-const fixtures = mkdtempSync(join(tmpdir(), "hortus-gate-tf-"));
+const fixtures = tempDir("hortus-gate-tf-");
 mkdirSync(join(fixtures, "ghfake"));
 writeFileSync(
   join(fixtures, "ghfake", "manifest.json"),
@@ -163,7 +164,14 @@ interface R {
 
 let n = 0;
 /** A POST with a credential; a fresh body each call unless given, so each is a new template hash. */
-function send(o: { host?: string; path?: string; from?: string; cred?: string; body?: string }): Promise<R> {
+function send(o: {
+  host?: string;
+  path?: string;
+  from?: string;
+  cred?: string;
+  body?: string;
+  type?: string;
+}): Promise<R> {
   const host = o.host ?? "slack.com";
   const body = o.body ?? JSON.stringify({ channel: "C1", text: `hello ${++n}` });
   return new Promise((resolve, reject) => {
@@ -176,7 +184,7 @@ function send(o: { host?: string; path?: string; from?: string; cred?: string; b
         headers: {
           host,
           authorization: `Bearer hortus-secret-${o.cred ?? "slack"}`,
-          "content-type": "application/json",
+          "content-type": o.type ?? "application/json",
         },
         localAddress: o.from ?? "127.0.0.2",
         agent: false,
@@ -267,6 +275,21 @@ test("consequential: chat.delete asks per request and never reaches the judge, e
   assert.equal((await send({ path: "/api/chat.delete", body: JSON.parse(r.summary).bodyPreview })).status, 200);
 });
 
+test("a streamed body (outside the hash and the judge's view) asks the owner per request", async () => {
+  mode = "allow";
+  const before = llmSeen.length;
+  const seen: unknown[] = [];
+  const on = (p: unknown) => seen.push(p);
+  bus.on("approvals", on);
+  const id = pendingId(await send({ type: "application/octet-stream", body: "anything at all" }));
+  bus.off("approvals", on);
+  assert.ok(seen.length >= 1, "open pages hear of the new entry (SSE)");
+  const r = row(id);
+  assert.deepEqual([r.kind, r.status], ["request", "pending"]);
+  assert.equal(JSON.parse(r.payload ?? "{}").consequential, true);
+  assert.equal(llmSeen.length, before, "no judge call");
+});
+
 test("forced-human categories never reach the judge, whatever the policy says", async () => {
   setConfig({
     policy: { "*": "auto", merge: "auto", transforms: "auto", login: "auto", "origin:example.com": "auto" },
@@ -333,14 +356,10 @@ test("task scope: a credential outside scope asks a task grant; it does not cove
   );
   assert.equal(llmSeen.length, before + 1);
   // T4 (also lacking github) still asks its own task grant
-  const other = pendingId(
-    await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.7" }),
-  );
+  const other = pendingId(await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.7" }));
   assert.deepEqual([row(other).kind, row(other).task_id], ["grant", "T4"]);
   // T3 has github in scope but no durable grant exists: T2's task grant does not cover it
-  const durable = pendingId(
-    await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.5" }),
-  );
+  const durable = pendingId(await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.5" }));
   assert.deepEqual([row(durable).kind, row(durable).task_id], ["grant", null]);
   await approve(durable);
   // closing T2 leaves its grant row

@@ -10,16 +10,15 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const NET = process.env.HORTUS_TEST_NET === "1";
 const UNIT = "hortusd-step2test";
@@ -62,7 +61,7 @@ const cleanupNet = () => {
 };
 
 before(async () => {
-  home = mkdtempSync(join(tmpdir(), "hortus-step2-"));
+  home = tempDir("hortus-step2-");
   process.env.HORTUS_HOME = home;
   fake = await FakeSlack.start();
   fake.user("U1", "alice");

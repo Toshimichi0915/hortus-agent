@@ -8,7 +8,8 @@
  *   sessions per-session rules, each matching the session's cgroup and ending in drop
  *   nat      nat/output: per-session DNAT of 443/80/53 to the proxy's ports (`ports`)
  *   pre      nat/prerouting: per-tap DNAT of 10.77.0.1:443/80/53 to the proxy's ports
- *   input    filter/input: per-tap accept to the proxy, then drop
+ *   input    filter/input: 10.77.0.0/16 only from lo and the taps (a LAN host or container never poses as a
+ *            session address); per-tap accept to the proxy, then drop
  *   forward  filter/forward: nothing is forwarded from or to a tap
  * Rules carry `comment "hortus:<task or tap>"` and are deleted by it.
  */
@@ -31,6 +32,9 @@ export const SESSIONS = "10.77.1.0/24";
 export const localConsole = { port: 7700 };
 /** The remote console listener's port while it runs (console/remote.ts): dropped on every address for sessions. */
 export const remoteConsole = { port: 0 };
+/** The webhook listener's bound port (gateway/webhooks.ts; 127.0.0.1 only): dropped for sessions (HMAC holds, but
+ * each delivery buffers up to 25 MB before the check). */
+export const localWebhook = { port: 0 };
 
 const log = logger("net");
 
@@ -116,6 +120,8 @@ export async function ensureTable(): Promise<void> {
   }
   chain input {
     type filter hook input priority 0; policy accept;
+    iifname "lo" ip daddr 10.77.0.0/16 accept
+    iifname != "${names.tap}*" ip daddr 10.77.0.0/16 drop
   }
   chain forward {
     type filter hook forward priority 0; policy accept;
@@ -177,8 +183,13 @@ export async function sessionRules(
       nat(`ip daddr ${address} tcp dport 443 dnat ip to ${address}:${p.https}`) +
       s(`ip daddr ${address} tcp dport { ${p.http}, ${p.https} } accept`) +
       s(`ip daddr ${address} udp dport ${p.dns} accept`) +
+      // another session's address (or 10.77.0.1 bound as a source) is never reachable, whatever chat.allow says
+      s("ip daddr 10.77.0.0/16 drop") +
       (remoteConsole.port ? s(`tcp dport ${remoteConsole.port} drop`) : "") +
       s(`ip daddr 127.0.0.1 tcp dport ${localConsole.port} drop`) +
+      (localWebhook.port ? s(`ip daddr 127.0.0.1 tcp dport ${localWebhook.port} drop`) : "") +
+      // DNS over TCP to a local resolver would skip the proxy's (UDP 53 is DNAT'd to it above)
+      s("tcp dport 53 drop") +
       s("ip daddr 127.0.0.0/8 accept") +
       s(`ip6 daddr ::1 tcp dport ${localConsole.port} drop`) +
       s("ip6 daddr ::1 accept") +

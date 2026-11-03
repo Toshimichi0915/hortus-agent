@@ -4,10 +4,9 @@
  */
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { after, before, test } from "node:test";
@@ -22,13 +21,14 @@ import * as paths from "../paths.ts";
 import { proxyModule } from "../proxy/index.ts";
 import { handle, type IncomingRequest } from "../proxy/pipeline.ts";
 import { call } from "../rpc.ts";
+import { tempDir } from "../test/until.ts";
 import type { InboxMsg, VaultEntry } from "../types.ts";
 import * as dof from "./dof.ts";
 import { gate, transforms, transformsDofModule, vaultModule } from "./index.ts";
 import { sigv4 } from "./sigv4.ts";
 import { read as readVault, write as writeVault } from "./vault.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-submit-"));
+process.env.HORTUS_HOME = tempDir("hortus-submit-");
 const owner = { role: "owner" as const };
 const worker = { role: "worker" as const, task: "T" };
 
@@ -317,6 +317,14 @@ test("existing name: a manifest naming slack shows it configured, no field; appr
   const prev = readVault().slack as VaultEntry;
   await decide(r.approval, "approve", { slack: { value: "xoxb-other" } });
   assert.deepEqual(readVault().slack, prev);
+  // the submitting task gets no scope or grant on a name that existed before (v6: only the new names)
+  const row = ctx.db.prepare("SELECT task_id FROM approvals WHERE id = ?").get(r.approval) as { task_id: string };
+  const grants = ctx.db
+    .prepare("SELECT 1 FROM approvals WHERE kind = 'grant' AND hash = 'grant:slack' AND task_id = ?")
+    .all(row.task_id);
+  assert.equal(grants.length, 0);
+  const scope = ctx.db.prepare("SELECT scope FROM tasks WHERE id = ?").get(row.task_id) as { scope: string };
+  assert.ok(!(JSON.parse(scope.scope).credentials ?? []).includes("slack"));
 });
 
 test("tamper: a hand-edited worktree file disables the transform and the Sources note says so", async () => {
@@ -416,7 +424,7 @@ test("aws: the shipped transform re-signs with the real key; the sandbox never s
 });
 
 test("dof transform submit <dir> posts the dir's files as the task's worker", async () => {
-  const dir = join(mkdtempSync(join(tmpdir(), "hortus-work-")), "todoist");
+  const dir = join(tempDir("hortus-work-"), "todoist");
   const f = files("todoist");
   for (const [p, text] of Object.entries(f)) {
     mkdirSync(dirname(join(dir, p)), { recursive: true });

@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 import { after, before, describe, test } from "node:test";
@@ -25,7 +25,7 @@ import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
 import { sandboxEnv, spawnSandboxed } from "./host.ts";
-import { abi, denySet, profile, shim } from "./landlock.ts";
+import { abi, denySet, profile, readOnlySet, shim } from "./landlock.ts";
 
 const inScope = process.env.HORTUS_TEST_SCOPE === "1";
 const hasSystemdRun = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
@@ -152,7 +152,11 @@ function suite(): void {
       const ro = profile("chat", task, config)
         .split("\n")
         .filter((l) => l.startsWith("ro "));
-      assert.deepEqual(ro.sort(), [`ro ${join(H, "dof")}`, `ro ${join(H, "tasks/T/ctl")}`]); // no repos/ in this home
+      const own = readOnlySet()
+        .filter((p) => existsSync(p))
+        .map((p) => `ro ${p}`);
+      // no repos/ in this home; hortusd's own code and the user units are read-only too
+      assert.deepEqual(ro.sort(), [`ro ${join(H, "dof")}`, `ro ${join(H, "tasks/T/ctl")}`, ...own].sort());
     });
     test("a policy.deny symlink is denied by its target", () => {
       assert.ok(denySet(config).includes(secret));
@@ -175,6 +179,16 @@ function suite(): void {
       ok(await shimSh(prof(), "echo > /dev/null"));
       denied(await shimSh(prof(), `touch ${H}/dof/x`));
     });
+    test("no connect to another process's socket under /tmp (X11, tmux, ssh-agent live there)", async () => {
+      const sock = join(tmpdir(), `hortus-f4-sock-${process.pid}`);
+      const server = createServer().listen(sock);
+      await new Promise((r) => server.once("listening", r));
+      const js = `require("net").connect(${JSON.stringify(sock)}).on("error",(e)=>{console.error(e.code);process.exit(1)}).on("connect",()=>process.exit(0))`;
+      const r = await shimRun(prof(), "", ["--", process.execPath, "-e", js]);
+      server.close();
+      assert.equal(r.code, 1, r.err);
+      assert.match(r.err, /EACCES|EPERM/);
+    });
     test("a file created in a denied directory after spawn stays unreachable", async () => {
       const p = shimSh(prof(), `sleep 0.3; cat ${H}/late.txt`);
       writeFileSync(join(H, "late.txt"), "x");
@@ -191,6 +205,9 @@ function suite(): void {
       denied(await shimSh(prof(), `cat ${homedir()}/.hortus/secrets.json > /dev/null`));
       denied(await shimSh(prof(), `cat ${H}/vault.json`));
       denied(await shimSh(prof(), `cat ${secret}/f`));
+      // opens the shim for writing without changing it
+      denied(await shimSh(prof(), `: >> ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`));
+      ok(await shimSh(prof(), `test -r ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`));
     });
   });
 
@@ -292,6 +309,12 @@ function suite(): void {
           /Landlock unavailable: hortus-landlock: no Landlock/,
         );
         assert.ok(!existsSync(cgroup.path("N")));
+        shim.path = `${fake}-old`; // ABI 8 (no unix-socket rules); a new path, as abi() caches per path
+        writeFileSync(shim.path, "#!/bin/sh\necho 8\n", { mode: 0o755 });
+        await assert.rejects(
+          spawnSandboxed({ task: t, kind: "unattended", cmd: ["true"], cwd: "/", config, onStdout() {} }),
+          /Landlock ABI 8 is too old/,
+        );
       } finally {
         shim.path = real;
       }

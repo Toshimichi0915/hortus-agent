@@ -5,8 +5,7 @@
  * VM tasks start below `vm.max_concurrent`; with the image missing they run on the host (`vm.fallback_host`, v7) or
  * stay queued with the reason in `error`.
  */
-import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
-import { appendFile } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { scan } from "../agent/loop.ts";
@@ -15,6 +14,7 @@ import type { Ctx, Module } from "../ctx.ts";
 import { now } from "../db.ts";
 import { publishLog } from "../mirror/index.ts";
 import { prepareClone } from "../projects/origin.ts";
+import { appendText, readCapped } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { Config } from "../config.ts";
@@ -180,6 +180,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
         const child = await startVm({ task, config: c, deadlineMs });
         entry.child = child;
+        if (tasks.closing.has(row.id)) await child.kill(); // closed while it booted: hooks.kill had no child yet
         const exit = await child.wait();
         // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
         await finish(
@@ -219,11 +220,12 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
           if (kind.chat) reply(row.id, line ?? l);
           else {
             if (line?.type === "error" || line?.type === "status") reply(row.id, line);
-            appendFile(consoleLog, `${l}\n`).catch(() => {});
+            appendText(consoleLog, `${l}\n`);
           }
         },
       });
       entry.child = child;
+      if (tasks.closing.has(row.id)) await child.kill(); // closed while it started: hooks.kill had no child yet
       const exit = await child.wait();
       flushThinking();
       await finish(row, exit, startedAt, lastError);
@@ -241,25 +243,6 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       wake();
     }
   })();
-}
-
-/** Opens without following links and reads at most `max` bytes; null for anything but a regular file. */
-function readCapped(path: string, max: number): { text: string; size: number } | null {
-  let fd: number;
-  try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch {
-    return null;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile()) return null;
-    const buf = Buffer.alloc(Math.min(st.size, max));
-    const n = readSync(fd, buf, 0, buf.length, 0);
-    return { text: buf.subarray(0, n).toString("utf8"), size: st.size };
-  } finally {
-    closeSync(fd);
-  }
 }
 
 /** New `out/outbox/<seq>.json` files, as hostile input: regular files only, ≤ 1 MB, schema-checked, seq = name. */
@@ -302,12 +285,7 @@ export function readOutbox(id: string, after: number): OutboxMsg[] {
 }
 
 function tail(path: string, bytes = 2000): string {
-  try {
-    const t = readFileSync(path, "utf8");
-    return t.slice(-bytes).trim();
-  } catch {
-    return "";
-  }
+  return readCapped(path, bytes, true)?.text.trim() ?? "";
 }
 
 async function finish(
@@ -333,7 +311,8 @@ async function finish(
       now(),
     );
   const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? null;
-  const failed = exit.code !== 0 && msgs.length === 0;
+  // a crash after a `send` still shows its error; a `result` (failed: …) or budget_exceeded already says why
+  const failed = exit.code !== 0 && !msgs.some((m) => m.type === "result" || m.type === "budget_exceeded");
   const error = overBudget
     ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
     : failed
@@ -358,9 +337,11 @@ async function finish(
       id,
     );
   } else {
-    // an owner message the Worker never drained re-queues it; a crash waits for the next message (no restart loop)
-    // ponytail: budget_exceeded waits like any other exit until step 4
-    tasks.setStatus(id, exit.code === 0 && inbox > cursor && !overBudget ? "queued" : "waiting", extra);
+    // an owner message the Worker never drained re-queues it; a crash waits for the next message (no restart loop),
+    // and so do a STOP and an exhausted budget (both exit 0 without draining: re-queueing them would loop)
+    const halted =
+      overBudget || msgs.some((m) => m.type === "budget_exceeded") || existsSync(join(paths.ctl(id), "STOP"));
+    tasks.setStatus(id, exit.code === 0 && inbox > cursor && !halted ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
   log().info("session ended", { task: id, code: exit.code, signal: exit.signal, outbox: msgs.length });
@@ -406,7 +387,7 @@ export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "h
   const entry: Running = { vm: runtime === "vm", done: new Promise<void>((r) => (release = r)) };
   running.set(row.id, entry);
   try {
-    entry.child = await RUNTIMES[runtime](task, (l) => void appendFile(consoleLog, `${l}\n`).catch(() => {}));
+    entry.child = await RUNTIMES[runtime](task, (l) => appendText(consoleLog, `${l}\n`));
     const exit = await entry.child.wait();
     const { tokens } = scan(join(paths.out(row.id), "sessions"));
     log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
@@ -430,7 +411,10 @@ export const dispatcherModule: Module = {
       const r = running.get(id);
       if (!r) return;
       clearTimeout(r.stopTimer);
-      r.stopTimer = setTimeout(() => void r.child?.kill(), STOP_KILL_MS);
+      r.stopTimer = setTimeout(
+        () => void r.child?.kill().catch((e) => log().error("stop kill failed", e, { task: id })),
+        STOP_KILL_MS,
+      );
       r.stopTimer.unref();
     };
     tasks.hooks.kill = async (id) => {

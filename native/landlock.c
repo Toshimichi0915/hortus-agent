@@ -2,6 +2,7 @@
  * hortus-landlock: hortus-landlock -- <cmd> [args...] with a profile on fd 3 (docs/design/04-host-sandbox.md).
  *   cgroup <dir>                 write our pid to <dir>/cgroup.procs (before the domain hides /sys/fs/cgroup)
  *   ro <path> | rw <path>        grant read / read+write beneath <path> (missing path: skipped)
+ *   rn <path>                    read+write without RESOLVE_UNIX: shared trees (/tmp) hold other daemons' sockets
  *   scope signal | scope abstract
  *   end                          required: a truncated profile never runs open
  * Only `rw` grants RESOLVE_UNIX (ABI 9: connect to pathname sockets), so `ro` trees expose no daemon sockets.
@@ -139,7 +140,7 @@ int main(int argc, char **argv) {
     if (nl - line > MAX_LINE) die(64, "profile line over 4096 bytes", NULL, 0);
     if (strcmp(line, "end") == 0) ended = 1;
     else if (strncmp(line, "cgroup /", 8) == 0) cgroup = line + 7;
-    else if (strncmp(line, "ro /", 4) == 0 || strncmp(line, "rw /", 4) == 0) {
+    else if (strncmp(line, "ro /", 4) == 0 || strncmp(line, "rw /", 4) == 0 || strncmp(line, "rn /", 4) == 0) {
       if (nrules == MAX_RULES) die(64, "too many rules", NULL, 0);
       rules[nrules++] = line;
     } else if (strcmp(line, "scope signal") == 0) scoped |= LANDLOCK_SCOPE_SIGNAL;
@@ -179,7 +180,9 @@ int main(int argc, char **argv) {
     if (fd < 0) die(64, "cannot open a profile path", p, errno);
     struct stat st;
     if (fstat(fd, &st) < 0) die(64, "cannot stat a profile path", p, errno);
-    uint64_t rights = rules[i][1] == 'w' ? READ_SET | WRITE_SET : READ_SET;
+    uint64_t rights = rules[i][1] == 'w' ? READ_SET | WRITE_SET
+                      : rules[i][1] == 'n' ? (READ_SET | WRITE_SET) & ~LANDLOCK_ACCESS_FS_RESOLVE_UNIX
+                                           : READ_SET;
     if (!S_ISDIR(st.st_mode)) rights &= FILE_SET;
     struct path_beneath pb = {.allowed_access = rights & handled, .parent_fd = fd};
     if (syscall(__NR_landlock_add_rule, rs, RULE_PATH_BENEATH, &pb, 0) < 0) die(67, "landlock_add_rule failed", p, errno);

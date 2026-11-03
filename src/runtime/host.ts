@@ -1,6 +1,6 @@
 /** A host session: its cgroup, its session address, the Landlock shim, and the cleanup after it exits. */
 import { spawn } from "node:child_process";
-import { copyFileSync, createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { closeSync, copyFileSync, createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -8,6 +8,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
 import { logger } from "../log.ts";
+import { openAppend } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
@@ -98,10 +99,17 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
   return env;
 }
 
+/** The lowest Landlock ABI a host session runs under (9: RESOLVE_UNIX). */
+export const MIN_ABI = 9;
+
 export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
   const id = o.task.id;
   try {
-    await abi();
+    // below 6 a session reaches hortusd's abstract socket (owner RPCs); below 9 it connects to any pathname socket
+    // (systemd --user's private socket is `systemd-run --user`, i.e. no sandbox): refused rather than run open
+    const v = await abi();
+    if (v < MIN_ABI)
+      throw new Error(`Landlock ABI ${v} is too old for host sessions (needs ${MIN_ABI}: unix-socket rules)`);
   } catch (e) {
     log.error("refusing to start a host session", e, { task: id });
     throw e;
@@ -118,10 +126,13 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
     { id, clone: o.task.paths.clone, schedule: o.task.paths.schedule, cgroup: cgroup.path(id) },
     o.config,
   );
+  // first: a planted link or FIFO there is replaced, and a failure leaves no cgroup, address or child behind
+  const logFd = openAppend(join(out, "console.log"));
   const cg = await cgroup.create(id);
   try {
     await sessionNet.open(id, o.task.kind === "planner" ? "planner" : "worker", cg, o.config.chat.allow);
   } catch (e) {
+    closeSync(logFd);
     await cgroup.kill(id);
     throw e;
   }
@@ -133,7 +144,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];
   fd3.on("error", () => {}).end(text); // EPIPE when the shim dies first: its exit code says why
-  const logFile = createWriteStream(join(out, "console.log"), { flags: "a" });
+  const logFile = createWriteStream("", { fd: logFd });
   stderr.pipe(logFile);
   createInterface({ input: stdout }).on("line", (l) => o.onStdout(l));
   if (o.onStderr) createInterface({ input: stderr }).on("line", (l) => o.onStderr?.(l));

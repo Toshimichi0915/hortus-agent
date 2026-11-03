@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import * as paths from "../paths.ts";
 import { rpcClient, serveSocket } from "../rpc.ts";
+import { tempDir } from "../test/until.ts";
 
 const bin = (name: string) => fileURLToPath(new URL(`${name}.js`, import.meta.url));
 
@@ -48,7 +48,7 @@ function cli(...args: string[]): Promise<{ code: number | null; out: string; err
 }
 
 test("hortusd: creates HORTUS_HOME 0700, answers ping, a second daemon fails, exits on SIGTERM", async () => {
-  const home = `${join(mkdtempSync(join(tmpdir(), "hortusd-")), "home")}/`;
+  const home = `${join(tempDir("hortusd-"), "home")}/`;
   process.env.HORTUS_HOME = home;
   const absent = await cli("ping");
   assert.equal(absent.code, 1);
@@ -75,7 +75,7 @@ test("hortusd: creates HORTUS_HOME 0700, answers ping, a second daemon fails, ex
 });
 
 test("hortusd: socket already bound → exits non-zero without creating the DB", async () => {
-  const home = mkdtempSync(join(tmpdir(), "hortusd-"));
+  const home = tempDir("hortusd-");
   process.env.HORTUS_HOME = home;
   const squatter = await serveSocket(paths.socket());
   try {
@@ -84,5 +84,18 @@ test("hortusd: socket already bound → exits non-zero without creating the DB",
     assert.equal(existsSync(paths.db()), false);
   } finally {
     squatter.close();
+  }
+});
+
+test("hortusd: HORTUS_NO_NET=1 without HORTUS_HOME refuses to start", async () => {
+  const { HORTUS_HOME: _, ...env } = process.env;
+  const d = spawn(process.execPath, ["--no-warnings", bin("hortusd")], {
+    env: { ...env, HOME: tempDir("hortusd-nonet-"), HORTUS_NO_NET: "1", HORTUS_CONSOLE_PORT: "0" }, // never ~/.hortus
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  try {
+    assert.equal(await exited(d, 5000), 1);
+  } finally {
+    d.kill("SIGKILL");
   }
 });

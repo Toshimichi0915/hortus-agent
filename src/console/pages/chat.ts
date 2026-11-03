@@ -1,5 +1,5 @@
 import type { Ctx } from "../../ctx.ts";
-import { details, h, layout, type Page, parse, type Raw, raw, status } from "../html.ts";
+import { details, h, isOpen, layout, type Page, parse, type Raw, raw, status } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import type { TaskRow } from "./tasks.ts";
 
@@ -29,6 +29,8 @@ export function replyLine(r: ReplyRow): Raw {
       return h`<div class="r error">${text(l.message)}</div>`;
     case "status":
       return h`<div class="r status">${text(l.text)}</div>`;
+    case "owner":
+      return h`<div class="r owner">${text(l.text)}</div>`;
     case "message":
       return raw("");
     default:
@@ -73,9 +75,9 @@ export const chat: Page = (ctx, { m }) => {
     ctx,
     "chat",
     t.title || id,
-    h`<p>${status(t.status)} · <a href="/tasks/${id}">task card</a></p>
+    h`<p data-refresh id="chat-status">${status(t.status)} · <a href="/tasks/${id}">task card</a></p>
 <div id="stream" data-task="${id}" data-last="${last}">${rows.map(replyLine)}</div>
 <div data-refresh id="approvals">${pendingFor(ctx, id).map(approvalEntry)}</div>
-${composer("task.send", { id })}`,
+${isOpen(t.status) ? composer("task.send", { id }) : h`<p class="hint">This chat is closed. <a href="/chat">Start a new one</a>.</p>`}`,
   );
 };

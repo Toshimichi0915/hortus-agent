@@ -244,16 +244,18 @@ export async function approveTransform(id: number, credentials: Record<string, u
   await dof.install(name, files, hash);
   if (Object.keys(added).length) write({ ...read(), ...added });
   if (!row.task_id) return;
+  // only the names this transform introduces: one that already existed (`stripe`, say) keeps its own grant flow
+  const fresh = Object.keys(manifest.credentials).filter((c) => !vault[c]);
   const now = new Date().toISOString();
   const t = db.prepare("SELECT scope FROM tasks WHERE id = ?").get(row.task_id) as { scope: string | null } | undefined;
   db.exec("BEGIN");
   try {
     if (t) {
       const scope = (t.scope ? JSON.parse(t.scope) : {}) as { credentials?: string[] };
-      scope.credentials = [...new Set([...(scope.credentials ?? []), ...Object.keys(manifest.credentials)])];
+      scope.credentials = [...new Set([...(scope.credentials ?? []), ...fresh])];
       db.prepare("UPDATE tasks SET scope = ? WHERE id = ?").run(JSON.stringify(scope), row.task_id);
     }
-    for (const cred of Object.keys(manifest.credentials)) {
+    for (const cred of fresh) {
       const has = db
         .prepare("SELECT 1 FROM approvals WHERE kind = 'grant' AND hash = ? AND task_id = ? AND status = 'approved'")
         .get(`grant:${cred}`, row.task_id);

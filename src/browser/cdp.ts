@@ -1,20 +1,17 @@
 /**
- * A minimal CDP client (14-browser.md › CDP client) over Node's global WebSocket: `launch` a headless Chromium,
+ * A minimal CDP client (14-browser.md › CDP client) over Chromium's DevTools pipe (fds 3/4): `launch` a headless Chromium,
  * `connect` to it, `send` commands (with a flat session id), `on` events, `page()` attaches to the first tab. Used by
  * the Worker's browser tools and by hortusd's login view.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { X509Certificate, createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import type { Readable, Writable } from "node:stream";
 
 export const CHROMIUM = process.env.HORTUS_CHROMIUM ?? "/usr/bin/chromium";
 
 export interface LaunchOpts {
   userDataDir: string;
-  /** 0 (default): Chromium picks one and writes it to `<userDataDir>/DevToolsActivePort` */
-  port?: number;
   /** the hortus CA: trusted by its SPKI pin, so no NSS db and no `--ignore-certificate-errors` */
   caCert?: string;
   /** extra flags (tests under HORTUS_NO_NET: `--host-resolver-rules`) */
@@ -30,9 +27,10 @@ export interface LaunchOpts {
 }
 
 export interface Browser {
+  /** stdio 3 (Chromium reads commands) and 4 (it writes replies and events): `--remote-debugging-pipe` */
   proc: ChildProcess;
-  /** `ws://127.0.0.1:<port>/devtools/browser/<id>` */
-  ws: string;
+  /** the tail of Chromium's stderr */
+  stderr(): string;
   close(): Promise<void>;
 }
 
@@ -45,7 +43,9 @@ export function spki(pem: string): string {
 export function flags(o: LaunchOpts): string[] {
   const f = [
     "--headless=new",
-    `--remote-debugging-port=${o.port ?? 0}`,
+    // a pipe, never a port: every session reaches 127.0.0.1, and a DevTools port has no authentication (another task
+    // could drive this browser, or the owner's login view, as its own)
+    "--remote-debugging-pipe",
     `--user-data-dir=${o.userDataDir}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -71,38 +71,22 @@ export function flags(o: LaunchOpts): string[] {
   return [...f, ...(o.args ?? []), "about:blank"];
 }
 
-/** Spawns Chromium and waits (≤ 15 s) for its DevTools endpoint. */
+/** Spawns Chromium with its DevTools on fds 3/4; `connect` checks it answers. */
 export async function launch(o: LaunchOpts): Promise<Browser> {
   mkdirSync(o.userDataDir, { recursive: true });
-  const portFile = join(o.userDataDir, "DevToolsActivePort");
   const [bin = CHROMIUM, ...pre] = o.cmd ?? [CHROMIUM];
-  const proc = spawn(bin, [...pre, ...flags(o)], { stdio: ["ignore", "ignore", "pipe"], detached: false });
+  const proc = spawn(bin, [...pre, ...flags(o)], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] });
   let stderr = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderr = (stderr + c.toString()).slice(-4000);
   });
+  proc.on("error", () => {}); // a missing binary: connect reports it
   const exited = new Promise<void>((r) => proc.once("exit", () => r()));
   const close = async () => {
     if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
     await exited;
   };
-  const start = Date.now();
-  // a stale file from an earlier run names a dead port: only trust one written after the spawn
-  const t0 = Date.now() - 1000;
-  for (;;) {
-    if (proc.exitCode !== null || proc.signalCode !== null)
-      throw new Error(`chromium exited (${proc.exitCode ?? proc.signalCode}): ${stderr.trim().slice(-500)}`);
-    try {
-      const { mtimeMs } = statSync(portFile);
-      const [port, path] = readFileSync(portFile, "utf8").split("\n");
-      if (mtimeMs >= t0 && port && path) return { proc, ws: `ws://127.0.0.1:${port}${path}`, close };
-    } catch {}
-    if (Date.now() - start > 15_000) {
-      await close();
-      throw new Error(`chromium did not start: ${stderr.trim().slice(-500)}`);
-    }
-    await sleep(50);
-  }
+  return { proc, stderr: () => stderr.trim().slice(-500), close };
 }
 
 type Handler = (params: Record<string, unknown>, sessionId?: string) => void;
@@ -115,49 +99,52 @@ export interface Cdp {
   closed: Promise<void>;
 }
 
-/** `ws` from `launch`, or `http://127.0.0.1:<port>` (reads `/json/version`). */
-export async function connect(endpoint: string): Promise<Cdp> {
-  let url = endpoint;
-  if (endpoint.startsWith("http")) {
-    const v = (await (await fetch(`${endpoint}/json/version`)).json()) as { webSocketDebuggerUrl: string };
-    url = v.webSocketDebuggerUrl;
-  }
-  const ws = new WebSocket(url);
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve(), { once: true });
-    ws.addEventListener("error", () => reject(new Error(`cdp: cannot connect to ${url}`)), { once: true });
-  });
+/** The DevTools pipe of `b` (NUL-separated JSON); waits (≤ 15 s) for Chromium to answer. */
+export async function connect(b: Browser): Promise<Cdp> {
+  const out = b.proc.stdio[3] as Writable;
+  const inp = b.proc.stdio[4] as Readable;
+  let open = true;
   let next = 1;
   const waiting = new Map<number, { resolve(v: unknown): void; reject(e: Error): void; method: string }>();
   const handlers = new Map<string, Set<Handler>>();
-  const closed = new Promise<void>((r) =>
-    ws.addEventListener("close", () => {
-      for (const w of waiting.values()) w.reject(new Error(`cdp: closed during ${w.method}`));
+  let buf = Buffer.alloc(0);
+  out.on("error", () => {});
+  const closed = new Promise<void>((r) => {
+    const end = () => {
+      if (!open) return r();
+      open = false;
+      for (const w of waiting.values()) w.reject(new Error(`cdp: closed during ${w.method}: ${b.stderr()}`));
       waiting.clear();
       r();
-    }),
-  );
-  ws.addEventListener("message", (e) => {
-    const m = JSON.parse(String(e.data)) as {
-      id?: number;
-      result?: unknown;
-      error?: { message: string };
-      method?: string;
-      params?: Record<string, unknown>;
-      sessionId?: string;
     };
-    if (m.id !== undefined) {
-      const w = waiting.get(m.id);
-      waiting.delete(m.id);
-      if (m.error) w?.reject(new Error(`${w.method}: ${m.error.message}`));
-      else w?.resolve(m.result);
-    } else if (m.method) for (const h of handlers.get(m.method) ?? []) h(m.params ?? {}, m.sessionId);
+    inp.once("close", end);
+    b.proc.once("exit", end);
   });
-  return {
+  inp.on("data", (c: Buffer) => {
+    buf = Buffer.concat([buf, c]);
+    for (let i = buf.indexOf(0); i >= 0; i = buf.indexOf(0)) {
+      const m = JSON.parse(buf.subarray(0, i).toString("utf8")) as {
+        id?: number;
+        result?: unknown;
+        error?: { message: string };
+        method?: string;
+        params?: Record<string, unknown>;
+        sessionId?: string;
+      };
+      buf = buf.subarray(i + 1);
+      if (m.id !== undefined) {
+        const w = waiting.get(m.id);
+        waiting.delete(m.id);
+        if (m.error) w?.reject(new Error(`${w.method}: ${m.error.message}`));
+        else w?.resolve(m.result);
+      } else if (m.method) for (const h of handlers.get(m.method) ?? []) h(m.params ?? {}, m.sessionId);
+    }
+  });
+  const cdp: Cdp = {
     send(method, params = {}, sessionId) {
-      if (ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error(`cdp: closed (${method})`));
+      if (!open) return Promise.reject(new Error(`cdp: closed (${method})`));
       const id = next++;
-      ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+      out.write(`${JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })}\0`);
       return new Promise((resolve, reject) =>
         waiting.set(id, { resolve: resolve as (v: unknown) => void, reject, method }),
       );
@@ -168,9 +155,28 @@ export async function connect(endpoint: string): Promise<Cdp> {
       s.add(h);
       return () => s.delete(h);
     },
-    close: () => ws.close(),
+    close() {
+      open = false;
+      for (const w of waiting.values()) w.reject(new Error(`cdp: closed during ${w.method}`));
+      waiting.clear();
+    },
     closed,
   };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      cdp.send("Browser.getVersion"),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), 15_000);
+      }),
+    ]);
+  } catch (e) {
+    await b.close();
+    throw new Error(`chromium did not start (${(e as Error).message}): ${b.stderr()}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  return cdp;
 }
 
 /** The first page target (one is opened if none), attached with `flatten: true`; returns its session id. */

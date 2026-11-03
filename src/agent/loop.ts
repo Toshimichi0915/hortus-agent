@@ -3,8 +3,9 @@
  * observer here keeps the session, stdout and the abort conditions.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createAgent, listSessions, type Message, openSession, type Plugin, type Session } from "@hortus/core";
+import { AUX_TOKENS, MAX_SESSION, readCapped } from "../hostile.ts";
 import type { TaskJson } from "../types.ts";
 import { drain, marker, pending, quote } from "./inbox.ts";
 import { writeOutbox } from "./outbox.ts";
@@ -22,8 +23,12 @@ export function scan(dir: string): { tokens: number; cursor: number } {
   let tokens = 0;
   let cursor = 0;
   const names = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".jsonl")) : [];
-  for (const n of names)
-    for (const line of readFileSync(join(dir, n), "utf8").split("\n")) {
+  for (const n of names) {
+    // a session's first user message is the brief (or a run's text, a handoff's notes), never a drained message: a
+    // brief that happens to start with `[inbox 99]` must not hide messages 1–99
+    let first = true;
+    // hortusd runs this over a Worker's directory too: no links, FIFOs or unbounded files
+    for (const line of (readCapped(join(dir, n), MAX_SESSION)?.text ?? "").split("\n")) {
       let e: { type?: string; message?: Message };
       try {
         e = JSON.parse(line);
@@ -32,8 +37,11 @@ export function scan(dir: string): { tokens: number; cursor: number } {
       }
       const m = e.type === "message" ? e.message : undefined;
       if (m?.role === "assistant") tokens += (m.usage?.input ?? 0) + (m.usage?.output ?? 0);
-      if (m?.role === "user") cursor = Math.max(cursor, marker(m.content) ?? 0);
+      if (m?.role === "user" && !first) cursor = Math.max(cursor, marker(m.content) ?? 0);
+      if (m?.role === "user") first = false;
     }
+  }
+  tokens += Math.max(0, Number(readCapped(join(dirname(dir), AUX_TOKENS), 32)?.text) || 0);
   return { tokens, cursor };
 }
 
@@ -177,6 +185,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
             end = "failed";
             break;
           }
+          // a rate limit or an overloaded provider: back off (0.5, 1, 2 s) rather than burn the retries at once
+          await new Promise((r) => setTimeout(r, 500 * 2 ** (errors - 1)));
           continue;
         }
       }

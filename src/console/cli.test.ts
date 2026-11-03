@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
 import type { Server } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -14,11 +11,12 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { define, serveSocket } from "../rpc.ts";
+import { tempDir } from "../test/until.ts";
 import { RpcError } from "../types.ts";
 import { consoleModule } from "./index.ts";
 
 const bin = fileURLToPath(new URL("../bin/hortus.js", import.meta.url));
-const home = mkdtempSync(join(tmpdir(), "hortus-cli-"));
+const home = tempDir("hortus-cli-");
 process.env.HORTUS_HOME = home;
 process.env.HORTUS_CONSOLE_PORT = "0";
 
@@ -91,7 +89,7 @@ async function waitFor(get: () => string, re: RegExp): Promise<void> {
 }
 
 test("hortus ping without a daemon: one line, exit 1", async () => {
-  const r = await run(["ping"], { HORTUS_HOME: mkdtempSync(join(tmpdir(), "hortus-none-")) });
+  const r = await run(["ping"], { HORTUS_HOME: tempDir("hortus-none-") });
   assert.equal(r.code, 1);
   assert.match(r.err, /^hortusd is not running \(socket \\0hortus-[0-9a-f]+\)\n$/);
 });
@@ -134,6 +132,8 @@ test("hortus chat: first line opens with the cwd, later lines send, stream print
 
 test("hortus chat -r: Ctrl-C once stops the task, twice exits", async () => {
   calls.length = 0;
+  // `chat -r t1` checks the task exists before it follows the stream
+  openDb(paths.db()).prepare("INSERT INTO tasks(id, kind, status, title) VALUES ('t1', 'chat', 'waiting', 't')").run();
   const p = start(["chat", "-r", "t1"]);
   let out = "";
   p.stdout.on("data", (d) => (out += d));
@@ -144,4 +144,15 @@ test("hortus chat -r: Ctrl-C once stops the task, twice exits", async () => {
   p.kill("SIGINT");
   assert.equal(await exited, 130);
   assert.deepEqual(calls, [["task.stop", { id: "t1" }]]);
+});
+
+test("hortus chat -r <unknown>: one error line, exit 1", async () => {
+  const p = start(["chat", "-r", "nope"]);
+  let err = "";
+  p.stderr.on("data", (d) => (err += d));
+  const exited = new Promise((r) => p.on("exit", r));
+  p.stdin.end();
+  assert.equal(await exited, 1);
+  assert.equal(err.trim().split("\n").length, 1, err);
+  assert.match(err, /no task nope/);
 });

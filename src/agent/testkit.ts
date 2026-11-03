@@ -1,9 +1,9 @@
 /** Test helpers: a temp task directory and the real binary as a child process. Not loaded by the agent itself. */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempDir } from "../test/until.ts";
 import type { OutboxMsg, StdoutLine, TaskJson } from "../types.ts";
 
 const BIN = fileURLToPath(new URL("../bin/hortus-agent.js", import.meta.url));
@@ -23,7 +23,7 @@ const complete = async (req, onText) => {
   const n = done.filter((r) => r.tools.length).length;
   appendFileSync(reqs, JSON.stringify({ system: req.system, messages: req.messages, tools: req.tools.map((t) => t.name),
     effort: req.effort, home: process.env.HOME, cwd: process.cwd() }) + "\\n");
-  if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
+  if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [], usage: { input: 7, output: 3, cached: 0 } };
   const script = JSON.parse(readFileSync(dir + "fake-script.json", "utf8"));
   const t = script[n] ?? { text: "idle" };
   if (t.inbox) writeFileSync(dir + "ctl/inbox/" + String(t.inbox.seq).padStart(6, "0") + ".json", JSON.stringify(t.inbox));
@@ -61,7 +61,7 @@ const json = (path: string, v: unknown) => writeFileSync(path, JSON.stringify(v,
 
 /** A task dir with `ctl/home` (config, secrets, plugins) and a real-HOME stand-in at `<dir>/realhome`. */
 export function setup(task: Partial<TaskJson> = {}, secrets?: unknown, config?: unknown): string {
-  const dir = mkdtempSync(join(tmpdir(), "hortus-agent-"));
+  const dir = tempDir("hortus-agent-");
   dirs.push(dir);
   const h = join(dir, "ctl", "home", ".hortus");
   for (const d of ["ctl/inbox", "out/work", "realhome", "schedule"]) mkdirSync(join(dir, d), { recursive: true });

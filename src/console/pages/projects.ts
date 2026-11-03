@@ -43,7 +43,7 @@ export const projects: Page = async (ctx) => {
 ${snaps}`
         : h`<p class="empty">no projects</p>`
     }</div>
-<h2>Add or change</h2><form data-call="project.set" data-reset>
+<h2>Add or replace</h2><p class="hint">Saving an existing name replaces its whole entry: fields left empty take their defaults.</p><form data-call="project.set" data-reset>
 <label>Name <input name="name" required></label><label>Path <input name="path" required placeholder="/absolute/path"></label>
 <label>Main <input name="main" placeholder="main"></label>
 <label>Runtime <select name="runtime"><option>host</option><option>vm</option></select></label>

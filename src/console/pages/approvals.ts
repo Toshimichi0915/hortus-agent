@@ -81,7 +81,9 @@ const grantName = (category: string | null, s: Summary): string =>
 function label(a: ApprovalRow): string {
   if (a.kind !== "grant") return a.category ?? a.kind ?? "";
   const name = grantName(a.category, parse<Summary>(a.summary) ?? {});
-  return a.task_id ? `allow ${name} for task ${a.task_id}` : `enable ${name}`;
+  // the header links the task already
+  if (name.startsWith("origin:")) return `reuse the login for ${name.slice("origin:".length)}`;
+  return a.task_id ? `allow ${name} for this task` : `enable ${name}`;
 }
 
 /** A judge allow: one line, so they do not bury the owner's decisions. The reason is verbatim, capped at 200 chars. */

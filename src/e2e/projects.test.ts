@@ -7,14 +7,13 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const skip = !hasScope && "no systemd-run --user (delegated cgroups)";
@@ -98,8 +97,8 @@ const pendingMerge = (task: string, not?: number) =>
 
 before(async () => {
   if (!hasScope) return;
-  home = mkdtempSync(join(tmpdir(), "hortus-3b-"));
-  fake = mkdtempSync(join(tmpdir(), "hortus-3bfake-"));
+  home = tempDir("hortus-3b-");
+  fake = tempDir("hortus-3bfake-");
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
     join(fake, "plugins", "fake", "hortus.json"),

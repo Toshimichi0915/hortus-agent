@@ -49,7 +49,7 @@ export class BrowserSession {
     this.browser = await launch({ userDataDir: join(this.task.paths.work, "chrome"), caCert, args, noSandbox: true });
     const b = this.browser;
     process.once("exit", () => b.proc.kill("SIGKILL"));
-    this.cdp = await connect(b.ws);
+    this.cdp = await connect(b);
     this.session = await page(this.cdp);
     for (const d of ["Page", "Runtime", "Log", "Network"]) await this.send(`${d}.enable`);
     const log = (line: string) => {

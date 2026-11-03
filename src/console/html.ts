@@ -52,7 +52,7 @@ export function layout(ctx: Ctx, page: string, title: string, body: Raw): string
         id === "approvals" && pending > 0 ? h` <span class="badge">${pending}</span>` : ""
       }</a>`,
   );
-  return `<!doctype html>${h`<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  return `<!doctype html>${h`<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,">
 <title>${title} · hortus</title><link rel="stylesheet" href="/static/app.css"><script src="/static/app.js" defer></script></head>
 <body data-page="${page}"><nav>${nav}</nav><main><h1>${title}</h1>${body}<output id="msg" role="status"></output></main></body></html>`}`;
 }
@@ -70,7 +70,8 @@ export function parse<T = unknown>(text: string | null | undefined): T | undefin
 }
 
 export const time = (iso: string | null | undefined): Raw =>
-  iso ? h`<time datetime="${iso}">${iso.replace("T", " ").slice(0, 16)}</time>` : raw("—");
+  // UTC without JavaScript; app.js rewrites it in the browser's time zone
+  iso ? h`<time datetime="${iso}" title="UTC">${iso.replace("T", " ").slice(0, 16)}</time>` : raw("—");
 
 export function tokens(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;

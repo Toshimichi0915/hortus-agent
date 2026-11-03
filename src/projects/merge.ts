@@ -6,13 +6,14 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { bus } from "../console/events.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { RpcError } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { ctx } from "../vault/vault.ts";
-import { isGit, mainMoved, project, revParse, sync } from "./origin.ts";
+import { isGit, mainMoved, project, revParse, serialized, sync } from "./origin.ts";
 import { git, inShadow } from "./shadow.ts";
 
 const log = logger("merge");
@@ -131,6 +132,7 @@ async function landNow(id: number): Promise<string | null> {
   const fail = (reason: string): string => {
     log.info("merge did not land", { id, reason });
     db.prepare("UPDATE approvals SET reason = ? WHERE id = ?").run(reason, id);
+    bus.emit("approvals", { id });
     tell(`merge ${id} did not land: ${reason}`, { landed: false, reason });
     return reason;
   };
@@ -139,35 +141,40 @@ async function landNow(id: number): Promise<string | null> {
     const origin = paths.project(s.project);
     // non-git: the snapshot at approval; an owner edit since moves main, which replaces this entry (rebase notice)
     await sync(s.project);
-    if (row()?.status !== "approved") return `main moved; ${s.branch} must be rebased`;
-    const git_ = isGit(p);
-    const co = resolve(p.path);
-    const g = git_ ? (a: string[]) => git(["-C", co, ...a]) : (a: string[]) => inShadow(s.project, p.path, a);
-    if (git_) {
-      const branch = await g(["symbolic-ref", "-q", "--short", "HEAD"]).catch(() => "(detached)");
-      if (branch !== p.main) return fail(`checkout is on ${branch}, not ${p.main}`);
-    }
-    const head = await g(["rev-parse", "HEAD"]);
-    if (head !== s.main_sha) return fail(`checkout is at ${head.slice(0, 7)}, not ${s.main_sha.slice(0, 7)}`);
-    if (git_ && (await g(["status", "--porcelain"]))) return fail("checkout is not clean");
-    await g(["fetch", "-q", origin, s.sha]);
-    try {
-      await g(["merge", "-q", "--ff-only", s.sha]);
-    } catch (e) {
-      return fail(`merge --ff-only refused: ${(e as Error).message.slice(0, 500)}`);
-    }
-    try {
-      await git(["--git-dir", origin, "update-ref", `refs/heads/${p.main}`, s.sha, s.main_sha]);
-    } catch (e) {
-      // ponytail: unreachable while land() is serialized and the checkout was at main_sha; logged if it ever happens
-      log.error("checkout moved but the origin did not", e, { id });
-      return fail(`update-ref refused: ${(e as Error).message.slice(0, 500)}`);
-    }
-    db.prepare("UPDATE approvals SET status = 'landed', reason = NULL WHERE id = ?").run(id);
-    log.info("merge landed", { id, project: s.project, sha: s.sha });
-    tell(`merged ${s.sha}`, { landed: true, sha: s.sha });
-    mainMoved(s.project, s.sha, id);
-    return null;
+    // the checks, the ff and the update-ref on the project's sync chain: a sync in between (another task's start)
+    // would carry the checkout's new main into the origin first and send this entry a rebase notice
+    return await serialized(s.project, async () => {
+      if (row()?.status !== "approved") return `main moved; ${s.branch} must be rebased`;
+      const git_ = isGit(p);
+      const co = resolve(p.path);
+      const g = git_ ? (a: string[]) => git(["-C", co, ...a]) : (a: string[]) => inShadow(s.project, p.path, a);
+      if (git_) {
+        const branch = await g(["symbolic-ref", "-q", "--short", "HEAD"]).catch(() => "(detached)");
+        if (branch !== p.main) return fail(`checkout is on ${branch}, not ${p.main}`);
+      }
+      const head = await g(["rev-parse", "HEAD"]);
+      if (head !== s.main_sha) return fail(`checkout is at ${head.slice(0, 7)}, not ${s.main_sha.slice(0, 7)}`);
+      if (git_ && (await g(["status", "--porcelain", "--untracked-files=no"]))) return fail("checkout is not clean");
+      await g(["fetch", "-q", origin, s.sha]);
+      try {
+        await g(["merge", "-q", "--ff-only", s.sha]);
+      } catch (e) {
+        return fail(`merge --ff-only refused: ${(e as Error).message.slice(0, 500)}`);
+      }
+      try {
+        await git(["--git-dir", origin, "update-ref", `refs/heads/${p.main}`, s.sha, s.main_sha]);
+      } catch (e) {
+        // ponytail: unreachable while the landing holds the sync chain and the checkout was at main_sha; logged
+        log.error("checkout moved but the origin did not", e, { id });
+        return fail(`update-ref refused: ${(e as Error).message.slice(0, 500)}`);
+      }
+      db.prepare("UPDATE approvals SET status = 'landed', reason = NULL WHERE id = ?").run(id);
+      bus.emit("approvals", { id });
+      log.info("merge landed", { id, project: s.project, sha: s.sha });
+      tell(`merged ${s.sha}`, { landed: true, sha: s.sha });
+      mainMoved(s.project, s.sha, id);
+      return null;
+    });
   } catch (e) {
     return fail(e instanceof Error ? e.message.slice(0, 500) : String(e));
   }

@@ -7,14 +7,14 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import * as paths from "../paths.ts";
 import { openDb } from "../db.ts";
+import * as paths from "../paths.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const LIVE = process.env.HORTUS_TEST_NET === "1" && process.env.HORTUS_TEST_LLM === "1";
 const UNIT = "hortusd-step3test";
@@ -104,7 +104,7 @@ before(async () => {
   >;
   const key = owner["ollama-cloud"]?.apiKey;
   assert.ok(key, "~/.hortus/secrets.json has no ollama-cloud entry");
-  home = mkdtempSync(join(tmpdir(), "hortus-step3live-"));
+  home = tempDir("hortus-step3live-");
   process.env.HORTUS_HOME = join(home, ".hortus");
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
   project = join(home, "foo");

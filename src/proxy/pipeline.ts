@@ -8,13 +8,23 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
 import { BlockList, isIP } from "node:net";
-import { PassThrough, pipeline, Readable } from "node:stream";
+import { PassThrough, pipeline, Readable, type Transform } from "node:stream";
+import zlib from "node:zlib";
 import { logger } from "../log.ts";
 import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
-import { type Handle, handles, late, mintHandle, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
-import type { Signing } from "../vault/sigv4.ts";
+import {
+  HANDLE,
+  type Handle,
+  handles,
+  late,
+  mintHandle,
+  resolvable,
+  resolveHandle,
+  type Secret,
+} from "../vault/ops.ts";
 import type { Scrubber } from "../vault/scrub.ts";
+import type { Signing } from "../vault/sigv4.ts";
 import * as transforms from "../vault/transforms.ts";
 import {
   captured,
@@ -104,6 +114,8 @@ for (const [net, bits] of [
   ["169.254.0.0", 16],
   ["172.16.0.0", 12],
   ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 3],
 ] as const)
   PRIVATE.addSubnet(net, bits, "ipv4");
 for (const [net, bits] of [
@@ -111,6 +123,11 @@ for (const [net, bits] of [
   ["::1", 128],
   ["fc00::", 7],
   ["fe80::", 10],
+  ["fec0::", 10],
+  // IPv4 inside IPv6 (compatible, NAT64); mapped `::ffff:…` is unwrapped in isPrivate (BlockList would match every
+  // IPv4 address against ::ffff:0:0/96)
+  ["::", 96],
+  ["64:ff9b::", 96],
 ] as const)
   PRIVATE.addSubnet(net, bits, "ipv6");
 
@@ -128,8 +145,17 @@ function inCidrs(address: string, cidrs: string[]): boolean {
 }
 
 function isPrivate(address: string): boolean {
-  const v4 = address.startsWith("::ffff:") ? address.slice(7) : address;
-  return PRIVATE.check(v4, isIP(v4) === 6 ? "ipv6" : "ipv4");
+  // IPv4-mapped, dotted (`::ffff:127.0.0.1`) or hex (`::ffff:7f00:1`): checked as the IPv4 address it is
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(address);
+  const v4 =
+    dotted ??
+    (hex &&
+      [hex[1], hex[2]]
+        .flatMap((x) => [Number.parseInt(x as string, 16) >> 8, Number.parseInt(x as string, 16) & 255])
+        .join("."));
+  if (v4) return PRIVATE.check(v4, "ipv4");
+  return PRIVATE.check(address, isIP(address) === 6 ? "ipv6" : "ipv4");
 }
 
 let warnedDev = false;
@@ -461,12 +487,30 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const url = `${req.tls ? "https" : "http"}://${host}${req.path.startsWith("/") ? req.path : `/${req.path}`}`;
   const raw: Req = { method: req.method.toUpperCase(), url, headers, body: text, stream };
 
+  // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
+  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault); core's
+  // model is the Planner's (the gate's judge, whose prompt quotes the request's handles)
+  const cfg = ctx().config;
+  const llm =
+    client.role === "planner" || client.role === "core"
+      ? cfg.planner.provider
+      : client.role === "worker"
+        ? cfg.worker.provider
+        : undefined;
+  const llmEntry = llm === undefined ? undefined : readVault()[llm];
+  // a credential's transform defaults to its name (vault/providers.ts)
+  const llmCall = llm !== undefined && llmEntry !== undefined && (llmEntry.transform ?? llm) === tf?.name;
+
   // 5. raw secrets anywhere
   const scrub = scrubber();
   for (const s of everything(raw)) {
     const hit = scrub.find(s);
     if (hit) return refuse(403, "raw credential", { host, placeholder: hit });
   }
+  // handles come from transforms only: a client writing `{secret:…}` or `{sign:…}` itself would pick the op and its
+  // arguments (an admin installation token, say) that no transform emits. A model call's body is conversation.
+  if (everything(llmCall ? { ...raw, body: null } : raw).some((s) => s.search(HANDLE) !== -1))
+    return refuse(403, "handle syntax in the request: use hortus-secret-<name> placeholders", { host });
 
   // 6. template
   let template: Template = raw;
@@ -481,18 +525,6 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     if (!m || m[1]?.toLowerCase() !== url.match(URL_PARTS)?.[1]?.toLowerCase())
       return refuse(502, "transform changed the host", { transform: name });
   }
-
-  // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
-  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault); core's
-  // model is the Planner's (the gate's judge, whose prompt quotes the request's handles)
-  const cfg = ctx().config;
-  const llm =
-    client.role === "planner" || client.role === "core"
-      ? cfg.planner.provider
-      : client.role === "worker"
-        ? cfg.worker.provider
-        : undefined;
-  const llmCall = llm !== undefined && tf !== undefined && readVault()[llm]?.transform === tf.name;
 
   // 7. placeholders the transform did not map
   if (everything(llmCall ? { ...template, body: null } : template).some((s) => s.includes(PREFIX)))
@@ -519,6 +551,9 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     const bare = occupied(template).find((loc) => declares(strict, loc) && !handled.has(loc));
     if (bare) return refuse(403, `raw credential: ${bare} holds no placeholder`, { host });
   }
+  // a credential only ever leaves over TLS (dev.upstreams aside: tests talk plain HTTP to their fakes)
+  if (found.length && !req.tls && !devUpstream(host))
+    return refuse(403, "a credential never goes over plain http: use https", { host });
   const secrets = new Map<string, Secret>();
   const manifests = new Set<Manifest>(tf ? [tf.manifest] : []);
   let category: string | undefined;
@@ -554,7 +589,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     } else {
       const entry = vault[name];
       if (!entry) return refuse(403, `unknown credential ${name}`, { host });
-      const manifest = (entry.transform && transforms.get(entry.transform)?.manifest) || tf?.manifest;
+      const manifest = transforms.credentialManifest(name, entry, tf?.manifest);
       if (!effectiveHosts(name, entry, manifest).includes(host))
         return refuse(403, `destination: ${name} does not go to ${host}`, { host });
       if (!declares(manifestEntry(name, entry, manifest)?.locations ?? [], loc))
@@ -582,7 +617,11 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const line = `${template.method} ${host}${requestPath}`;
   // captured credentials: every method but GET/HEAD is consequential, plus the site manifest's patterns (3h)
   const capturedOnly = found.length > 0 && found.every((f) => f.h.name.startsWith("c-"));
+  // a streamed body (over 1 MB, octet-stream) is outside the hash and the judge's view: the owner decides each one
+  // (git's bodies excepted: a push is hashed by its ref commands, a fetch writes nothing)
+  const blind = found.length > 0 && template.stream && template.body === null && !/^application\/x-git-/i.test(ct);
   const consequential =
+    blind ||
     [...manifests].some((m) => (m.consequential ?? []).some((p) => glob(p).test(line))) ||
     (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
   if (found.length && client.task) {
@@ -635,7 +674,22 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   }
   // a token minted just now must be in the set that scrubs this very response
   const s = tokens.size ? scrubber() : scrub;
-  return { client, host, raw, template, tf, cookie, target, consequential, approved, secrets, body, scrub: s, llmCall, tokens };
+  return {
+    client,
+    host,
+    raw,
+    template,
+    tf,
+    cookie,
+    target,
+    consequential,
+    approved,
+    secrets,
+    body,
+    scrub: s,
+    llmCall,
+    tokens,
+  };
 }
 
 const pendingOut = (id: number, category: string): Out =>
@@ -778,6 +832,13 @@ function addRefs(p: Prepared, refs: string[] | undefined, repos: string[] | unde
 const joined = (h: Record<string, string | string[]>): Record<string, string> =>
   Object.fromEntries(Object.entries(h).map(([k, v]) => [k, Array.isArray(v) ? v.join("\n") : v]));
 
+const DECODERS: Record<string, () => Transform> = {
+  gzip: () => zlib.createGunzip(),
+  "x-gzip": () => zlib.createGunzip(),
+  deflate: () => zlib.createInflate(),
+  br: () => zlib.createBrotliDecompress(),
+};
+
 async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   const status = res.statusCode ?? 502;
   let scrub = p.scrub;
@@ -802,14 +863,31 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
     res.resume();
     return { status, headers, body: "" };
   }
+  // `accept-encoding: identity` is only a request: a compressed body would hide every value from the scrubber
+  let src: Readable = res;
+  const enc = String(res.headers["content-encoding"] ?? "identity")
+    .toLowerCase()
+    .trim();
+  if (enc !== "identity") {
+    const decode = DECODERS[enc];
+    if (!decode) {
+      res.resume();
+      return refuse(502, `unsupported content-encoding ${enc}`, { host: p.host });
+    }
+    const d = decode();
+    pipeline(res, d, () => {});
+    src = d;
+    const { "content-encoding": _e, "content-length": _l, ...plain } = headers;
+    headers = plain;
+  }
   const streamed = (r: Readable): Out => {
     const { "content-length": _, ...h } = headers;
     const s = scrub.stream();
     pipeline(r, s, () => {});
     return { status, headers: h, body: s };
   };
-  if (STREAM_RESPONSE.test(ct)) return streamed(res);
-  const r = await readUpTo(res, RESPONSE_BUFFER);
+  if (STREAM_RESPONSE.test(ct)) return streamed(src);
+  const r = await readUpTo(src, RESPONSE_BUFFER);
   // ponytail: over 16 MB skips response() and is scrubbed as a stream (downloads), not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);

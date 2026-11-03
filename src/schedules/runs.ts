@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
 import { remove as unindex } from "../mirror/fts.ts";
+import { replaceFile } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import * as tasks from "../runtime/tasks.ts";
 import type { OutboxMsg } from "../types.ts";
@@ -102,7 +103,7 @@ export function onExit(run: tasks.TaskRow, msgs: OutboxMsg[]): void {
 
   const sid = scheduleOf(run);
   if (sid !== undefined && run.summary && existsSync(paths.schedule(sid)))
-    writeFileSync(join(paths.schedule(sid), "last-summary.md"), run.summary);
+    replaceFile(join(paths.schedule(sid), "last-summary.md"), run.summary); // the run could plant a link there
 
   const results = msgs.filter((m) => m.type === "result");
   if (results.length && results.every((m) => !m.text.trim()))

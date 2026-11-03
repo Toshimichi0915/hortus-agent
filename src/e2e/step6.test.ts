@@ -8,24 +8,14 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { FakeGitHub } from "../test/fakes/github.ts";
-import { until } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -193,8 +183,8 @@ const pending = () =>
 
 before(async () => {
   if (!hasScope) return;
-  home = mkdtempSync(join(tmpdir(), "hortus-step6-"));
-  fake = mkdtempSync(join(tmpdir(), "hortus-step6fake-"));
+  home = tempDir("hortus-step6-");
+  fake = tempDir("hortus-step6fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
