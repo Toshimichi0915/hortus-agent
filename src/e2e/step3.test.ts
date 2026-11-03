@@ -372,18 +372,51 @@ test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof 
   assert.match(texts(await card(id)), new RegExp(`tool said: logs/${chatA}/`));
 });
 
-test("recovery after SIGKILL: running chat → waiting, unattended → queued and resumes with its context", {
-  skip,
-}, async () => {
-  const { id: chat } = await api<{ id: string }>("task.open", { text: "!bash sleep 30" });
-  const un = `u${Date.now().toString(36)}`;
+/** An unattended task straight into the queue (no Planner in this test), its brief one model directive. */
+function enqueue(brief: string): string {
+  const id = `u${Date.now().toString(36)}`;
   const db = openDb(paths.db());
   const t = new Date().toISOString();
   db.prepare(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated, hours)
-     VALUES (?, 'unattended', 'sleeper', '!bash sleep 30', 'queued', ?, ?, '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
-  ).run(un, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1e6, hours: 1 }), t, t);
+     VALUES (?, 'unattended', 't', ?, 'queued', ?, ?, '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
+  ).run(id, brief, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1e6, hours: 1 }), t, t);
   db.close();
+  return id;
+}
+
+test("unattended tool homes: npm, npx, pnpm, venv/pip, git work offline under the profile", { skip }, async () => {
+  // each step's output is checked for a sandbox refusal; tools missing here are skipped
+  const script = join(fake, "tools.sh");
+  writeFileSync(
+    script,
+    `r() { if "$@" > log 2>&1; then echo "ok: $*"; else echo "FAIL: $*"; tail -5 log; fi
+  if grep -E 'EACCES|EPERM|EROFS|Permission denied|Read-only file system|Unknown env config' log; then echo "SANDBOX: $*"; fi; }
+has() { command -v "$1" > /dev/null; }
+mkdir b && cd b && mkdir lp
+echo '{"name":"lp","version":"1.0.0","bin":{"lp":"x.js"}}' > lp/package.json
+printf '#!/usr/bin/env node\\nconsole.log("lp ran")\\n' > lp/x.js
+if has npm; then r npx --offline --yes ./lp; r npm init -y; r npm i --offline ./lp; fi
+if has pnpm; then mkdir pn && cd pn && r pnpm init && r pnpm add --offline ../lp && r pnpm store path; cd ..; fi
+if has gh; then r gh config get git_protocol; fi
+if python3 -c 'import ensurepip' 2> /dev/null; then r python3 -m venv .venv && r .venv/bin/pip --version; fi
+r git init -q g && r git -C g config user.name x && r mkdir "$HOME/.cache/hortus-step3-$$" && rmdir "$HOME/.cache/hortus-step3-$$"
+echo end
+`,
+  );
+  const id = enqueue(`!bash bash ${script}`);
+  await waitStatus(id, "waiting", 60_000);
+  const out = JSON.stringify(reqs(id).at(-1)?.messages.at(-1));
+  assert.match(out, /ok: git -C g config/, out);
+  assert.match(out, /end/, out);
+  assert.doesNotMatch(out, /FAIL|SANDBOX/, out);
+});
+
+test("recovery after SIGKILL: running chat → waiting, unattended → queued and resumes with its context", {
+  skip,
+}, async () => {
+  const { id: chat } = await api<{ id: string }>("task.open", { text: "!bash sleep 30" });
+  const un = enqueue("!bash sleep 30");
   // in their tool = the assistant message with the call is in the session file (a fixed delay after the model request
   // raced that write under load, and the resumed context then had no call to interrupt)
   const inTool = (id: string) => {
