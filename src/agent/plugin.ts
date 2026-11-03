@@ -11,7 +11,7 @@ import { sendDone } from "./tools/send-done.ts";
 export function taskPlugin(task: TaskJson, dir: string, onDone: (summary: string) => void): Plugin {
   const system = prompt(task);
   return {
-    tools: [...sendDone(dir, onDone), ...featureTools(task)],
+    tools: [...sendDone(dir, onDone, task.kind === "run"), ...featureTools(task)],
     on: {
       // replaces core's builtin prompt (and anything earlier plugins pushed)
       session_start: ({ system: parts }) => void parts.splice(0, parts.length, system),

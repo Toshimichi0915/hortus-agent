@@ -2,6 +2,7 @@
 /** hortus: the owner's console CLI, a line-oriented client of hortusd's abstract socket. One row per command. */
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
+import type { ScheduleListRow } from "../console/pages/schedules.ts";
 import * as paths from "../paths.ts";
 import { type RpcClient, rpcClient } from "../rpc.ts";
 import { RpcError, type SearchHit } from "../types.ts";
@@ -258,7 +259,21 @@ const commands: Record<string, Command> = {
     async run(_args, rpc) {
       const list = (await rpc.call("schedule.list", {})) as Row[];
       if (!list.length) return console.log("no schedules");
-      for (const r of list) console.log([r.id, r.task_id, r.fire_at, r.cron ?? r.every_sec, r.text].map(s).join("\t"));
+      const { kindOf, relative } = await import("../console/pages/schedules.ts");
+      for (const r of list as unknown as ScheduleListRow[])
+        console.log(
+          [
+            r.id,
+            r.title || r.task_id,
+            kindOf(r),
+            r.fire_at ? `${relative(r.fire_at)} (${r.fire_at})` : "",
+            r.last_run ?? "-",
+            r.expires_at ?? "never",
+            r.text,
+          ]
+            .map(s)
+            .join("\t"),
+        );
     },
   },
   pause: {

@@ -1,9 +1,12 @@
-/** `send` → outbox `reply`; `done` → outbox `result` (empty: no file) and tells the loop to stop after this tool. */
+/**
+ * `send` → outbox `reply`; `done` → outbox `result` (empty: no file, except in a run, where hortusd closes the run on an
+ * empty result) and tells the loop to stop after this tool.
+ */
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";
 import { writeOutbox } from "../outbox.ts";
 
-export function sendDone(dir: string, onDone: (summary: string) => void): Tool[] {
+export function sendDone(dir: string, onDone: (summary: string) => void, keepEmpty = false): Tool[] {
   return [
     tool({
       name: "send",
@@ -21,7 +24,7 @@ export function sendDone(dir: string, onDone: (summary: string) => void): Tool[]
         "Finish the task. `summary` is the result (what was done, links, open points); an empty string reports nothing (use it when there was nothing to do). Call it alone, as your last tool call.",
       inputSchema: z.object({ summary: z.string() }),
       execute: async ({ summary }) => {
-        if (summary) writeOutbox(dir, "result", summary);
+        if (summary || keepEmpty) writeOutbox(dir, "result", summary);
         onDone(summary);
         return "done";
       },

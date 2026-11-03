@@ -34,6 +34,8 @@ const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
 /** Called after an exit that produced a `result` (step 4 wakes the Planner for non-chat tasks; 3c closes empty runs). */
 export const exitHooks = {
   onResult(_task: tasks.TaskRow, _msg: OutboxMsg): void {},
+  /** After every session exit with the fresh row and the new outbox messages (3c: a run's accounting and close). */
+  onExit: [] as ((task: tasks.TaskRow, msgs: OutboxMsg[]) => void)[],
 };
 
 export const MAX_OUTBOX = 1024 * 1024;
@@ -328,8 +330,12 @@ async function finish(
   const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
     n: number;
   };
-  const current = tasks.get(id).status;
-  const extra = { hours, usage: JSON.stringify({ tokens }), summary: summary ?? row.summary, error };
+  const fresh = tasks.get(id);
+  const current = fresh.status;
+  // `runs`: tokens its schedule runs charged to this task (3c), kept on top of its own sessions' count
+  const runs = (JSON.parse(fresh.usage ?? "{}") as { runs?: number }).runs ?? 0;
+  const usage = JSON.stringify(runs ? { tokens: tokens + runs, runs } : { tokens });
+  const extra = { hours, usage, summary: summary ?? row.summary, error };
   if (stopping || current !== "running") {
     // shutdown (recovery decides at the next start) or closed meanwhile: only the accounting
     d.prepare("UPDATE tasks SET hours = ?, usage = ?, summary = ?, error = ? WHERE id = ?").run(
@@ -341,12 +347,19 @@ async function finish(
     );
   } else {
     // an owner message the Worker never drained re-queues it; a crash waits for the next message (no restart loop)
-    // ponytail: a `run` with an empty result is closed by 3c; budget_exceeded waits like any other exit until step 4
+    // ponytail: budget_exceeded waits like any other exit until step 4
     tasks.setStatus(id, exit.code === 0 && inbox > cursor && !overBudget ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
   log().info("session ended", { task: id, code: exit.code, signal: exit.signal, outbox: msgs.length });
   await publishLog(id, row.title, tasks.get(id).status).catch((e) => log().error("publishLog failed", e, { task: id }));
+  if (!stopping)
+    for (const h of exitHooks.onExit)
+      try {
+        h(tasks.get(id), msgs);
+      } catch (e) {
+        log().error("exit hook failed", e, { task: id });
+      }
   for (const m of msgs) if (m.type === "result") exitHooks.onResult(tasks.get(id), m);
 }
 

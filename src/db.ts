@@ -46,6 +46,16 @@ const migrations: string[] = [
   `,
   // step 3: the card's error line (a Worker that exited non-zero without an outbox message)
   "ALTER TABLE tasks ADD COLUMN error TEXT;",
+  // 3c: schedule ids are never reused (a run's `schedule:<id>` key and `schedules/<id>/` outlive a deleted row)
+  `
+  CREATE TABLE schedules_new(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    fire_at TEXT, every_sec INTEGER, cron TEXT, tz TEXT, text TEXT, script TEXT, expires_at TEXT, last_run TEXT,
+    created TEXT);
+  INSERT INTO schedules_new SELECT * FROM schedules;
+  DROP TABLE schedules;
+  ALTER TABLE schedules_new RENAME TO schedules;
+  CREATE INDEX schedules_fire ON schedules(fire_at);
+  `,
 ];
 
 export function openDb(path: string): DatabaseSync {

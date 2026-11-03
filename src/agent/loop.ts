@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createAgent, listSessions, type Message, openSession, type Plugin, type Session } from "@hortus/core";
 import type { TaskJson } from "../types.ts";
-import { drain, marker, pending } from "./inbox.ts";
+import { drain, marker, pending, quote } from "./inbox.ts";
 import { writeOutbox } from "./outbox.ts";
 import { formatScript, runScript } from "./script.ts";
 import { out, outMessage } from "./stdout.ts";
@@ -55,6 +55,17 @@ export async function resume(dir: string): Promise<Session> {
       },
     ]);
   return session;
+}
+
+/** `last-summary.md` (hortusd copies it from the previous run's summary.md), at most 64 KB; "" when missing. */
+function readSummary(dir: string): string {
+  try {
+    return readFileSync(join(dir, "last-summary.md"), "utf8")
+      .slice(0, 64 * 1024)
+      .trim();
+  } catch {
+    return "";
+  }
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -118,7 +129,10 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   timer.unref();
   try {
     if (session.getState().messages.length === 0) {
-      let first = task.brief;
+      // a run (3c): the row's text, the previous run's summary, the script's output
+      const first = [task.brief];
+      const last = task.kind === "run" && task.paths.schedule && readSummary(task.paths.schedule);
+      if (last) first.push(`[previous run's summary]\n${quote(last)}`);
       if (task.kind === "run" && task.script) {
         const r = await runScript(task.script, task.paths.schedule ?? task.paths.work);
         if (r.code === 0 && !r.killed && !r.stdout.trim()) {
@@ -126,9 +140,9 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
           out({ type: "status", text: "script: nothing to do" });
           return 0;
         }
-        first = `${task.brief}\n\n${formatScript(r)}`;
+        first.push(formatScript(r));
       }
-      await append([{ role: "user", content: first }]);
+      await append([{ role: "user", content: first.join("\n\n") }]);
     }
 
     let end: "done" | "stop" | "budget" | "idle" | "failed";

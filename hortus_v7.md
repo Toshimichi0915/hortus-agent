@@ -105,6 +105,13 @@ v7 is v6 as implemented in this repository. Nothing in the v6 design changes; th
 ## Schedules
 
 - `croner` for `cron` (as v6). `every` under 300 s and `cron` expressions firing more often than every 5 min are refused at `schedule()`.
+- **DST**: croner 11 moves a time skipped by spring-forward to the next valid minute (2:30 → 3:00) instead of dropping it; hortusd drops it (a next run that `match()` rejects is skipped), so v6's "a skipped time is dropped" holds. A repeated time fires once (croner's own behavior). `cron` is `mode: "5-part"`.
+- **Ids are never reused** (migration 3: `schedules.id` is `AUTOINCREMENT`): a run's `schedule:<id>` key, its `task_refs` row and `schedules/<id>/` outlive a deleted row, and a reused id let an old run block (or write `last-summary.md` into) a new row.
+- **A run's script and directory** reach `task.json` without new columns: `runs.start` writes the script to the run's `ctl/script.sh` (ro to the Worker), `taskJson` reads it and sets `paths.schedule` from the `schedule:<id>` event key while `schedules/<id>/` exists. Only recurring rows get a directory; a one-shot row with a script is deleted when it fires, so its run's script runs in `work/`.
+- **Usage**: the parent's `usage` is `{ tokens, runs }`, `runs` = the sum of its runs' tokens (recomputed at each run exit, so a resumed run is never charged twice); the dispatcher's exit keeps `runs` on top of the parent's own count. The parent's own Worker still checks only its own sessions' tokens (ponytail: subtract `runs` in `taskJson.budget` if a parent outspends its budget that way). Over budget: rows stay due and do not fire (they fire at the first tick after `task.budget` raises it), and the parent's `error` reads `budget_exceeded: …` until step 4 wakes the Planner from `runs.onExit`.
+- **Empty result**: a run's `done("")` writes an empty `result` (other kinds still write nothing); at exit the run is closed and its `logs` entry (files and index rows) removed; a run that never reached the model (a quiet script) is deleted outright, rows and all. The Planner's `onResult` hook must ignore empty results.
+- **Hooks**: `exitHooks.onExit` (a list, every session exit, fresh row + new outbox messages) and `tasks.inboxHooks` (a list, every inbox write). A non-`schedule:` message to a task or one of its runs sets the task's non-cron rows' `expires_at` to its time + 7 days. Schedule inbox messages are `trusted: true` (the task's own words), quoted like any non-owner message.
+- `HORTUS_SCHEDULE_TICK_MS` (tests) shortens the one-minute tick; the unit tests replace `clock.now` and call `tick()`.
 
 ## Testing without credentials
 

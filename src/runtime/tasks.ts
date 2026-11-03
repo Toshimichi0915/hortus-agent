@@ -3,7 +3,7 @@
  * writes. Statuses: queued → running → waiting → (queued → running …) → done | failed. The dispatcher starts and ends
  * sessions; this file never spawns anything. The owner's RPCs (task.open, task.send, …) are defined at the bottom.
  */
-import { cpSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -161,9 +161,12 @@ export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">): numbe
   db.prepare("INSERT INTO inbox(task_id, seq, body, created) VALUES (?, ?, ?, ?)").run(id, n, json(full), full.ts);
   if (t.status === "waiting") setStatus(id, "queued");
   else bus.emit("tasks", { id });
+  for (const h of inboxHooks) h(t, full);
   hooks.wake();
   return n;
 }
+/** Called after every inbox write (3c: a non-schedule message extends the task's schedule rows). */
+export const inboxHooks: ((task: TaskRow, msg: InboxMsg) => void)[] = [];
 
 /** STOP: a queued task waits at once; a running one stops after its current tool (killed after 30 s). */
 export function stop(id: string): void {
@@ -221,6 +224,12 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
   const project = scope.project ?? row.project ?? undefined;
   const out = paths.out(row.id);
   const unattendedProject = project !== undefined && row.kind !== "chat";
+  // a run (3c): its row's directory while the row lives, the script runs.start wrote to ctl/
+  const sid =
+    row.kind === "run" ? parse<string[]>(row.event_keys, []).find((k) => k.startsWith("schedule:")) : undefined;
+  const sdir = sid && paths.schedule(sid.slice("schedule:".length));
+  const schedule = sdir && existsSync(sdir) ? sdir : undefined;
+  const script = row.kind === "run" ? readOr(join(paths.ctl(row.id), "script.sh")) : undefined;
   return {
     id: row.id,
     kind: row.kind,
@@ -241,7 +250,9 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       work: join(out, "work"),
       // ponytail: the clone is 3b (projects.sync + clone); until then a project task works in out/work
       ...(unattendedProject ? { clone: paths.clone(row.id) } : {}),
+      ...(schedule ? { schedule } : {}),
     },
+    ...(script ? { script } : {}),
     ...(unattendedProject ? { clone_url: `https://hortusd.internal/git/${project}` } : {}),
     ...(row.kind === "chat"
       ? {
@@ -252,8 +263,16 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
         }
       : {}),
     rpc: "https://hortusd.internal",
-    features: [],
+    features: row.kind === "planner" ? [] : ["schedule"],
   };
+}
+
+function readOr(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 const DOF_BIN = fileURLToPath(new URL("../bin/dof.js", import.meta.url));

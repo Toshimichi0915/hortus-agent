@@ -1,6 +1,7 @@
 import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
+import { type ScheduleListRow, scheduleTable } from "./schedules.ts";
 import { type TaskRow, taskActions } from "./tasks.ts";
 
 interface MsgRow {
@@ -27,6 +28,9 @@ export const task: Page = (ctx, { m }) => {
       .all(id) as unknown as MsgRow[]
   ).reverse();
   const replies = lastReplies(ctx, id, -1, 200);
+  const timers = ctx.db
+    .prepare("SELECT * FROM schedules WHERE task_id = ? ORDER BY fire_at")
+    .all(id) as unknown as ScheduleListRow[];
   const open = isOpen(t.status);
   return layout(
     ctx,
@@ -44,6 +48,7 @@ ${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${details(
 <p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
 ${pendingFor(ctx, id).map(approvalEntry)}
+${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
 <h2>Messages</h2>${outbox.length ? h`<ul class="msgs">${outbox.map(msg)}</ul>` : h`<p class="empty">none</p>`}
 <h2>Stream</h2>${replies.length ? h`<div class="stream">${replies.map((r) => h`<div class="line">${time(r.created)} ${replyLine(r)}</div>`)}</div>` : h`<p class="empty">none</p>`}
 <h2>Inbox</h2>${inbox.length ? h`<ul class="msgs">${inbox.map(msg)}</ul>` : h`<p class="empty">empty</p>`}

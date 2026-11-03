@@ -14,12 +14,13 @@ import { commit, mirrorModule } from "../mirror/index.ts";
 import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
 import { cgroup, dispatcherModule, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
+import { schedulesModule } from "../schedules/schedules.ts";
 import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
  * then the transforms DOF (ship, then load the enabled rows from its worktree: needs the mirror's commit) before the
  * proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
- * sessions) once the proxy and links are up; the console last. 3c adds the scheduler. */
+ * sessions) once the proxy and links are up; the schedules tick after it (3c); the console last. */
 const modules: Module[] = [
   mirrorModule,
   vaultModule,
@@ -28,6 +29,7 @@ const modules: Module[] = [
   proxyModule,
   gatewayModule,
   dispatcherModule,
+  schedulesModule,
   consoleModule,
 ];
 

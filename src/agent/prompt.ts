@@ -51,6 +51,14 @@ New messages arrive as user messages starting with \`[inbox <n>] from=<origin> .
 - When you stop without \`done\`, the task waits for its next inbox message.`,
     `# Budget
 ${task.budget.tokens} tokens and ${task.budget.hours} hours for the whole task; when either runs out you are stopped, so finish what matters first. The owner's timezone is ${task.tz}; turn relative times into absolute ones in it.`,
+    task.features.includes("schedule") &&
+      `# Schedules
+\`schedule(text, at | every | cron, tz?, script?)\` sets a timer and returns its id; \`unschedule(id)\` removes it.${task.kind === "run" ? " You are a run of a timer: both act on your parent task's timers." : ""}
+- A one-shot \`at\` (ISO 8601) without a script wakes this task again with \`text\` in its inbox and everything you know now. Call \`done\` after scheduling; the task waits.
+- Anything else (\`every\` seconds, a 5-field \`cron\` in \`tz\`, default ${task.tz}, or a timer with a \`script\`) starts a run at each firing: a new task with a fresh session whose first message is \`text\`, the previous run's summary and the script's output. A run does not see this conversation: put everything it needs into \`text\`.
+- \`script\` (bash, ≤ 16 KB) runs before the model, in the run's persistent directory. Exit 0 with no output ends the run with no model call, so do the cheap check in the script and print only when there is work.
+- A run's scratch directory is deleted when it ends; its persistent directory is kept between runs of the same timer (notes, state, tools).
+- The minimum interval is 5 minutes, for \`cron\` too. Timers other than \`cron\` expire 7 days after the last message to this task that was not from a timer.`,
     task.features.length > 0 &&
       `# Extra tools\nEnabled: ${task.features.join(", ")}. Their descriptions say how to use them.`,
   ]
