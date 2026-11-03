@@ -1,0 +1,38 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://openrouter.ai/v1/x",
+    "headers": {
+      "authorization": "Bearer hortus-secret-openrouter",
+      "content-type": "application/json"
+    },
+    "body": "{\"stream\":true}",
+    "stream": false
+  },
+  "template": {
+    "method": "POST",
+    "url": "https://openrouter.ai/v1/x",
+    "headers": {
+      "authorization": "Bearer {secret:openrouter}",
+      "content-type": "application/json"
+    },
+    "body": "{\"stream\":true}",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{}"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "openrouter",
+  "credentials": {
+    "openrouter": {
+      "type": "token",
+      "hosts": ["openrouter.ai"],
+      "locations": ["header:Authorization"]
+    }
+  }
+}

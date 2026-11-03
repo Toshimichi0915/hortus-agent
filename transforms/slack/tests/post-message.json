@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://slack.com/api/chat.postMessage",
+    "headers": { "authorization": "Bearer hortus-secret-slack" },
+    "body": "{\"channel\":\"C1\",\"thread_ts\":\"100.1\",\"text\":\"hi\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": "{\"ok\":true,\"channel\":\"C1\",\"ts\":\"100.2\",\"message\":{\"thread_ts\":\"100.1\"}}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "body": "{\"ok\":true,\"channel\":\"C1\",\"ts\":\"100.2\",\"message\":{\"thread_ts\":\"100.1\"}}"
+    },
+    "refs": ["slack:C1:100.1"]
+  }
+}

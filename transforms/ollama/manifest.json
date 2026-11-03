@@ -1,0 +1,10 @@
+{
+  "name": "ollama",
+  "credentials": {
+    "ollama": {
+      "type": "token",
+      "hosts": ["ollama.com"],
+      "locations": ["header:Authorization"]
+    }
+  }
+}

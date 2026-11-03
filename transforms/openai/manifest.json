@@ -1,0 +1,10 @@
+{
+  "name": "openai",
+  "credentials": {
+    "openai": {
+      "type": "token",
+      "hosts": ["api.openai.com"],
+      "locations": ["header:Authorization"]
+    }
+  }
+}
