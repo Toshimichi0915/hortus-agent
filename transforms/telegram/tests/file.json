@@ -1,0 +1,16 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.telegram.org/file/bothortus-secret-telegram/documents/file_1.txt",
+    "headers": {},
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://api.telegram.org/file/bot{secret:telegram}/documents/file_1.txt",
+    "headers": {},
+    "body": null,
+    "stream": false
+  }
+}

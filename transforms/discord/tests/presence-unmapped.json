@@ -1,0 +1,16 @@
+{
+  "request": {
+    "method": "WS",
+    "url": "https://gateway.discord.gg/?v=10&encoding=json",
+    "headers": {},
+    "body": "{\"op\":3,\"d\":{\"activities\":[{\"name\":\"hortus-secret-discord\"}]}}",
+    "stream": false
+  },
+  "template": {
+    "method": "WS",
+    "url": "https://gateway.discord.gg/?v=10&encoding=json",
+    "headers": {},
+    "body": "{\"op\":3,\"d\":{\"activities\":[{\"name\":\"hortus-secret-discord\"}]}}",
+    "stream": false
+  }
+}

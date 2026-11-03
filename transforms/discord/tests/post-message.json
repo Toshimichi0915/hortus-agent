@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://discord.com/api/v10/channels/300/messages",
+    "headers": { "authorization": "Bot hortus-secret-discord", "content-type": "application/json" },
+    "body": "{\"content\":\"hi\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": { "content-type": "application/json" },
+    "body": "{\"id\":\"301\",\"channel_id\":\"300\",\"content\":\"hi\"}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "body": "{\"id\":\"301\",\"channel_id\":\"300\",\"content\":\"hi\"}"
+    },
+    "refs": ["discord:300:301", "discord:300:300"]
+  }
+}

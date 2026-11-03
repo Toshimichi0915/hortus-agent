@@ -1,0 +1,16 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.telegram.org/bothortus-secret-telegram/getUpdates",
+    "headers": { "content-type": "application/json" },
+    "body": "{\"timeout\":50}",
+    "stream": false
+  },
+  "template": {
+    "method": "POST",
+    "url": "https://api.telegram.org/bot{secret:telegram}/getUpdates",
+    "headers": { "content-type": "application/json" },
+    "body": "{\"timeout\":50}",
+    "stream": false
+  }
+}
