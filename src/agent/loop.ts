@@ -25,21 +25,24 @@ export function scan(dir: string): { tokens: number; cursor: number } {
   let cursor = 0;
   // hortusd runs this over a Worker's directory too: no links, FIFOs, unbounded files or file counts
   let budget = MAX_SESSIONS;
+  // the Worker's file: `null` lines, strings, negative or non-number usage must neither throw nor shrink the count
+  const n = (x: unknown): number => (typeof x === "number" && x > 0 && Number.isFinite(x) ? x : 0);
   const count = (text: string) => {
     budget -= text.length;
     // a session's first user message is the brief (or a run's text, a handoff's notes), never a drained message: a
     // brief that happens to start with `[inbox 99]` must not hide messages 1–99
     let first = true;
     for (const line of text.split("\n")) {
-      let e: { type?: string; message?: Message };
+      let e: { type?: string; message?: Message } | null;
       try {
         e = JSON.parse(line);
       } catch {
         continue; // empty, or cut short by a crash
       }
-      const m = e.type === "message" ? e.message : undefined;
-      if (m?.role === "assistant") tokens += (m.usage?.input ?? 0) + (m.usage?.output ?? 0);
-      if (m?.role === "user" && !first) cursor = Math.max(cursor, marker(m.content) ?? 0);
+      const m = e?.type === "message" ? e.message : undefined;
+      if (m?.role === "assistant") tokens += n(m.usage?.input) + n(m.usage?.output);
+      if (m?.role === "user" && !first && typeof m.content === "string")
+        cursor = Math.max(cursor, marker(m.content) ?? 0);
       if (m?.role === "user") first = false;
     }
   };

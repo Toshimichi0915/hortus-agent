@@ -40,6 +40,8 @@ const { Receiver: ReceiverCtor, Sender: SenderCtor } = wsLib as unknown as {
 };
 
 const MAX_FRAME = 16 * 1024 * 1024;
+/** the body of an upgrade the upstream answered without upgrading */
+const MAX_REFUSAL = 1024 * 1024;
 
 /** A client text frame → the text to send upstream, or why it is refused. */
 export function frameOut(p: Prepared, text: string): { text: string } | { refuse: string } {
@@ -192,7 +194,15 @@ export async function relay(client: Client, req: IncomingRequest, socket: Duplex
   up.req.on("response", (res) => {
     // not upgraded: answer like a normal request (bounded, scrubbed) and close
     const chunks: Buffer[] = [];
-    res.on("data", (c: Buffer) => chunks.push(c));
+    let n = 0;
+    res.on("data", (c: Buffer) => {
+      if (res.destroyed) return;
+      n += c.length;
+      if (n <= MAX_REFUSAL) return void chunks.push(c);
+      // an upstream answering the handshake with an endless body must not grow hortusd's memory
+      res.destroy();
+      writeOut(socket, refuse(502, "upstream: upgrade answered with a body over 1 MB"));
+    });
     res.on("end", () => {
       const headers: Record<string, string | string[]> = {};
       for (const [k, v] of Object.entries(prepared.scrub.headers(res.headers)))

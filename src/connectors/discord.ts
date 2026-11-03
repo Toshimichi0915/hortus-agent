@@ -158,16 +158,17 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
 
   async function reactions(m: DMsg): Promise<Record<string, string[]> | undefined> {
     if (!m.reactions?.length) return undefined;
-    const out: Record<string, string[]> = {};
+    // entries: a custom emoji may be named `__proto__`
+    const out: [string, string[]][] = [];
     for (const r of m.reactions) {
       const key = emojiKey(r.emoji);
       const users = await api<DUser[]>(
         "GET",
         `/channels/${m.channel_id}/messages/${m.id}/reactions/${encodeURIComponent(key)}?limit=100`,
       );
-      out[r.emoji.name ?? key] = users.map((u) => u.username);
+      out.push([r.emoji.name ?? key, users.map((u) => u.username)]);
     }
-    return out;
+    return Object.fromEntries(out);
   }
 
   async function messageChanges(m: DMsg, download: boolean): Promise<Change[]> {

@@ -3,7 +3,7 @@
  * copies its summary, and upserts both index rows in the same call.
  */
 import { join } from "node:path";
-import { branch, type Message, type SessionEntry } from "@hortus/core";
+import type { Message, SessionEntry } from "@hortus/core";
 import { type DatabaseSync, now } from "../db.ts";
 import { MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, MAX_SUMMARY, readCapped, readDir } from "../hostile.ts";
 import { logger } from "../log.ts";
@@ -37,15 +37,31 @@ function renderMessage(m: Message): string {
   return m.results.map((r) => (r.image ? "[image]" : fenced("", excerpt(r.output)))).join("\n\n");
 }
 
-/** Same as core's reader: a line cut short by a crash is skipped. */
+/** Same as core's reader: a line cut short by a crash is skipped (and so is anything but an object). */
 const entries = (text: string): SessionEntry[] =>
   text.split("\n").flatMap((line) => {
     try {
-      return line ? [JSON.parse(line) as SessionEntry] : [];
+      const e: unknown = line ? JSON.parse(line) : null;
+      return e && typeof e === "object" ? [e as SessionEntry] : [];
     } catch {
       return [];
     }
   });
+
+/**
+ * The last entry's branch, root first, as core's `branch` replays it, but with a visited set: these entries are the
+ * Worker's, and two lines whose `parentId`s point at each other would loop core's walk (and hortusd) forever.
+ */
+function messagesOf(all: SessionEntry[]): Message[] {
+  const byId = new Map(all.map((e) => [e.id, e]));
+  const seen = new Set<unknown>();
+  const path: SessionEntry[] = [];
+  for (let e = all.at(-1); e && !seen.has(e.id); e = e.parentId == null ? undefined : byId.get(e.parentId)) {
+    seen.add(e.id);
+    path.push(e);
+  }
+  return path.reverse().flatMap((e) => (e.v === 1 && e.type === "message" ? [e.message] : []));
+}
 
 /**
  * Every `*.jsonl` in `dir`, in name order (lexical = chronological), each replayed along its leaf's branch.
@@ -66,14 +82,17 @@ export async function renderSession(dir: string): Promise<string> {
         if (budget <= 0) break;
         const text = read(n, Math.min(MAX_SESSION, budget))?.text ?? "";
         budget -= text.length;
-        const all = entries(text);
-        const leaf = all.at(-1);
-        if (!leaf) continue;
         // a planted `zzz.jsonl` has no start time (and must not make every publish throw)
         const t = Number(n.split("_")[0]) * 1000;
         const ts = Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? new Date(t).toISOString() : "?";
-        for (const m of branch(all, leaf.id).messages) {
-          out.push(`## ${++seq} ${m.role} ${ts}\n\n${renderMessage(m)}\n`);
+        for (const m of messagesOf(entries(text))) {
+          let md: string;
+          try {
+            md = renderMessage(m);
+          } catch {
+            md = "(not a message)"; // a planted line of the wrong shape loses itself, not the log
+          }
+          out.push(`## ${++seq} ${String(m?.role)} ${ts}\n\n${md}\n`);
         }
       }
     },
