@@ -28,8 +28,14 @@ let loaded = new Map<string, Loaded>();
 export const MEMORY = 32 * 1024 * 1024;
 export const DEADLINE_MS = 100;
 
-/** Replaces the table: later dirs win on a name clash. From 3f, the enabled rows of the transforms DOF are one more dir. */
-export async function load(dirs: string[] = [shippedDir()]): Promise<Map<string, Loaded>> {
+export const hashOf = (manifest: string, code: string): string =>
+  createHash("sha256").update(manifest).update("\0").update(code).digest("hex");
+
+/** Replaces the table: later dirs win on a name clash. `keep(dirName, hash)` false → skipped before parsing (3f). */
+export async function load(
+  dirs: string[] = [shippedDir()],
+  keep?: (name: string, hash: string) => boolean,
+): Promise<Map<string, Loaded>> {
   QuickJS ??= await newQuickJSWASMModule();
   const next = new Map<string, Loaded>();
   for (const root of dirs) {
@@ -41,8 +47,9 @@ export async function load(dirs: string[] = [shippedDir()]): Promise<Map<string,
       if (!existsSync(mf) || !existsSync(js)) continue;
       const text = readFileSync(mf, "utf8");
       const code = readFileSync(js, "utf8");
+      const hash = hashOf(text, code);
+      if (keep && !keep(name, hash)) continue;
       const manifest = JSON.parse(text) as Manifest;
-      const hash = createHash("sha256").update(text).update("\0").update(code).digest("hex");
       next.set(manifest.name, { manifest, code, hash, dir });
     }
   }
@@ -69,8 +76,12 @@ export function byHost(host: string): { name: string; manifest: Manifest; creden
 export class TransformError extends Error {}
 
 /** Call `fn(...args)` of the transform; `undefined` when it does not export `fn`. */
-export function invoke(name: string, fn: string, args: unknown[]): unknown {
-  const t = loaded.get(name);
+export function invoke(
+  name: string,
+  fn: string,
+  args: unknown[],
+  t: Pick<Loaded, "code"> | undefined = loaded.get(name),
+): unknown {
   if (!t || !QuickJS) throw new TransformError(`no transform ${name}`);
   const rt = QuickJS.newRuntime();
   rt.setMemoryLimit(MEMORY);
@@ -140,14 +151,15 @@ function shaped<T>(name: string, fn: string, shape: z.ZodType<T>, v: unknown): T
   return r.data;
 }
 
-export function request(name: string, req: Req, ctx: { now: number; nonce: string }): Template {
-  const t = shaped(name, "request", ReqShape, invoke(name, "request", [req, ctx]));
+/** `code` given: run that instead of the loaded transform (submission tests, 3f). */
+export function request(name: string, req: Req, ctx: { now: number; nonce: string }, code?: string): Template {
+  const t = shaped(name, "request", ReqShape, invoke(name, "request", [req, ctx], code ? { code } : undefined));
   // a streamed body never passes through the transform, so it cannot invent one
   return req.stream ? { ...t, body: null, stream: true } : t;
 }
 
-export function response(name: string, res: Res, req: Req): ResponseResult {
-  return shaped(name, "response", ResultShape, invoke(name, "response", [res, req]));
+export function response(name: string, res: Res, req: Req, code?: string): ResponseResult {
+  return shaped(name, "response", ResultShape, invoke(name, "response", [res, req], code ? { code } : undefined));
 }
 
 export function render(name: string, template: Template): string | undefined {

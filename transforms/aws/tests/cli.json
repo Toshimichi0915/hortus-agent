@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://s3.us-east-1.amazonaws.com/bucket/key.txt",
+    "headers": {
+      "authorization": "AWS4-HMAC-SHA256 Credential=hortus-secret-aws/20240101/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=0000",
+      "x-amz-date": "20240101T000000Z",
+      "x-amz-content-sha256": "UNSIGNED-PAYLOAD"
+    },
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://s3.us-east-1.amazonaws.com/bucket/key.txt",
+    "headers": {
+      "x-amz-content-sha256": "UNSIGNED-PAYLOAD",
+      "authorization": "{sign:aws-sigv4({\"name\":\"aws\",\"region\":\"us-east-1\",\"service\":\"s3\"})}",
+      "x-amz-date": "{sign:aws-date(\"aws\")}"
+    },
+    "body": null,
+    "stream": false
+  },
+  "response": { "status": 200, "headers": { "content-type": "text/plain" }, "body": "hi" },
+  "expected": { "res": { "status": 200, "headers": { "content-type": "text/plain" }, "body": "hi" } }
+}

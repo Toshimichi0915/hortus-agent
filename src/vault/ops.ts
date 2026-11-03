@@ -4,6 +4,7 @@
  * `ops[op]` with a JSON argument list whose first element is the credential name. A new operation is one entry here.
  */
 import type { VaultEntry } from "../types.ts";
+import { awsDate, type Signing, sigv4 } from "./sigv4.ts";
 import type { CapturedRow } from "./vault.ts";
 
 export interface Handle {
@@ -28,8 +29,12 @@ export function handles(s: string): Handle[] {
     else if (m[3]) out.push({ kind: "basic", text: m[0], name: m[3], user: m[2] ?? "" });
     else {
       const args = JSON.parse(`[${m[5]}]`) as unknown[];
-      if (typeof args[0] !== "string") throw new Error(`sign:${m[4]} needs a credential name first`);
-      out.push({ kind: "sign", text: m[0], name: args[0], op: m[4], args: args.slice(1) });
+      // the name first, or an object holding it: aws-sigv4({"name":"aws","region":…}) gets the whole object
+      const named = (args[0] as { name?: unknown } | null)?.name;
+      if (typeof args[0] === "string")
+        out.push({ kind: "sign", text: m[0], name: args[0], op: m[4], args: args.slice(1) });
+      else if (typeof named === "string") out.push({ kind: "sign", text: m[0], name: named, op: m[4], args });
+      else throw new Error(`sign:${m[4]} needs a credential name first`);
     }
   }
   return out;
@@ -38,9 +43,14 @@ export function handles(s: string): Handle[] {
 export type Secret = { entry: VaultEntry } | { captured: CapturedRow };
 
 /** `sign` operations by name; each gets the credential and its args and returns the text that replaces the handle. */
-export const ops: Record<string, (s: Secret, args: unknown[]) => string> = {
-  // github-app installation-token and aws-sigv4 arrive with their steps (17, later); until then `{sign:…}` is refused
+export const ops: Record<string, (s: Secret, args: unknown[], req?: Signing) => string> = {
+  // github-app installation-token arrives with step 17
+  "aws-sigv4": sigv4,
+  "aws-date": awsDate,
 };
+
+/** Ops that sign the final request: left in place by the first pass, resolved with `req` once headers and body are set. */
+export const late = new Set(["aws-sigv4"]);
 
 /** The value a `{secret:}`/`{basic:}` handle stands for: tokens and captured values only. */
 function value(s: Secret): string {
@@ -51,12 +61,13 @@ function value(s: Secret): string {
 }
 
 /** Throws on anything it cannot resolve: the request is refused, never sent without its credential. */
-export function resolveHandle(h: Handle, s: Secret): string {
+export function resolveHandle(h: Handle, s: Secret, req?: Signing): string {
   if (h.kind === "secret") return value(s);
   if (h.kind === "basic") return Buffer.from(`${h.user}:${value(s)}`).toString("base64");
   const op = h.op ? ops[h.op] : undefined;
   if (!op) throw new Error(`unknown operation ${h.op}`);
-  return op(s, h.args ?? []);
+  if (!req && late.has(h.op ?? "")) return h.text;
+  return op(s, h.args ?? [], req);
 }
 
 /** Checks resolvability without producing values (step 8). */
