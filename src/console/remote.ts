@@ -26,6 +26,7 @@ import { define } from "../rpc.ts";
 import { remoteConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
 import { hostContext, validHost } from "../vault/ca.ts";
+import { bus } from "./events.ts";
 import { parse } from "./html.ts";
 import { enrollPage } from "./pages/enroll.ts";
 import { loginPage } from "./pages/login.ts";
@@ -132,7 +133,10 @@ export function hourly(at = Date.now()): void {
   const cut = new Date(at - IDLE_MS).toISOString();
   const gone = db.prepare("DELETE FROM console_sessions WHERE last_seen < ?").run(cut).changes;
   db.prepare("DELETE FROM enroll_codes WHERE expires_at < ?").run(new Date(at).toISOString());
-  if (gone) s.ctx.log("console").info("idle sessions removed", { count: gone });
+  if (gone) {
+    s.ctx.log("console").info("idle sessions removed", { count: gone });
+    bus.emit("sessions"); // their open SSE streams end (server.ts › openStream)
+  }
   const t = s.ctx.config.console?.tls;
   if (s.tls && t) {
     try {
@@ -229,8 +233,11 @@ export async function gate(ctx: Ctx, req: IncomingMessage, res: ServerResponse, 
 // WebAuthn
 
 const registering = new Map<string, { challenge: string; exp: number }>();
-const challenges = new Map<string, number>();
+const challenges = new Map<string, { exp: number; address: string }>();
+/** Login challenges one remote address may hold: a flood from one cannot push out the owner's pending one. */
+export const PER_ADDRESS = 5;
 
+// ponytail: per address, not per /64: an IPv6 host with many addresses can still fill the 1000; rate-limit if seen
 /** Expired challenges out; at most 1000 outstanding (the oldest go first): login/options is unauthenticated. */
 function remember<V>(m: Map<string, V>, k: string, v: V, exp: (v: V) => number): void {
   const t = Date.now();
@@ -338,7 +345,10 @@ async function webauthn(s: State, path: string, req: IncomingMessage, res: Serve
           allowCredentials: keys.map((p) => ({ id: p.id, transports: parse<string[]>(p.transports) })),
           userVerification: "preferred",
         });
-        remember(challenges, options.challenge, Date.now() + CHALLENGE_MS, (v) => v);
+        const from = address ?? "";
+        const mine = [...challenges].filter(([, v]) => v.address === from); // insertion order: oldest first
+        for (const [c] of mine.slice(0, Math.max(0, mine.length - PER_ADDRESS + 1))) challenges.delete(c);
+        remember(challenges, options.challenge, { exp: Date.now() + CHALLENGE_MS, address: from }, (v) => v.exp);
         return json(res, 200, options);
       }
       case "/webauthn/login/verify": {
@@ -350,7 +360,7 @@ async function webauthn(s: State, path: string, req: IncomingMessage, res: Serve
         const v = await verifyAuthenticationResponse({
           response,
           expectedChallenge: (c) => {
-            const exp = challenges.get(c);
+            const exp = challenges.get(c)?.exp;
             challenges.delete(c);
             return exp !== undefined && exp > Date.now();
           },
@@ -453,6 +463,7 @@ define("session.revoke", {
     if (!s.ctx.db.prepare("DELETE FROM console_sessions WHERE hash = ?").run(id).changes)
       throw new RpcError("not_found", "no such session");
     s.ctx.log("console").info("session revoked", { id: id.slice(0, 12) });
+    bus.emit("sessions");
     return { ok: true };
   },
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, readFileSync } from "node:fs";
 import { request } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { Agent, request as httpsRequest } from "node:https";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { TLSSocket } from "node:tls";
@@ -16,6 +16,7 @@ import { remoteConsole } from "../runtime/net.ts";
 import { tempDir } from "../test/until.ts";
 import { SoftAuthenticator } from "../test/webauthn.ts";
 import { caCert } from "../vault/ca.ts";
+import { bus } from "./events.ts";
 import { consoleModule, consoleUrl } from "./index.ts";
 import { encode } from "./qr.ts";
 import { hourly, parseListen, startRemote, stopRemote } from "./remote.ts";
@@ -49,7 +50,15 @@ interface Res {
 
 function remote(
   path: string,
-  opts: { method?: string; body?: unknown; cookie?: string; host?: string; ca?: string | Buffer } = {},
+  opts: {
+    method?: string;
+    body?: unknown;
+    cookie?: string;
+    host?: string;
+    ca?: string | Buffer;
+    localAddress?: string;
+    agent?: Agent;
+  } = {},
 ): Promise<Res> {
   const post = opts.method === "POST" || opts.body !== undefined;
   const headers: Record<string, string> = { host: opts.host ?? `${HOST}:${port}` };
@@ -65,7 +74,8 @@ function remote(
         path,
         method: post ? "POST" : "GET",
         headers,
-        agent: false,
+        agent: opts.agent ?? false,
+        localAddress: opts.localAddress,
       },
       (res) => {
         const cert = (res.socket as TLSSocket).getPeerCertificate();
@@ -233,6 +243,51 @@ test("enroll.code is loopback only; session.revoke makes the revoked session's n
   const settings = await remote("/settings", { cookie: one });
   assert.match(settings.body, /this one/);
   assert.match(settings.body, /made at the machine/);
+});
+
+test("session.revoke ends the revoked session's open SSE stream", async () => {
+  const cookie = token(await enrol(auth(), "sse"));
+  const got: string[] = [];
+  const ended = new Promise<void>((resolve, reject) => {
+    const r = httpsRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        servername: HOST,
+        ca: readFileSync(caCert()),
+        path: "/events/approvals",
+        headers: { host: `${HOST}:${port}`, cookie: `__Host-hortus=${cookie}` },
+        agent: false,
+      },
+      (res) => {
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => got.push(c));
+        res.on("close", () => resolve());
+      },
+    );
+    r.on("error", () => resolve()); // a cut socket may surface as a reset
+    r.end();
+    setTimeout(() => reject(new Error(`still open: ${JSON.stringify(got)}`)), 2000);
+  });
+  while (!got.length) await new Promise((r) => setTimeout(r, 20));
+  const list = (await call("session.list", {}, { role: "owner" })) as { id: string; device: string }[];
+  await call("session.revoke", { id: list.find((s) => s.device === "sse")?.id }, { role: "owner" });
+  bus.emit("approvals", { marker: "after-revoke" });
+  await ended;
+  assert.ok(!got.join("").includes("after-revoke"), JSON.stringify(got));
+});
+
+test("login challenges are capped per address: a flood from one cannot evict another's pending one", async () => {
+  const a = auth();
+  await enrol(a, "flood");
+  const mine = json(await remote("/webauthn/login/options", { body: {}, localAddress: "127.0.0.2" }));
+  const agent = new Agent({ keepAlive: true, maxSockets: 8 });
+  for (let i = 0; i < 1010; i += 10)
+    await Promise.all(Array.from({ length: 10 }, () => remote("/webauthn/login/options", { body: {}, agent })));
+  agent.destroy();
+  const ok = await remote("/webauthn/login/verify", { body: { response: a.get(mine) }, localAddress: "127.0.0.2" });
+  assert.equal(ok.status, 200, ok.body);
+  assert.ok(token(ok));
 });
 
 test("idle sessions: last_seen is touched at most once a minute; 31 days idle → deleted by the hourly sweep", async () => {

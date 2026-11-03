@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
@@ -296,4 +297,30 @@ test("task.list and task.get read the DB", async () => {
   assert.equal(card.approvals[0]?.summary.host, "slack.com");
   assert.equal(card.inbox.length, 1);
   await assert.rejects(call("task.get", { id: "nope" }, { role: "owner" }), /no task nope/);
+});
+
+test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., links and leaving the root", async () => {
+  const thread = join(paths.dof("slack"), "C1", "1700000000.0001#t");
+  mkdirSync(thread, { recursive: true });
+  writeFileSync(join(thread, "a.md"), "---\nauthor: u1\n---\n<script>alert(1)</script>\n");
+  writeFileSync(join(thread, "b.md"), "second");
+  writeFileSync(join(paths.home(), "outside.md"), "SECRET");
+  symlinkSync(join(paths.home(), "outside.md"), join(thread, "link.md"));
+  symlinkSync(join(thread, "a.md"), join(thread, "inner.md"));
+  const base = `/dof/slack/C1/${encodeURIComponent("1700000000.0001#t")}`;
+  const r = await get(`${base}/a.md`);
+  assert.equal(r.status, 200);
+  clean(base, r.body);
+  assert.match(r.body, /author: u1\n---\n&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(r.body, /href="\/dof\/slack\/C1\/1700000000\.0001%23t\/b\.md">b\.md</);
+  for (const bad of [
+    `${base}/link.md`,
+    `${base}/inner.md`,
+    "/dof/slack/..%2F..%2Foutside.md",
+    "/dof/..%2Foutside.md/x",
+  ]) {
+    const b = await get(bad);
+    assert.ok(!b.body.includes("SECRET") && !b.body.includes("alert(1)"), bad);
+    assert.match(b.body, /<h1>Not found<\/h1>/, bad);
+  }
 });

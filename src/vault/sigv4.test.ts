@@ -39,6 +39,22 @@ test("aws-sigv4: a streamed body signs UNSIGNED-PAYLOAD; x-amz-content-sha256 is
   ]);
 });
 
+test("aws-sigv4: a streamed body's claimed hash becomes UNSIGNED-PAYLOAD; every x-amz-* header is signed", () => {
+  const h: Record<string, string> = {
+    ...headers,
+    "x-amz-content-sha256": "a".repeat(64),
+    "x-amz-checksum-crc32": "AAAAAA==",
+    "content-type": "text/plain",
+  };
+  const c = canonical({ method: "PUT", path: "/b/k", query: "", headers: h, payload: "stream" }, "s3");
+  assert.equal(h["x-amz-content-sha256"], "UNSIGNED-PAYLOAD"); // what goes upstream
+  assert.deepEqual(c.signed, ["host", "x-amz-checksum-crc32", "x-amz-content-sha256", "x-amz-date"]);
+  assert.ok(c.text.endsWith("\nUNSIGNED-PAYLOAD"));
+  const t = { ...headers, "x-amz-content-sha256": "STREAMING-UNSIGNED-PAYLOAD-TRAILER" };
+  canonical({ method: "PUT", path: "/b/k", query: "", headers: t, payload: "stream" }, "s3");
+  assert.equal(t["x-amz-content-sha256"], "STREAMING-UNSIGNED-PAYLOAD-TRAILER");
+});
+
 test("aws-sigv4 handle: the object form names the credential; only an aws credential signs", () => {
   const [h] = handles('{sign:aws-sigv4({"name":"aws","region":"us-east-1","service":"service"})}');
   assert.equal(h?.name, "aws");

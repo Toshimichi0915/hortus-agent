@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { budget, button, h, isOpen, layout, type Page, type Raw, status, time } from "../html.ts";
 
 export interface TaskRow {
@@ -41,7 +42,11 @@ export const tasks: Page = (ctx) => {
     ctx,
     "tasks",
     "Tasks",
-    h`<p><a href="/chat">New chat</a></p><div data-refresh id="list">
+    h`<p><a href="/chat">New chat</a></p><div data-refresh id="list">${
+      existsSync(ctx.paths.paused())
+        ? h`<p class="error">Paused: queued tasks, timers and the Planner wait. <a href="/settings">Resume in Settings</a>.</p>`
+        : ""
+    }
 <h2>Open</h2>${
       open.length
         ? h`<table><thead><tr><th>Status</th><th>Title</th><th>Project</th><th>Kind</th><th>Budget</th><th>Updated</th><th></th></tr></thead><tbody>${open.map(

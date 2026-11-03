@@ -11,6 +11,8 @@ export interface TransformSummary {
   name?: string;
   new?: boolean;
   manifestDiff?: string | null;
+  /** lines of transform.js that differ from the enabled version (null when new) */
+  codeChanged?: number | null;
   manifest?: string;
   credentials?: Record<string, Cred>;
   missing?: { name: string; type: string }[];
@@ -41,6 +43,7 @@ export function transformView(s: TransformSummary): Raw {
     i ? h`; ${p}` : p,
   )}</p>
 ${s.new ? details("manifest", s.manifest ?? "") : details("manifest diff", s.manifestDiff ?? "")}
+${s.codeChanged ? h`<p class="hint"><code>transform.js</code> changed (${String(s.codeChanged)} lines)</p>` : ""}
 <p class="hint">${String(s.tests ?? 0)} test(s) passed in the sandbox</p>
 ${(s.configured ?? []).map((n) => h`<p class="hint"><code>${n}</code>: configured</p>`)}`;
 }

@@ -30,10 +30,10 @@ function events(ids: string[]): EventRow[] {
   });
 }
 
-/** An open-or-closed task the Planner may address (not a batch). */
+/** An open-or-closed task the Planner may address: not a batch, not a chat (the owner's; the Planner never sees one). */
 function task(id: string): tasks.TaskRow {
   const t = tasks.get(id);
-  if (t.kind === "planner") throw new RpcError("not_found", `no task ${id}`);
+  if (t.kind === "planner" || t.kind === "chat") throw new RpcError("not_found", `no task ${id}`);
   return t;
 }
 
@@ -153,6 +153,9 @@ define("task_close", {
   input: z.object({ task_id: z.string(), outcome: z.enum(["done", "failed"]) }),
   async run({ task_id, outcome }) {
     task(task_id);
+    // a task waiting on its own timers is not finished, and closing deletes them: the owner decides that one
+    const { n } = pctx().db.prepare("SELECT COUNT(*) AS n FROM schedules WHERE task_id = ?").get(task_id) as { n: number };
+    if (n) throw new RpcError("invalid", `task ${task_id} has ${n} timer${n > 1 ? "s" : ""}; it is waiting for them`);
     await tasks.close(task_id, outcome);
     return { ok: true };
   },

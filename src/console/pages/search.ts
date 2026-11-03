@@ -1,5 +1,6 @@
 import type { SearchHit, SearchQuery } from "../../types.ts";
 import { error, h, layout, type Page, time, tryCall } from "../html.ts";
+import { dofHref } from "./dof.ts";
 
 const FIELDS = ["in", "author", "since", "until"] as const;
 
@@ -17,7 +18,7 @@ export const search: Page = async (ctx, { q }) => {
       : r.value.length
         ? h`<ol class="hits">${r.value.map(
             (x) =>
-              h`<li><b>${x.title || x.path}</b> <span class="hint">${x.dof}:${x.path} · ${x.author} · ${time(x.ts)}</span><p class="pre">${x.snippet}</p></li>`,
+              h`<li><a href="${dofHref(x.dof, x.path)}"><b>${x.title || x.path}</b></a> <span class="hint">${x.dof}:${x.path} · ${x.author} · ${time(x.ts)}</span><p class="pre">${x.snippet}</p></li>`,
           )}</ol>`
         : h`<p class="empty">no results</p>`;
   }

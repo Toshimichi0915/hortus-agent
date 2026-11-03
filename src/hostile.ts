@@ -3,7 +3,7 @@
  * link (a planted `out/summary.md → ~/.hortus/vault.json` or `out/console.log → ~/.bashrc`), never a FIFO or device
  * (which would block the daemon), never more than asked.
  */
-import { closeSync, constants, fstatSync, openSync, readSync, rmSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, rmSync, writeSync } from "node:fs";
 
 /** `out/summary.md` (as the card stores it) */
 export const MAX_SUMMARY = 64 * 1024;
@@ -11,8 +11,40 @@ export const MAX_SUMMARY = 64 * 1024;
 export const AUX_TOKENS = "aux-tokens";
 /** one `out/sessions/*.jsonl` file */
 export const MAX_SESSION = 64 * 1024 * 1024;
+/** all of a task's `out/sessions/*.jsonl` read in one pass (scan, renderSession) */
+export const MAX_SESSIONS = 4 * MAX_SESSION;
+/** names one `readDir` lists (`out/sessions`, `out/outbox`) */
+export const MAX_ENTRIES = 1000;
 
-const { O_RDONLY, O_WRONLY, O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK } = constants;
+const { O_RDONLY, O_WRONLY, O_APPEND, O_CREAT, O_EXCL, O_NOFOLLOW, O_NONBLOCK, O_DIRECTORY } = constants;
+
+type Read = (name: string, max: number) => { text: string; size: number } | null;
+
+/**
+ * `fn` over the first `max` names in `dir` that pass `keep` (sorted; `dropped` counts the rest), with `read` for an
+ * entry (`readCapped`). `dir` itself is opened O_NOFOLLOW and entries are reached through its fd, so a planted
+ * `out/sessions → /elsewhere` is never listed or read. Null when `dir` is not a directory.
+ */
+export function readDir<T>(
+  dir: string,
+  keep: (name: string) => boolean,
+  max: number,
+  fn: (names: string[], read: Read, dropped: number) => T,
+): T | null {
+  let fd: number;
+  try {
+    fd = openSync(dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const at = `/proc/self/fd/${fd}`;
+    const names = readdirSync(at).filter(keep).sort();
+    return fn(names.slice(0, max), (name, cap) => readCapped(`${at}/${name}`, cap), Math.max(0, names.length - max));
+  } finally {
+    closeSync(fd);
+  }
+}
 
 /** At most `max` bytes (the last `max` with `tail`); null for anything but a regular file. */
 export function readCapped(path: string, max: number, tail = false): { text: string; size: number } | null {

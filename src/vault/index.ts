@@ -20,6 +20,8 @@ export const vaultModule: Module = {
   name: "vault",
   async start(c: Ctx) {
     bind(c);
+    // a crash mid-install (submit.ts › approveTransform) puts the entry back before the owner: approving re-installs
+    c.db.prepare("UPDATE approvals SET status = 'pending' WHERE status = 'installing'").run();
     await ca.ensure();
     await transforms.load();
     timer = setInterval(() => {
@@ -80,8 +82,9 @@ define("approval.decide", {
     reason: z.string().optional(),
   }),
   run: async ({ id, decision, credentials, reason }) => {
-    if (decision === "approve") await approveTransform(id, credentials);
-    gate.decide(id, decision, "owner", { reason });
+    // a transforms entry is claimed, installed and decided by approveTransform
+    if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
+      gate.decide(id, decision, "owner", { reason });
     // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
     if (decision === "approve") await landMerge(id);
     return { ok: true };

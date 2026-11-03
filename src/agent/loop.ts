@@ -2,10 +2,11 @@
  * The Worker loop (v6 Worker, 05-agent.md › Loop), shared by every kind: the kind's plugin says what the agent is, the
  * observer here keeps the session, stdout and the abort conditions.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createAgent, listSessions, type Message, openSession, type Plugin, type Session } from "@hortus/core";
-import { AUX_TOKENS, MAX_SESSION, readCapped } from "../hostile.ts";
+import { AUX_TOKENS, MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, readCapped, readDir } from "../hostile.ts";
+import { logger } from "../log.ts";
 import type { TaskJson } from "../types.ts";
 import { drain, marker, pending, quote } from "./inbox.ts";
 import { writeOutbox } from "./outbox.ts";
@@ -22,13 +23,14 @@ type Usage = NonNullable<Extract<Message, { role: "assistant" }>["usage"]>;
 export function scan(dir: string): { tokens: number; cursor: number } {
   let tokens = 0;
   let cursor = 0;
-  const names = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".jsonl")) : [];
-  for (const n of names) {
+  // hortusd runs this over a Worker's directory too: no links, FIFOs, unbounded files or file counts
+  let budget = MAX_SESSIONS;
+  const count = (text: string) => {
+    budget -= text.length;
     // a session's first user message is the brief (or a run's text, a handoff's notes), never a drained message: a
     // brief that happens to start with `[inbox 99]` must not hide messages 1–99
     let first = true;
-    // hortusd runs this over a Worker's directory too: no links, FIFOs or unbounded files
-    for (const line of (readCapped(join(dir, n), MAX_SESSION)?.text ?? "").split("\n")) {
+    for (const line of text.split("\n")) {
       let e: { type?: string; message?: Message };
       try {
         e = JSON.parse(line);
@@ -40,7 +42,16 @@ export function scan(dir: string): { tokens: number; cursor: number } {
       if (m?.role === "user" && !first) cursor = Math.max(cursor, marker(m.content) ?? 0);
       if (m?.role === "user") first = false;
     }
-  }
+  };
+  readDir(
+    dir,
+    (n) => n.endsWith(".jsonl"),
+    MAX_ENTRIES,
+    (names, read, dropped) => {
+      if (dropped) logger("scan").error(`${dropped} session files ignored`, undefined, { dir });
+      for (const n of names) if (budget > 0) count(read(n, Math.min(MAX_SESSION, budget))?.text ?? "");
+    },
+  );
   tokens += Math.max(0, Number(readCapped(join(dirname(dir), AUX_TOKENS), 32)?.text) || 0);
   return { tokens, cursor };
 }

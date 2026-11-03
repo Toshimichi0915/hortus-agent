@@ -26,6 +26,7 @@ import type { InboxMsg, VaultEntry } from "../types.ts";
 import * as dof from "./dof.ts";
 import { gate, transforms, transformsDofModule, vaultModule } from "./index.ts";
 import { sigv4 } from "./sigv4.ts";
+import { diff, MAX_TESTS } from "./submit.ts";
 import { read as readVault, write as writeVault } from "./vault.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-submit-");
@@ -52,7 +53,7 @@ before(async () => {
   process.env.HORTUS_NO_NET = "1";
   await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
-  const hosts = ["api.notion.com", "api.linear.app", "s3.us-east-1.amazonaws.com", "slack2.test"];
+  const hosts = ["api.notion.com", "api.linear.app", "s3.us-east-1.amazonaws.com", "slack2.test", "api.reffy.com"];
   ctx = {
     config: Config.parse({
       dev: { upstreams: Object.fromEntries(hosts.map((h) => [h, url])) },
@@ -453,4 +454,84 @@ test("dof transform submit <dir> posts the dir's files as the task's worker", as
   const id = Number(r.stdout.match(/^approval (\d+) pending/)?.[1]);
   assert.ok(id, r.stdout);
   assert.deepEqual((await entry(id)).payload.files, f);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// review round 2
+
+test("a host another transform handles is refused; a transform's refs for a DOF not of its type are dropped", async () => {
+  await invalid(submit("aaa", files("aaa", { host: "slack.com" })), /slack\.com is handled by transform slack/);
+  const code = bearer.replace(
+    "export function response(res) { return { res }; }",
+    'export function response(res) { return { res, refs: ["slack:CVICTIM:123.456"] }; }',
+  );
+  const r = await submit("reffy", files("reffy", { code }));
+  await decide(r.approval as number, "approve", { reffy: { value: "r-real" } });
+  const out = await sendApproved(() => req("api.reffy.com", "Bearer hortus-secret-reffy"));
+  assert.equal(out.status, 200, out.text);
+  assert.equal(seen.at(-1)?.headers.authorization, "Bearer r-real");
+  assert.equal(ctx.db.prepare("SELECT 1 FROM task_refs WHERE ref = 'slack:CVICTIM:123.456'").get(), undefined);
+});
+
+test("a shipped name cannot be re-submitted; another name's code change shows on the entry", async () => {
+  await invalid(submit("slack", files("slack", { host: "slack.com" })), /slack ships with hortus/);
+  const r = await submit("codey", files("codey"));
+  await decide(r.approval as number, "approve");
+  const again = await submit("codey", files("codey", { code: `${bearer}// v2\n` }));
+  assert.ok(again.approval);
+  const s = (await entry(again.approval)).summary;
+  assert.equal(s.new, false);
+  assert.equal(s.codeChanged, 1);
+});
+
+test("a configured credential bound to no transform: only its own-name transform may name it", async () => {
+  writeVault({ ...readVault(), stripe: { type: "token", value: "sk-real" } });
+  await invalid(submit("evil", files("evil", { cred: "stripe" })), /stripe is configured without a transform/);
+  assert.ok((await submit("stripe", files("stripe"))).approval);
+  // an entry bound to a transform that is not loaded follows no manifest, not the host's
+  const host = transforms.get("slack")?.manifest;
+  assert.equal(transforms.credentialManifest("slack", { transform: "gone" }, host), undefined);
+  assert.equal(transforms.credentialManifest("slack", {}, host), host);
+});
+
+test("a name another transform declares (unconfigured) gets no task grant from this one", async () => {
+  const r = await submit("zzz", files("zzz", { cred: "github" }));
+  await decide(r.approval as number, "approve");
+  const scope = ctx.db.prepare("SELECT scope FROM tasks WHERE id = 'T'").get() as { scope: string };
+  assert.ok(!(JSON.parse(scope.scope).credentials ?? []).includes("github"));
+  const grant = ctx.db.prepare("SELECT 1 FROM approvals WHERE kind = 'grant' AND hash = ? AND task_id = 'T'");
+  assert.equal(grant.get("grant:github"), undefined);
+});
+
+test("going back to an earlier approved version opens a fresh entry", async () => {
+  const v1 = files("rev");
+  const v2 = files("rev", { extra: { consequential: ["DELETE api.rev.com/**"] } });
+  await decide((await submit("rev", v1)).approval as number, "approve");
+  await decide((await submit("rev", v2)).approval as number, "approve");
+  const back = await submit("rev", v1);
+  assert.ok(back.approval);
+  assert.equal((await entry(back.approval)).status, "pending");
+});
+
+test("tests are capped, the first failure ends the run, and a huge diff falls back to the first difference", async () => {
+  const one = { method: "", url: "", headers: {}, body: null, stream: false };
+  const t = JSON.stringify({ request: one, template: one });
+  const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`tests/t${i}.json`, t]));
+  await invalid(submit("spin2", files("spin2", { tests: many(MAX_TESTS + 1) })), /over 32/);
+  const t0 = Date.now();
+  const loop = "export function request() { for (;;) {} }";
+  await invalid(submit("spin2", files("spin2", { code: loop, tests: many(MAX_TESTS) })), /tests failed/);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  const big = (k: string) => Array.from({ length: 5000 }, (_, i) => `${k}${i}`).join("\n");
+  const t1 = Date.now();
+  assert.match(diff(big("a"), big("b")), /^\(too large for a full diff; first difference at line 1\)\n-a0\n\+b0\n$/);
+  assert.ok(Date.now() - t1 < 500);
+});
+
+test("approve and reject in parallel: one wins, and the transform is enabled exactly when approved", async () => {
+  const id = (await submit("racey", files("racey"))).approval as number;
+  const res = await Promise.allSettled([decide(id, "approve"), decide(id, "reject")]);
+  assert.deepEqual(res.map((x) => x.status).sort(), ["fulfilled", "rejected"]);
+  const st = (await entry(id)).status;
+  assert.equal(st === "approved", !!transforms.get("racey"), st);
 });

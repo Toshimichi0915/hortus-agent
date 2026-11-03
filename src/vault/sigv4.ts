@@ -39,11 +39,22 @@ function credential(s: Secret): { keyId: string; secret: string } {
   return s.entry;
 }
 
-/** The canonical request (step 1 of SigV4) and the signed header list. */
+const UNSIGNED = new Set(["UNSIGNED-PAYLOAD", "STREAMING-UNSIGNED-PAYLOAD-TRAILER"]);
+
+/**
+ * The canonical request (step 1 of SigV4) and the signed header list: `host` and every `x-amz-*` (S3 refuses an unsigned
+ * one). A streamed body is never hashed here, so a client's `x-amz-content-sha256` other than an unsigned marker is
+ * replaced in `req.headers` (the headers that go upstream) by `UNSIGNED-PAYLOAD` rather than signed on its word.
+ */
 export function canonical(req: Signing, service: string): { text: string; signed: string[] } {
+  const claimed = req.headers["x-amz-content-sha256"];
+  if (req.payload === "stream" && claimed !== undefined && !UNSIGNED.has(claimed))
+    req.headers["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD";
   const payloadHash =
     req.headers["x-amz-content-sha256"] ?? (req.payload === "stream" ? "UNSIGNED-PAYLOAD" : sha256(req.payload ?? ""));
-  const signed = ["host", "x-amz-content-sha256", "x-amz-date"].filter((h) => req.headers[h] !== undefined);
+  const signed = Object.keys(req.headers)
+    .filter((h) => h === "host" || h.startsWith("x-amz-"))
+    .sort();
   // S3 encodes the path once; every other service encodes the already-encoded path again
   const uri = req.path
     .split("/")

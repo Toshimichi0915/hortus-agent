@@ -91,7 +91,7 @@ export function onExit(run: tasks.TaskRow, msgs: OutboxMsg[]): void {
   d.prepare("UPDATE tasks SET usage = ? WHERE id = ?").run(JSON.stringify({ tokens: own + n, runs: n }), parent.id);
   const charged = tasks.get(parent.id);
   if (overBudget(charged) && !charged.error?.startsWith("budget_exceeded")) {
-    // ponytail: recorded on the card; step 4 wakes the Planner for the parent from here
+    // recorded on the card only: the Planner has nothing to decide (the schedules stop; the owner raises the budget)
     const b = parse(charged.budget, { tokens: 0 });
     d.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(
       `budget_exceeded: runs of its schedules used ${tokensOf(charged)}/${b.tokens} tokens; its schedules stop firing`,

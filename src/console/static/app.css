@@ -138,14 +138,37 @@ button {
   border: 1px solid var(--line);
   border-radius: 3px;
 }
-.judged {
+.judged,
+.approval,
+.hits {
   overflow-wrap: anywhere;
 }
-/* phones: tables scroll on their own instead of widening the page; touch-sized targets */
+/* phones: a row is a stacked card (cells wrap, buttons stay on screen); touch-sized targets */
 @media (max-width: 600px) {
-  table {
+  table,
+  thead,
+  tbody,
+  tr,
+  th,
+  td,
+  td.actions {
     display: block;
-    overflow-x: auto;
+  }
+  thead {
+    display: none;
+  }
+  tr {
+    border-bottom: 1px solid var(--line);
+    padding: 0.3rem 0;
+  }
+  td,
+  th {
+    border: 0;
+    padding: 0.1rem 0;
+    overflow-wrap: anywhere;
+  }
+  td:empty {
+    display: none;
   }
   button,
   a.button {
@@ -172,6 +195,9 @@ button[data-armed] {
 }
 .req .path {
   color: var(--muted);
+}
+.req.del .path {
+  color: var(--bad);
 }
 #stream {
   max-height: 65vh;
@@ -211,6 +237,24 @@ output {
   display: block;
   min-height: 1.4em;
   margin-top: 1rem;
+}
+/* the action result stays in view on a long page; empty, it takes no room */
+#msg {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  min-height: 0;
+}
+#msg:not(:empty) {
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--line);
+}
+/* chat: the composer stays reachable below the stream and any pending approvals */
+form.composer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 0.4rem 0;
 }
 /* login view (14-browser.md): the canvas keeps the page's aspect ratio and fits the screen */
 a.button {

@@ -24,7 +24,7 @@ function requestView(s: Summary): Raw {
   const headers =
     s.headers && typeof s.headers === "object" ? Object.entries(s.headers as Record<string, unknown>) : [];
   const body = str(s.bodyPreview);
-  return h`<p class="req"><b>${str(s.method)}</b> ${str(s.host)}<span class="path">${str(s.path)}</span></p>
+  return h`<p class="req${s.method === "DELETE" ? " del" : ""}"><b>${str(s.method)}</b> ${str(s.host)}<span class="path">${str(s.path)}</span></p>
 ${headers.length ? h`<table class="kv">${headers.map(([k, v]) => h`<tr><th>${k}</th><td><code>${str(v)}</code></td></tr>`)}</table>` : ""}
 ${s.rendered ? h`<pre class="rendered">${str(s.rendered)}</pre>` : ""}
 ${body ? (body.length > 300 ? details(`body (${body.length} chars)`, body) : h`<pre>${body}</pre>`) : ""}`;

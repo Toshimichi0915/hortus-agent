@@ -3,9 +3,13 @@ import { promisify } from "node:util";
 import type { PlannerStatus } from "../../planner/planner.ts";
 import type { Ctx } from "../../ctx.ts";
 import { forgeState } from "../../gateway/webhooks.ts";
+import { localWebhook } from "../../runtime/net.ts";
 import type { ConnectorStatus } from "../../types.ts";
 import { read as readVault } from "../../vault/vault.ts";
 import { button, error, h, layout, type Page, type Raw, time, tryCall } from "../html.ts";
+
+/** Where the webhook listener is: its bound port, else the one it will try (webhooks.ts). */
+const hook = () => `http://127.0.0.1:${localWebhook.port || Number(process.env.HORTUS_WEBHOOK_PORT ?? 7701)}`;
 
 /** A forge's rows (17-github.md): installation, deliveries, the redelivery check, the URL to give the App. */
 function forgeRows(ctx: Ctx, name: string): Raw {
@@ -21,7 +25,7 @@ function forgeRows(ctx: Ctx, name: string): Raw {
   const missed = st?.missed ?? 0;
   return h`<p>installation: ${inst} · deliveries today ${today.n} · last delivery ${time(last)} · last redelivery check ${time(
     st?.lastRedelivery,
-  )}</p><p class="hint">Webhook URL for the App: <code>https://&lt;your tunnel&gt;/${name}/webhook</code> (secret: the <code>${name}-webhook</code> credential). The tunnel forwards to <code>http://127.0.0.1:7701</code>: <code>cloudflared tunnel --url http://127.0.0.1:7701</code> or <code>ssh -R</code>; hortus installs neither.</p>${
+  )}</p><p class="hint">Webhook URL for the App: <code>https://&lt;your tunnel&gt;/${name}/webhook</code> (secret: the <code>${name}-webhook</code> credential). The tunnel forwards to <code>${hook()}</code>: <code>cloudflared tunnel --url ${hook()}</code> or <code>ssh -R</code>; hortus installs neither.</p>${
     missed && !day.n
       ? h`<p class="error">no deliveries in 24 h while events were expected (${missed} found only in the delivery log)</p>`
       : missed
@@ -55,7 +59,7 @@ function staticForgeRows(ctx: Ctx, name: string, type: string): Raw {
   const today = q.get(name, new Date().toISOString().slice(0, 10)) as { n: number; last: string | null };
   const last = (ctx.db.prepare("SELECT max(created) AS t FROM events WHERE dof = ?").get(name) as { t: string | null })
     .t;
-  return h`<p>host: ${host} · token: ${token} · deliveries today ${today.n} · last delivery ${time(last)}</p><p class="hint">Webhook URL: <code>https://&lt;your tunnel&gt;/${name}/webhook</code>; secret: the <code>${name}-webhook</code> credential, sent as ${f.header}${secret}. No delivery log is read back: the 10-min reconcile fills what the tunnel drops. The tunnel forwards to <code>http://127.0.0.1:7701</code>: <code>cloudflared tunnel --url http://127.0.0.1:7701</code> or <code>ssh -R</code>; hortus installs neither.</p>`;
+  return h`<p>host: ${host} · token: ${token} · deliveries today ${today.n} · last delivery ${time(last)}</p><p class="hint">Webhook URL: <code>https://&lt;your tunnel&gt;/${name}/webhook</code>; secret: the <code>${name}-webhook</code> credential, sent as ${f.header}${secret}. No delivery log is read back: the 10-min reconcile fills what the tunnel drops. The tunnel forwards to <code>${hook()}</code>: <code>cloudflared tunnel --url ${hook()}</code> or <code>ssh -R</code>; hortus installs neither.</p>`;
 }
 
 const sizes = new Map<string, { at: number; text: string }>();

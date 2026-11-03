@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -255,6 +255,21 @@ test("logs: excerpt, [image], no summary, crash-cut line, republish keeps one ro
   assert.ok(hits.every((h) => h.title === "Walrus hunt"));
   const rows = db.prepare("SELECT count(*) AS n FROM search_meta WHERE dof = 'logs'").get() as { n: number };
   assert.equal(rows.n, 2);
+});
+
+test("logs: a planted name without a time renders `?`, a linked sessions dir renders nothing", async () => {
+  const dir = sessions("t2");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "zzz.jsonl"), line("1", null, { role: "user", content: "planted" }));
+  await publishLog("t2", "Planted", "done");
+  assert.match(readFileSync(join(paths.logs(), "t2", "session.md"), "utf8"), /^## 1 user \?\n\nplanted/);
+
+  const elsewhere = tempDir("hortus-elsewhere-");
+  writeFileSync(join(elsewhere, "1730000000_a.jsonl"), line("1", null, { role: "user", content: "host secret" }));
+  mkdirSync(paths.out("t3"), { recursive: true });
+  symlinkSync(elsewhere, sessions("t3"));
+  await publishLog("t3", "Linked", "done");
+  assert.equal(readFileSync(join(paths.logs(), "t3", "session.md"), "utf8"), "");
 });
 
 test("a reader polling during 100 commits never sees an empty or truncated file", async () => {

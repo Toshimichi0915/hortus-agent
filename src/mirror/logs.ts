@@ -2,17 +2,18 @@
  * The `logs` DOF: plain files, no repo. `publishLog` renders a task's core sessions into `logs/<id>/session.md`,
  * copies its summary, and upserts both index rows in the same call.
  */
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { branch, type Message, type SessionEntry } from "@hortus/core";
 import { type DatabaseSync, now } from "../db.ts";
-import { MAX_SESSION, MAX_SUMMARY, readCapped } from "../hostile.ts";
+import { MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, MAX_SUMMARY, readCapped, readDir } from "../hostile.ts";
+import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { upsert } from "./fts.ts";
 import { parse, render } from "./render.ts";
 import { writeAtomic } from "./repo.ts";
 
 const EXCERPT = 4096;
+const log = logger("logs");
 
 /** A fence longer than any backtick run inside, so tool output can't close it. */
 function fenced(lang: string, text: string): string {
@@ -51,19 +52,32 @@ const entries = (text: string): SessionEntry[] =>
  * ponytail: entries carry no time, so `<ts>` is the session file's start; per-message times need a core change
  */
 export async function renderSession(dir: string): Promise<string> {
-  // read here, not with core's listSessions: out/sessions is the Worker's, so no links, FIFOs or unbounded files
-  const names = (await readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith(".jsonl")).sort();
+  // read here, not with core's listSessions: out/sessions is the Worker's, so no links, FIFOs, unbounded files or counts
   const out: string[] = [];
   let seq = 0;
-  for (const n of names) {
-    const all = entries(readCapped(join(dir, n), MAX_SESSION)?.text ?? "");
-    const leaf = all.at(-1);
-    if (!leaf) continue;
-    const ts = new Date(Number(n.split("_")[0]) * 1000).toISOString();
-    for (const m of branch(all, leaf.id).messages) {
-      out.push(`## ${++seq} ${m.role} ${ts}\n\n${renderMessage(m)}\n`);
-    }
-  }
+  let budget = MAX_SESSIONS;
+  readDir(
+    dir,
+    (n) => n.endsWith(".jsonl"),
+    MAX_ENTRIES,
+    (names, read, dropped) => {
+      if (dropped) log.error(`${dropped} session files not rendered`, undefined, { dir });
+      for (const n of names) {
+        if (budget <= 0) break;
+        const text = read(n, Math.min(MAX_SESSION, budget))?.text ?? "";
+        budget -= text.length;
+        const all = entries(text);
+        const leaf = all.at(-1);
+        if (!leaf) continue;
+        // a planted `zzz.jsonl` has no start time (and must not make every publish throw)
+        const t = Number(n.split("_")[0]) * 1000;
+        const ts = Number.isFinite(t) && Math.abs(t) <= 8.64e15 ? new Date(t).toISOString() : "?";
+        for (const m of branch(all, leaf.id).messages) {
+          out.push(`## ${++seq} ${m.role} ${ts}\n\n${renderMessage(m)}\n`);
+        }
+      }
+    },
+  );
   return out.join("\n");
 }
 

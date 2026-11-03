@@ -21,7 +21,7 @@ export function sendDone(dir: string, onDone: (summary: string) => void, keepEmp
     tool({
       name: "done",
       description:
-        "Finish the task. `summary` is the result (what was done, links, open points); an empty string reports nothing (use it when there was nothing to do). Call it alone, as your last tool call.",
+        'End your turn. In a chat, `summary` is your answer to the owner and the chat stays open. Otherwise it finishes the task: `summary` is the result (what was done, links, open points; "nothing to do" when that is what you found), and an empty string reports nothing (only when a timer will wake this task again). Call it alone, as your last tool call.',
       inputSchema: z.object({ summary: z.string() }),
       execute: async ({ summary }) => {
         if (summary || keepEmpty) writeOutbox(dir, "result", summary);

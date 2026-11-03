@@ -118,7 +118,9 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   }
 }
 
-const RW_HOME = [".cache", ".npm", ".local/share/pnpm", ".cargo", ".gradle", ".m2", ".pyenv", ".rustup"];
+// Shared caches holding nothing the owner runs; `~/.cargo/bin`, `~/.gradle/init.d`, `~/.pyenv` and the like stay
+// read-only (they are on the owner's PATH or run by its builds). The rest goes to task-local homes (host.ts › caches).
+export const RW_HOME = [".cache", ".npm/_cacache", ".cargo/registry", ".cargo/git", ".gradle/caches", ".m2/repository"];
 const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "ptmx", "pts", "shm"].map((d) => `/dev/${d}`);
 
 /** The directive text for one task under `kind`. */

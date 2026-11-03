@@ -154,6 +154,8 @@ before(async () => {
     config: Config.parse({
       dev: { upstreams: Object.fromEntries(HOSTS.map((h) => [h, fakeUrl])) },
       proxy: { https: 0, http: 0, dns: 0 },
+      // refs are kept only for a configured DOF of the transform's type
+      dofs: { slack: { type: "slack", owner: "U1" } },
     }),
     db: openDb(paths.db()),
     paths,

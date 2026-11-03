@@ -52,6 +52,7 @@ let deps: VmDeps | undefined;
 const used = new Set<number>();
 const MAX_LINKS = 256;
 const IMAGE = ["agent.ext4", "initramfs.img", "vmlinuz"];
+const MAX_TIMER = 2 ** 31 - 1;
 
 export function init(d: VmDeps): void {
   deps = d;
@@ -101,6 +102,9 @@ export interface QemuSpec {
   console: string;
 }
 
+/** a QEMU option value: `,` separates options, so a path (under HORTUS_HOME) doubles it */
+const opt = (v: string): string => v.replaceAll(",", ",,");
+
 export function qemuArgs(s: QemuSpec): string[] {
   const ip = s.link
     ? `ip=${s.link.vmAddr}::${s.link.hostEnd}:255.255.255.252::eth0:off`
@@ -111,21 +115,33 @@ export function qemuArgs(s: QemuSpec): string[] {
     ...["-object", `memory-backend-memfd,id=mem,size=${s.memMb}M,share=on`],
     ...["-kernel", join(s.images, "vmlinuz"), "-initrd", join(s.images, "initramfs.img")],
     ...["-append", `console=ttyS0 root=/dev/vda rw quiet reboot=t net.ifnames=0 ${ip}`],
-    ...["-drive", `id=root,file=${join(s.images, "agent.ext4")},format=raw,if=none`],
+    ...["-drive", `id=root,file=${opt(join(s.images, "agent.ext4"))},format=raw,if=none`],
     ...["-device", "virtio-blk-device,drive=root", "-snapshot"],
     ...[
       "-netdev",
-      s.link ? `tap,id=n0,ifname=${s.link.tap},script=no,downscript=no` : "user,id=n0",
+      // restrict=on: no host loopback (the console) through 10.0.2.2, no internet
+      s.link ? `tap,id=n0,ifname=${s.link.tap},script=no,downscript=no` : "user,id=n0,restrict=on",
       "-device",
       "virtio-net-device,netdev=n0",
     ],
     ...s.sockets.flatMap((v, i) => [
-      ...["-chardev", `socket,id=vfs${i},path=${v.sock}`],
+      ...["-chardev", `socket,id=vfs${i},path=${opt(v.sock)}`],
       ...["-device", `vhost-user-fs-device,chardev=vfs${i},tag=${v.tag}`],
     ]),
-    ...["-chardev", `file,id=con,path=${s.console},append=on`, "-serial", "chardev:con"],
+    ...["-chardev", `file,id=con,path=${opt(s.console)},append=on`, "-serial", "chardev:con"],
     ...["-nographic", "-nodefaults", "-no-reboot"],
   ];
+}
+
+/** `fn` after `ms` (unref'd), re-armed in steps: setTimeout fires at once past 2^31-1 ms (~24.8 days). Returns clear. */
+export function deadline(ms: number, fn: () => void): () => void {
+  let timer: NodeJS.Timeout;
+  const arm = (left: number) => {
+    timer = setTimeout(() => (left > MAX_TIMER ? arm(left - MAX_TIMER) : fn()), Math.min(left, MAX_TIMER));
+    timer.unref();
+  };
+  arm(ms);
+  return () => clearTimeout(timer);
 }
 
 async function until(ok: () => boolean, ms: number, what: string): Promise<void> {
@@ -149,28 +165,36 @@ export async function startVm(o: VmOpts): Promise<Child> {
   // opened here (no link followed); QEMU's serial chardev gets the same file as its fd 3
   const logFd = openAppend(join(out, "console.log"));
   const logFile = createWriteStream("", { fd: logFd });
+  // hortusd's own, outside every share: the guest cannot plant anything where the sockets go
+  const vfs = join(paths.task(id), "vfs");
   const procs: ChildProcess[] = [];
-  const socks: string[] = [];
   let link: Link | null = null;
   let n = -1;
+  let cg = "";
   let cleaning: Promise<void> | undefined;
+  // each step on its own: one failing never skips the tap index or the log close
+  const step = async (what: string, f: () => unknown) => {
+    try {
+      await f();
+    } catch (e) {
+      log.error(`${what} failed`, e, { task: id });
+    }
+  };
   const cleanup = () => {
     cleaning ??= (async () => {
-      await cgroup.kill(id).catch((e) => log.error("cgroup kill failed", e, { task: id }));
+      await step("cgroup kill", () => cgroup.kill(id));
       for (const p of procs) if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
-      if (link) {
-        await net.removeVmLink(link.tap).catch((e) => log.error("removeVmLink failed", e, { task: id }));
-        if (!offline) await deps?.links.release(link.vmAddr);
+      const l = link;
+      if (l) {
+        await step("removeVmLink", () => net.removeVmLink(l.tap));
+        if (!offline) await step("links release", () => deps?.links.release(l.vmAddr));
       }
-      for (const s of socks) rmSync(s, { force: true });
+      await step("socket cleanup", () => rmSync(vfs, { force: true, recursive: true }));
       used.delete(n);
       await new Promise<void>((r) => logFile.end(r));
     })();
     return cleaning;
   };
-  // ponytail: pids join the cgroup right after spawn, so a fork in the first instant would stay outside; QEMU and
-  // virtiofsd do not fork at start. A clone3(CLONE_INTO_CGROUP) helper closes it if that ever matters.
-  const cg = await cgroup.create(id);
   const attach = async (p: ChildProcess) => {
     procs.push(p);
     p.stderr?.pipe(logFile, { end: false });
@@ -178,6 +202,9 @@ export async function startVm(o: VmOpts): Promise<Child> {
     if (p.pid) await writeFile(join(cg, "cgroup.procs"), String(p.pid));
   };
   try {
+    // ponytail: pids join the cgroup right after spawn, so a fork in the first instant would stay outside; QEMU and
+    // virtiofsd do not fork at start. A clone3(CLONE_INTO_CGROUP) helper closes it if that ever matters.
+    cg = await cgroup.create(id);
     if (!offline) {
       for (n = 0; used.has(n); n++);
       if (n >= MAX_LINKS) throw new Error("no VM link free");
@@ -186,14 +213,16 @@ export async function startVm(o: VmOpts): Promise<Child> {
       await net.vmLinkRules(link.tap, link.vmAddr);
       await deps?.links.register(link.vmAddr, task.kind === "planner" ? "planner" : "worker", id, "vm");
     }
-    const sockets = [];
+    const sockets: { tag: string; sock: string }[] = [];
+    rmSync(vfs, { force: true, recursive: true });
+    mkdirSync(vfs, { mode: 0o700 });
     for (const s of shares(task)) {
-      const sock = join(out, `vfs-${s.tag}.sock`);
-      rmSync(sock, { force: true });
-      socks.push(sock);
+      const sock = join(vfs, `${s.tag}.sock`);
       const args = [
+        // namespace (unprivileged user + mount namespace, the share as its root): a symlink the guest plants cannot
+        // point virtiofsd outside the shared directory
         "--sandbox",
-        "none",
+        "namespace",
         "--socket-path",
         sock,
         "--shared-dir",
@@ -203,7 +232,7 @@ export async function startVm(o: VmOpts): Promise<Child> {
       await attach(spawn("virtiofsd", args, { stdio: ["ignore", "ignore", "pipe"] }));
       sockets.push({ tag: s.tag, sock });
     }
-    await until(() => socks.every(existsSync), 5000, "virtiofsd sockets");
+    await until(() => sockets.every((s) => existsSync(s.sock)), 5000, "virtiofsd sockets");
     const args = qemuArgs({
       images: paths.images(),
       cpus: o.config.vm.cpus,
@@ -216,20 +245,19 @@ export async function startVm(o: VmOpts): Promise<Child> {
     const qemu = spawn("qemu-system-x86_64", args, { stdio: ["ignore", "ignore", "pipe", logFd] });
     await attach(qemu);
     const done = new Promise<Exit>((resolve, reject) => {
-      const timer =
+      const clear =
         o.deadlineMs === undefined
-          ? undefined
-          : setTimeout(() => {
+          ? () => {}
+          : deadline(o.deadlineMs, () => {
               log.info("hours budget reached: killing the VM", { task: id });
               void cleanup();
-            }, o.deadlineMs);
-      timer?.unref();
+            });
       qemu.on("error", (e) => {
-        clearTimeout(timer);
+        clear();
         cleanup().then(() => reject(e), reject);
       });
       qemu.on("exit", (code, signal) => {
-        clearTimeout(timer);
+        clear();
         cleanup().then(() => resolve({ code, signal }), reject);
       });
     });

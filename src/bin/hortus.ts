@@ -94,7 +94,8 @@ function errorText(e: unknown): string {
   const code = (e as NodeJS.ErrnoException).code;
   if (code === "ECONNREFUSED" || code === "ENOENT")
     return `hortusd is not running (socket ${paths.socket().replace("\0", "\\0")})`;
-  if (e instanceof RpcError) return `${e.code.replace("_", " ")}: ${e.message}`;
+  // the message says what happened; only a refusal is worth naming as one
+  if (e instanceof RpcError) return e.code === "forbidden" ? `forbidden: ${e.message}` : e.message;
   return e instanceof Error ? e.message : String(e);
 }
 
@@ -220,7 +221,14 @@ const commands: Record<string, Command> = {
         const sorted = [...list].sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"));
         for (const a of sorted) {
           const sum = (typeof a.summary === "string" ? JSON.parse(a.summary) : (a.summary ?? {})) as Row;
-          const where = [sum.method, sum.host, sum.path].filter(Boolean).map(s).join(" ");
+          // a request's method host path; a login's origin; a transform's name and what it puts on which hosts
+          const puts = Object.entries((sum.credentials ?? {}) as Record<string, { hosts?: string[] }>).map(
+            ([n, c]) => `put ${n} on ${(c.hosts ?? []).join(", ")}`,
+          );
+          const where = [sum.method, sum.host, sum.path, sum.origin, sum.name, puts.join("; ")]
+            .filter(Boolean)
+            .map(s)
+            .join(" ");
           console.log([`#${s(a.id)}`, a.status, a.category, a.task_id, where].map(s).join("\t"));
         }
         return;
@@ -274,10 +282,9 @@ const commands: Record<string, Command> = {
         options: { force: { type: "boolean" } },
         allowPositionals: true,
       });
-      await rpc.call("project.sync", {
-        name: needId(positionals[0], "sync --force <project>"),
-        force: values.force ?? false,
-      });
+      const name = needId(positionals[0], "sync --force <project>");
+      await rpc.call("project.sync", { name, force: values.force ?? false });
+      console.log(`synced ${name}`);
     },
   },
   schedules: {
@@ -329,18 +336,28 @@ const commands: Record<string, Command> = {
   },
 };
 
-function usage(): never {
-  console.error(
-    `usage: hortus <command>\n\n${Object.values(commands)
-      .map((c) => `  ${c.usage}`)
-      .join("\n")}`,
-  );
-  process.exit(64);
+/** Asked for (`help`, `--help`): stdout, exit 0; a missing or unknown command: stderr, exit 64. */
+function usage(asked = false): never {
+  const text = `usage: hortus <command>\n\n${Object.values(commands)
+    .map((c) => `  ${c.usage}`)
+    .join("\n")}`;
+  if (asked) console.log(text);
+  else console.error(text);
+  process.exit(asked ? 0 : 64);
 }
 
+const HELP = ["help", "--help", "-h"];
 const [name, ...args] = process.argv.slice(2);
+if (name !== undefined && HELP.includes(name)) usage(true);
 const cmd = name === undefined ? undefined : commands[name];
-if (!cmd) usage();
+if (!cmd) {
+  if (name !== undefined) console.error(`unknown command ${name}`);
+  usage();
+}
+if (args[0] === "--help" || args[0] === "-h") {
+  console.log(`usage: hortus ${cmd.usage}`);
+  process.exit(0);
+}
 const rpc = rpcClient(paths.socket());
 try {
   await cmd.run(args, rpc);

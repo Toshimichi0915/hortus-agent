@@ -36,6 +36,16 @@ function localTimes(root = document) {
 }
 localTimes();
 
+/** Only the nav's approvals badge (pages without approvals on them are not re-fetched). */
+async function refreshNav() {
+  const n = (await post("approval.list", { status: "pending", limit: 500 }).catch(() => null))?.length;
+  const a = $('nav a[href="/approvals"]');
+  if (n === undefined || !a) return;
+  a.querySelector(".badge")?.remove();
+  a.textContent = a.textContent.trim();
+  if (n) a.insertAdjacentHTML("beforeend", ` <span class="badge">${n}</span>`);
+}
+
 /** Re-fetch this page and swap every [data-refresh] container (and the nav badge); textareas outside stay. */
 async function refresh() {
   const doc = new DOMParser().parseFromString(await (await fetch(location.href)).text(), "text/html");
@@ -49,6 +59,7 @@ async function refresh() {
 }
 
 async function act(el, input) {
+  say(""); // a stale result must not read as this action's
   try {
     const r = await post(el.dataset.call, input);
     say(typeof r?.message === "string" ? r.message : "done");
@@ -124,6 +135,8 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// chat: the result line rides in the sticky composer instead of sitting under it
+$(".composer")?.append(msg);
 const draft = $(".composer textarea");
 if (draft) {
   draft.value = sessionStorage.getItem(key) || "";
@@ -145,7 +158,8 @@ if (st) {
     `?task=${encodeURIComponent(st.dataset.task)}&after=${st.dataset.last}`,
   );
 }
-if (["approvals", "chat", "tasks"].includes(page)) sse("approvals", refresh);
+// every page: the nav badge follows; pages showing approvals re-render
+sse("approvals", ["approvals", "chat", "tasks", "task"].includes(page) ? refresh : refreshNav);
 if (["tasks", "chat", "task"].includes(page)) sse("tasks", refresh);
 
 // Settings › Remote: the enrolment code's countdown

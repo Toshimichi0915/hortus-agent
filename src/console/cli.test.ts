@@ -32,6 +32,7 @@ const record = (name: string, result: (input: unknown) => unknown = () => ({ ok:
   });
 record("task.open", () => ({ id: "t1" }));
 record("task.send");
+record("project.sync");
 record("task.stop");
 define("task.stream", {
   roles: ["owner"],
@@ -104,12 +105,29 @@ test("hortus tasks on an empty DB", async () => {
 test("hortus approvals approve: not found and already decided exit 1", async () => {
   const nf = await run(["approvals", "approve", "99"]);
   assert.equal(nf.code, 1);
-  assert.match(nf.err, /not found/);
+  assert.equal(nf.err, "approval 99 not found\n");
   const done = await run(["approvals", "reject", "1"]);
   assert.equal(done.code, 1);
-  assert.match(done.err, /already decided/);
+  assert.equal(done.err, "already decided\n");
   assert.equal((await run(["approvals", "maybe", "1"])).code, 64);
-  assert.equal((await run(["bogus"])).code, 64);
+});
+
+test("hortus help: stdout, exit 0; unknown command: named, usage, exit 64; <cmd> --help: its usage; sync says so", async () => {
+  for (const a of ["--help", "help"]) {
+    const r = await run([a]);
+    assert.equal(r.code, 0, a);
+    assert.match(r.out, /^usage: hortus <command>\n/);
+    assert.equal(r.err, "");
+  }
+  const bogus = await run(["bogus"]);
+  assert.equal(bogus.code, 64);
+  assert.match(bogus.err, /^unknown command bogus\nusage: hortus <command>/);
+  const th = await run(["tasks", "--help"]);
+  assert.equal(th.code, 0);
+  assert.match(th.out, /^usage: hortus tasks \[<id>\]/);
+  const sync = await run(["sync", "--force", "web"]);
+  assert.equal(sync.code, 0);
+  assert.equal(sync.out, "synced web\n");
 });
 
 test("hortus chat: first line opens with the cwd, later lines send, stream printed, Ctrl-D exits 0", async () => {

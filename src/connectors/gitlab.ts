@@ -339,6 +339,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       } catch {
         return { ok: false };
       }
+      // a group/workspace/org hook also delivers projects outside `repos`: acknowledged, never mirrored
+      const project = b.project?.path_with_namespace;
+      if (project && !matches(project, globs)) return { ok: true };
       return KINDS.has(b.object_kind) ? { ok: true, event: await toEvent(b.object_kind, key, b) } : { ok: true };
     },
 

@@ -16,6 +16,7 @@ import { watch as watchLogin } from "../browser/login-view.ts";
 import { approvals } from "./pages/approvals.ts";
 import { chat, lastReplies, replyLine } from "./pages/chat.ts";
 import { credentials } from "./pages/credentials.ts";
+import { dofFile } from "./pages/dof.ts";
 import { loginView } from "./pages/login-view.ts";
 import { projects } from "./pages/projects.ts";
 import { schedules } from "./pages/schedules.ts";
@@ -42,6 +43,7 @@ export const routes: [RegExp, Page][] = [
   [/^\/settings$/, settings],
   [/^\/sources$/, sources],
   [/^\/search$/, search],
+  [/^\/dof\/([^/]+)\/(.+)$/, dofFile],
   [/^\/schedules$/, schedules],
 ];
 
@@ -113,10 +115,37 @@ async function api(method: string, req: IncomingMessage, res: ServerResponse, ca
   }
 }
 
+/**
+ * Opens an SSE response; returns what to run on close. A remote one (`session`, its row's hash) is cut once the row is
+ * gone (revoked, idle-swept): checked on each keepalive and on the `sessions` bus event.
+ */
+function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined): () => void {
+  res.writeHead(200, { ...HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive" });
+  res.write(": hello\n\n");
+  const live = () =>
+    !session || ctx.db.prepare("SELECT 1 FROM console_sessions WHERE hash = ?").get(session) !== undefined;
+  const check = () => {
+    if (!live()) res.destroy();
+  };
+  const keepalive = setInterval(() => (live() ? res.write(": keepalive\n\n") : res.destroy()), sse.keepaliveMs);
+  bus.on("sessions", check);
+  return () => {
+    clearInterval(keepalive);
+    bus.off("sessions", check);
+  };
+}
+
 /** `chat` replays `replies` after `Last-Event-ID` (or `?after=`; default: the last 1000), then follows the bus. */
-function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage, res: ServerResponse): void {
+function events(
+  ctx: Ctx,
+  name: string,
+  q: URLSearchParams,
+  req: IncomingMessage,
+  res: ServerResponse,
+  session?: string,
+): void {
   if (name === "login") {
-    loginEvents(Number(q.get("id")), res);
+    loginEvents(ctx, Number(q.get("id")), res, session);
     return;
   }
   const taskId = q.get("task");
@@ -124,9 +153,7 @@ function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage
     send(res, 404, "text/plain", "no such stream");
     return;
   }
-  res.writeHead(200, { ...HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive" });
-  res.write(": hello\n\n");
-  const keepalive = setInterval(() => res.write(": keepalive\n\n"), sse.keepaliveMs);
+  const stop = openStream(ctx, res, session);
   let topic: string = name;
   let onEvent: (payload?: unknown) => void;
   if (name === "chat" && taskId) {
@@ -144,23 +171,21 @@ function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage
   } else onEvent = (payload) => res.write(`data: ${JSON.stringify(payload ?? null)}\n\n`);
   bus.on(topic, onEvent);
   res.on("close", () => {
-    clearInterval(keepalive);
+    stop();
     bus.off(topic, onEvent);
   });
 }
 
 /** `/events/login?id=<entry>`: the login view's frames (and `until`, `closed`, `error`) as JSON; opening starts it. */
-function loginEvents(id: number, res: ServerResponse): void {
+function loginEvents(ctx: Ctx, id: number, res: ServerResponse, session?: string): void {
   if (!Number.isInteger(id)) {
     send(res, 404, "text/plain", "no such stream");
     return;
   }
-  res.writeHead(200, { ...HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive" });
-  res.write(": hello\n\n");
-  const keepalive = setInterval(() => res.write(": keepalive\n\n"), sse.keepaliveMs);
+  const stop = openStream(ctx, res, session);
   const off = watchLogin(id, (e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
   res.on("close", () => {
-    clearInterval(keepalive);
+    stop();
     off();
   });
 }
@@ -205,7 +230,7 @@ async function handle(
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "text/plain", "method not allowed");
 
   const ev = /^\/events\/(\w+)$/.exec(path);
-  if (ev) return events(ctx, ev[1] as string, url.searchParams, req, res);
+  if (ev) return events(ctx, ev[1] as string, url.searchParams, req, res, caller.session);
   const st = /^\/static\/(app\.(?:js|css)|webauthn\.js)$/.exec(path);
   if (st) {
     const file = st[1] as string;

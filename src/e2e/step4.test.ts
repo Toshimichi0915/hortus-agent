@@ -525,6 +525,38 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
   }
 });
 
+test("task_close refuses a chat task and a task waiting on its timers", { skip }, async () => {
+  const t = new Date().toISOString();
+  const ins = (id: string, kind: string) =>
+    db((d) =>
+      d
+        .prepare(
+          `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated)
+           VALUES (?, ?, 'x', 'x', 'waiting', '{"credentials":[],"repos":[]}', '{}', '{"tokens":0}', 'host', '[]', ?, ?)`,
+        )
+        .run(id, kind, t, t),
+    );
+  ins("tc-chat", "chat");
+  ins("tc-timer", "unattended");
+  db((d) =>
+    d
+      .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
+      .run(new Date(Date.now() + 864e5).toISOString(), t),
+  );
+  planner(`export default ({ n }) => n === 0
+    ? { calls: ["tc-chat", "tc-timer"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    : { text: "ok" };`);
+  const count = batches().length;
+  slack.post("C1", { user: "U1", text: "close them" });
+  const b = await nextBatch(count);
+  await until(() => toolResults(b).length === 2);
+  const [chat, timer] = toolResults(b);
+  assert.match(String(chat?.output), /not_found: no task tc-chat/);
+  assert.match(String(timer?.output), /invalid: task tc-timer has 1 timer/);
+  assert.equal(taskRow("tc-chat")?.status, "waiting");
+  assert.equal(taskRow("tc-timer")?.status, "waiting");
+});
+
 test("no project and no VM image: task_create fails with the doc's message; the Planner ignores instead", {
   skip,
 }, async () => {

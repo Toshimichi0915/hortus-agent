@@ -5,7 +5,7 @@
  * VM tasks start below `vm.max_concurrent`; with the image missing they run on the host (`vm.fallback_host`, v7) or
  * stay queued with the reason in `error`.
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { scan } from "../agent/loop.ts";
@@ -14,7 +14,7 @@ import type { Ctx, Module } from "../ctx.ts";
 import { now } from "../db.ts";
 import { publishLog } from "../mirror/index.ts";
 import { prepareClone } from "../projects/origin.ts";
-import { appendText, readCapped } from "../hostile.ts";
+import { appendText, MAX_ENTRIES, readCapped, readDir } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { Config } from "../config.ts";
@@ -247,41 +247,27 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
 
 /** New `out/outbox/<seq>.json` files, as hostile input: regular files only, ≤ 1 MB, schema-checked, seq = name. */
 export function readOutbox(id: string, after: number): OutboxMsg[] {
-  const box = join(paths.out(id), "outbox");
-  let names: string[];
+  const fresh = (n: string) => /^\d{6}\.json$/.test(n) && Number(n.slice(0, 6)) > after;
+  return (
+    readDir(join(paths.out(id), "outbox"), fresh, MAX_ENTRIES, (names, read, dropped) => {
+      if (dropped) log().error(`${dropped} outbox files left for the next read`, undefined, { task: id });
+      return names.flatMap((name) => outboxFile(id, name, read(name, MAX_OUTBOX + 1)) ?? []);
+    }) ?? []
+  );
+}
+
+function outboxFile(id: string, name: string, f: { text: string; size: number } | null): OutboxMsg | undefined {
+  const bad = (why: string) => void log().error(`outbox file ignored: ${why}`, undefined, { task: id, name });
+  if (!f) return bad("not a regular file");
+  if (f.size > MAX_OUTBOX) return bad(`${f.size} bytes`);
+  let m: z.infer<typeof Outbox>;
   try {
-    names = readdirSync(box);
-  } catch {
-    return [];
+    m = Outbox.parse(JSON.parse(f.text));
+  } catch (e) {
+    return bad(e instanceof Error ? e.message.slice(0, 200) : "invalid");
   }
-  const out: OutboxMsg[] = [];
-  for (const name of names.filter((n) => /^\d{6}\.json$/.test(n)).sort()) {
-    const seq = Number(name.slice(0, 6));
-    if (seq <= after) continue;
-    const f = readCapped(join(box, name), MAX_OUTBOX + 1);
-    const bad = (why: string) => log().error(`outbox file ignored: ${why}`, undefined, { task: id, name });
-    if (!f) {
-      bad("not a regular file");
-      continue;
-    }
-    if (f.size > MAX_OUTBOX) {
-      bad(`${f.size} bytes`);
-      continue;
-    }
-    let m: z.infer<typeof Outbox>;
-    try {
-      m = Outbox.parse(JSON.parse(f.text));
-    } catch (e) {
-      bad(e instanceof Error ? e.message.slice(0, 200) : "invalid");
-      continue;
-    }
-    if (m.seq !== seq) {
-      bad(`seq ${m.seq} in ${name}`);
-      continue;
-    }
-    out.push(m);
-  }
-  return out;
+  if (m.seq !== Number(name.slice(0, 6))) return bad(`seq ${m.seq} in ${name}`);
+  return m;
 }
 
 function tail(path: string, bytes = 2000): string {

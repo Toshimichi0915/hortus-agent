@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import type http from "node:http";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -106,6 +108,8 @@ interface Harness {
   inScope: string;
   outScope: string;
   create: { path: string; body: string };
+  /** an in-scope admin call (members, visibility): asks like a creation (static tokens are not narrowed upstream) */
+  admin?: { method: string; path: string };
   closed: string;
   /** what the fake's git server must see from the Worker */
   token(): string | undefined;
@@ -192,6 +196,7 @@ const H: Harness[] = [
     inScope: "/api/v4/projects/g%2Fsub%2Fp/issues",
     outScope: "/api/v4/projects/g%2Fother/issues",
     create: { path: "/api/v4/projects", body: JSON.stringify({ name: "newp" }) },
+    admin: { method: "POST", path: "/api/v4/projects/g%2Fp/members" },
     closed: "closed",
     token: () => gl.token,
     openIssue: (user, title, body, drop) =>
@@ -232,6 +237,7 @@ const H: Harness[] = [
     inScope: "/2.0/repositories/w/r/issues",
     outScope: "/2.0/repositories/w/other/issues",
     create: { path: "/2.0/repositories/w/newrepo", body: JSON.stringify({ scm: "git", is_private: true }) },
+    admin: { method: "PUT", path: "/2.0/repositories/w/r" },
     closed: "resolved",
     token: () => bb.token,
     openIssue: (user, title, body, drop) => bb.openIssue("w/r", { user, title, body: body ?? "" }, { drop: !!drop }),
@@ -452,6 +458,36 @@ for (const h of H) {
     assert.equal(rows(dof), n0 + 1);
   });
 
+  test(`${dof}: a group/workspace hook's delivery for a project outside repos → acknowledged, no event`, async () => {
+    const conn = (await connectors[dof]?.({
+      name: dof,
+      config: { ...dofs[dof], repos: ["nobody/*"] },
+      log,
+      fetch: coreFetch,
+      hasRef: () => false,
+    })) as Forge;
+    let got: { ok: boolean; event?: unknown } | undefined;
+    const srv = createServer((req, res) => {
+      const c: Buffer[] = [];
+      req.on("data", (d: Buffer) => c.push(d));
+      req.on("end", async () => {
+        got = await conn.webhook({ headers: req.headers as Record<string, string>, body: Buffer.concat(c) });
+        res.end();
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const hook = h.fake.hook;
+    h.fake.hook = `http://127.0.0.1:${(srv.address() as AddressInfo).port}/${dof}/webhook`;
+    try {
+      await h.openIssue("toshi", "elsewhere");
+      await until(() => got);
+      assert.deepEqual(got, { ok: true });
+    } finally {
+      h.fake.hook = hook;
+      srv.close();
+    }
+  });
+
   test(`${dof}: backfill → channel.md in ${D}/ with the real name`, () => {
     assert.equal(fm(dof, `${D}/channel.md`)?.frontmatter.name, P);
     assert.equal(fm(dof, `${D}/channel.md`)?.frontmatter.default_branch, "main");
@@ -600,6 +636,14 @@ for (const h of H) {
     const other = await send({ host: h.apiHost, path: h.outScope, headers: h.rest });
     assert.equal(other.status, 403);
     assert.match(other.body, /project scope/);
+    // dot segments an upstream (or its edge) resolves: never past the scope, plain or encoded
+    const other1 = h.outScope.split("/").slice(-2, -1)[0];
+    for (const dots of ["..", "%2e%2e", "%2E."]) {
+      const sneak = `${h.inScope.replace(/\/issues$/, "")}/${dots}/${other1}/issues`;
+      const r = await send({ host: h.apiHost, path: sneak, headers: h.rest });
+      assert.equal(r.status, 403, sneak);
+      assert.match(r.body, /dot segment/);
+    }
     const create = await send({
       host: h.apiHost,
       path: h.create.path,
@@ -611,6 +655,19 @@ for (const h of H) {
     const id = JSON.parse(create.body).approval as number;
     assert.ok(pending(true).some((p) => p.id === id));
     gate.decide(id, "reject", "owner");
+    if (h.admin) {
+      const a = await send({
+        host: h.apiHost,
+        path: h.admin.path,
+        method: h.admin.method,
+        headers: { ...h.rest, "content-type": "application/json" },
+        body: JSON.stringify({ visibility: "public", is_private: false, user_id: 9, access_level: 50 }),
+      });
+      assert.ok(isApproval(a), a.body);
+      const aid = JSON.parse(a.body).approval as number;
+      assert.ok(pending(true).some((p) => p.id === aid), "consequential");
+      gate.decide(aid, "reject", "owner");
+    }
   });
 
   test(`${dof}: insteadOf clone carries the token to the fake's git server; push asks with old new refname`, async () => {
@@ -783,4 +840,14 @@ test("sandboxEnv: insteadOf entries for gitlab (oauth2, its host) and bitbucket 
       ["url.https://x-token-auth:hortus-secret-bitbucket@bitbucket.org/.insteadOf", "https://bitbucket.org/"],
     ],
   );
+  // HORTUS_NO_NET=1: every forge's git goes to the session alias's listener, as GitHub's does
+  const lo = sandboxEnv({ id: "x", scope: { credentials: [], repos: [] } } as unknown as TaskJson, cfg, {
+    address: "127.0.0.9",
+    https: 4443,
+  });
+  const vals = Object.entries(lo)
+    .filter(([k]) => k.startsWith("GIT_CONFIG_"))
+    .map(([, v]) => v);
+  assert.ok(vals.includes("url.https://oauth2:hortus-secret-gle@gitlab.example.com:4443/.insteadOf"));
+  assert.ok(vals.includes("bitbucket.org:4443:127.0.0.9"));
 });

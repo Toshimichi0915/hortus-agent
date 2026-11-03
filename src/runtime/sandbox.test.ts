@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -24,8 +25,8 @@ import { Config } from "../config.ts";
 import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
-import { sandboxEnv, spawnSandboxed } from "./host.ts";
-import { abi, denySet, profile, readOnlySet, shim } from "./landlock.ts";
+import { caches, sandboxEnv, spawnSandboxed } from "./host.ts";
+import { abi, denySet, profile, RW_HOME, readOnlySet, shim } from "./landlock.ts";
 
 const inScope = process.env.HORTUS_TEST_SCOPE === "1";
 const hasSystemdRun = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
@@ -188,6 +189,31 @@ function suite(): void {
       server.close();
       assert.equal(r.code, 1, r.err);
       assert.match(r.err, /EACCES|EPERM/);
+    });
+    test("writable home entries are the cache subdirectories only (nothing on the owner's PATH)", () => {
+      const h = homedir();
+      const rn = prof()
+        .split("\n")
+        .filter((l) => l.startsWith("rn ") && l.slice(3).startsWith(`${h}/`))
+        .map((l) => l.slice(3));
+      const allowed = RW_HOME.map((p) => realpathSync.native(existsSync(join(h, p)) ? join(h, p) : h));
+      for (const p of rn) assert.ok(allowed.some((a) => p === a || p.startsWith(`${a}/`)), p);
+      for (const p of [".cargo", ".cargo/bin", ".pyenv", ".rustup", ".local/share/pnpm", ".gradle", ".npm"])
+        assert.ok(!rn.includes(join(h, p)), p);
+    });
+    test("caches: task-local tool homes, shared caches linked, never through a planted link", () => {
+      const out = join(root, "cache-out");
+      mkdirSync(join(out, "work"), { recursive: true });
+      const env = caches(out);
+      assert.equal(env.CARGO_HOME, join(out, "work/.cache/cargo"));
+      assert.ok(existsSync(join(out, "work/.cache/gradle")));
+      const evil = join(root, "cache-evil");
+      mkdirSync(evil);
+      rmSync(out, { recursive: true });
+      mkdirSync(out);
+      symlinkSync(evil, join(out, "work"));
+      caches(out);
+      assert.deepEqual(readdirSync(evil), []);
     });
     test("a file created in a denied directory after spawn stays unreachable", async () => {
       const p = shimSh(prof(), `sleep 0.3; cat ${H}/late.txt`);

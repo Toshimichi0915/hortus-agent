@@ -1,14 +1,44 @@
 {
   "name": "gitlab",
-  "vars": { "host": "gitlab.com", "api": "gitlab.com/api/v4", "host_api": "{host}/api/v4" },
+  "vars": {
+    "host": "gitlab.com",
+    "api": "gitlab.com/api/v4",
+    "host_api": "{host}/api/v4"
+  },
   "credentials": {
     "gitlab": {
       "type": "token",
       "hosts": ["{host}"],
       "locations": ["header:PRIVATE-TOKEN", "header:Authorization", "basic:password"]
     },
-    "gitlab-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
+    "gitlab-webhook": {
+      "type": "webhook-secret",
+      "hosts": [],
+      "locations": []
+    }
   },
   "scope": ["{host}/api/v4/projects/{project}", "{host}/api/v4/projects/{project}/**", "{host}/{project}.git/**"],
-  "consequential": ["DELETE {host}/api/v4/**", "POST {host}/**/git-receive-pack", "POST {host}/api/v4/projects"]
+  "consequential": [
+    "DELETE {host}/api/v4/**",
+    "POST {host}/**/git-receive-pack",
+    "POST {host}/api/v4/projects",
+    "PUT {host}/api/v4/projects/*",
+    "POST {host}/api/v4/projects/*/transfer",
+    "PUT {host}/api/v4/projects/*/transfer",
+    "POST {host}/api/v4/projects/*/fork",
+    "POST {host}/api/v4/projects/*/members**",
+    "PUT {host}/api/v4/projects/*/members**",
+    "POST {host}/api/v4/projects/*/hooks**",
+    "PUT {host}/api/v4/projects/*/hooks**",
+    "POST {host}/api/v4/projects/*/deploy_keys**",
+    "PUT {host}/api/v4/projects/*/deploy_keys**",
+    "POST {host}/api/v4/projects/*/variables**",
+    "PUT {host}/api/v4/projects/*/variables**",
+    "POST {host}/api/v4/projects/*/protected_branches**",
+    "PUT {host}/api/v4/projects/*/protected_branches**",
+    "POST {host}/api/v4/projects/*/access_tokens**",
+    "PUT {host}/api/v4/projects/*/access_tokens**",
+    "POST {host}/api/v4/projects/*/share**",
+    "PUT {host}/api/v4/projects/*/share**"
+  ]
 }

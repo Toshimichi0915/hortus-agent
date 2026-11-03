@@ -558,6 +558,10 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const manifests = new Set<Manifest>(tf ? [tf.manifest] : []);
   let category: string | undefined;
   const requestPath = template.url.match(URL_PARTS)?.[2] || "/";
+  // scope and consequential patterns match the raw path, and upstreams (or their edges) resolve dot segments: a
+  // credentialed `/projects/g%2Fp/../g%2Fother` would reach a project outside the scope. Refused, plain or encoded.
+  if (found.length && /(^|\/|%2f|\\|%5c)(\.|%2e){1,2}(\/|%2f|\\|%5c|$)/i.test(requestPath))
+    return refuse(403, "a credentialed path may not hold a dot segment", { host });
   for (const { h, loc } of found) {
     const name = h.name;
     let secret: Secret;
@@ -819,9 +823,17 @@ function flatHeaders(h: http.IncomingHttpHeaders): Record<string, string | strin
   return out;
 }
 
-function addRefs(p: Prepared, refs: string[] | undefined, repos: string[] | undefined): void {
+/** Refs and repos are `<dof>:…`; a transform speaks only for the configured DOFs of its own type. */
+function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | undefined): void {
   const task = p.client.task;
   if (!task) return;
+  const dofs = ctx().config.dofs;
+  const own = (r: string) => {
+    const d = r.split(":", 1)[0] ?? "";
+    return r.includes(":") && Object.hasOwn(dofs, d) && dofs[d]?.type === p.tf?.name;
+  };
+  const refs = all?.filter(own);
+  const repos = allRepos?.filter(own);
   const db = ctx().db;
   for (const r of refs ?? []) db.prepare("INSERT OR IGNORE INTO task_refs(ref, task_id) VALUES (?, ?)").run(r, task);
   if (repos?.length && p.consequential && p.approved) {

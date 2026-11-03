@@ -1,6 +1,6 @@
 /** A host session: its cgroup, its session address, the Landlock shim, and the cleanup after it exits. */
 import { spawn } from "node:child_process";
-import { closeSync, copyFileSync, createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { closeSync, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -81,22 +81,21 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     // the owner's ~/.gitconfig may sign commits; the sandbox has no gpg agent (3b)
     ["commit.gpgsign", "false"],
   ];
-  // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects)
+  // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
+  // under the user each forge expects (18-gitlab-bitbucket.md)
+  const users: Record<string, [string, string]> = {
+    github: ["x-access-token", "github.com"],
+    gitlab: ["oauth2", "gitlab.com"],
+    bitbucket: ["x-token-auth", "bitbucket.org"],
+  };
   for (const [name, d] of Object.entries(config?.dofs ?? {})) {
-    if (d.type !== "github") continue;
-    const host = d.host ?? "github.com";
+    const u = users[d.type];
+    if (!u) continue;
+    const host = d.type === "bitbucket" ? u[1] : (d.host ?? u[1]);
     // HORTUS_NO_NET=1 has no DNS/DNAT: the forge host resolves to the session's alias, on its listener's port
     const at = loopback ? `${host}:${loopback.https}` : host;
-    git.push([`url.https://x-access-token:hortus-secret-${name}@${at}/.insteadOf`, `https://${host}/`]);
+    git.push([`url.https://${u[0]}:hortus-secret-${name}@${at}/.insteadOf`, `https://${host}/`]);
     if (loopback) git.push(["http.curloptResolve", `${at}:${loopback.address}`]);
-  }
-  // 18-gitlab-bitbucket.md: the static token as the Basic password under the user each forge expects
-  for (const [name, d] of Object.entries(config?.dofs ?? {})) {
-    if (d.type === "gitlab") {
-      const host = d.host ?? "gitlab.com";
-      git.push([`url.https://oauth2:hortus-secret-${name}@${host}/.insteadOf`, `https://${host}/`]);
-    } else if (d.type === "bitbucket")
-      git.push([`url.https://x-token-auth:hortus-secret-${name}@bitbucket.org/.insteadOf`, "https://bitbucket.org/"]);
   }
   env.GIT_CONFIG_COUNT = String(git.length);
   git.forEach(([k, v], i) => {
@@ -105,6 +104,40 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
   });
   if (task.scope.credentials.includes("github")) env.GH_TOKEN = "hortus-secret-github";
   return env;
+}
+
+/** An unattended session's tool homes under `out/work/.cache` (the profile leaves the owner's read-only), with the
+ * shared cache directories linked in. `out/` is the Worker's: nothing is created through a link it planted. */
+export function caches(out: string): Record<string, string> {
+  const w = join(out, "work", ".cache");
+  const real = (p: string) => {
+    try {
+      mkdirSync(p);
+    } catch {}
+    try {
+      return lstatSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const h = homedir();
+  const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"] };
+  if ([join(out, "work"), w].every(real))
+    for (const [tool, subs] of Object.entries(links))
+      if (real(join(w, tool)))
+        for (const s of subs)
+          try {
+            // only an existing target: the profile grants it only then; EEXIST on a restart leaves the link be
+            if (existsSync(join(h, `.${tool}`, s))) symlinkSync(join(h, `.${tool}`, s), join(w, tool, s));
+          } catch {}
+  return {
+    CARGO_HOME: join(w, "cargo"),
+    GRADLE_USER_HOME: join(w, "gradle"),
+    PNPM_HOME: join(w, "pnpm"),
+    npm_config_store_dir: join(w, "pnpm", "store"),
+    npm_config_logs_dir: join(w, "npm-logs"),
+    npm_config_update_notifier: "false",
+  };
 }
 
 /** The lowest Landlock ABI a host session runs under (9: RESOLVE_UNIX). */
@@ -147,7 +180,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
 
   const child = spawn(shim.path, ["--", ...o.cmd], {
     cwd: o.cwd,
-    env: { ...sandboxEnv(o.task, o.config, o.loopback), ...o.env },
+    env: { ...sandboxEnv(o.task, o.config, o.loopback), ...(o.kind === "unattended" ? caches(out) : {}), ...o.env },
     stdio: ["ignore", "pipe", "pipe", "pipe"],
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];

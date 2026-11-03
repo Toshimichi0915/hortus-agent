@@ -7,14 +7,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { outbox, sessionFiles, setup } from "../agent/testkit.ts";
 import * as paths from "../paths.ts";
 import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import * as net from "./net.ts";
-import { init, missingImage, qemuArgs, startVm, vmTaskJson } from "./vm.ts";
+import { deadline, init, missingImage, qemuArgs, startVm, vmTaskJson } from "./vm.ts";
 
 const host: TaskJson = {
   id: "t1",
@@ -81,8 +81,42 @@ test("qemuArgs: microvm, direct kernel boot, snapshot root, tap, one vhost-user-
   const u = qemuArgs({ images: "/i", cpus: 1, memMb: 512, link: null, sockets: [], console: "/c" });
   assert.deepEqual(
     u.filter((_, i) => u[i - 1] === "-netdev"),
-    ["user,id=n0"],
+    ["user,id=n0,restrict=on"],
   );
+});
+
+test("qemuArgs: a comma in a path is doubled", () => {
+  const a = qemuArgs({
+    images: "/h,x",
+    cpus: 1,
+    memMb: 512,
+    link: null,
+    sockets: [{ tag: "t", sock: "/h,x/s" }],
+    console: "/c,1",
+  });
+  assert.ok(a.includes("id=root,file=/h,,x/agent.ext4,format=raw,if=none"));
+  assert.ok(a.includes("socket,id=vfs0,path=/h,,x/s"));
+  assert.ok(a.includes("file,id=con,path=/c,,1,append=on"));
+});
+
+test("deadline: past 2^31-1 ms it re-arms instead of firing at once; clear stops it", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    let fired = 0;
+    deadline(2 ** 31 + 10, () => fired++);
+    mock.timers.tick(1000);
+    assert.equal(fired, 0);
+    mock.timers.tick(2 ** 31 - 1000);
+    assert.equal(fired, 0);
+    mock.timers.tick(20);
+    assert.equal(fired, 1);
+    const clear = deadline(5, () => fired++);
+    clear();
+    mock.timers.tick(10);
+    assert.equal(fired, 1);
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test("missingImage names the first missing file and the fix", () => {

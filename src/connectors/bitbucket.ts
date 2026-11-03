@@ -293,6 +293,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       } catch {
         return { ok: false };
       }
+      // a group/workspace/org hook also delivers projects outside `repos`: acknowledged, never mirrored
+      const project = b.repository?.full_name;
+      if (project && !matches(project, globs)) return { ok: true };
       return KIND.test(type) ? { ok: true, event: await toEvent(type, key, b) } : { ok: true };
     },
 

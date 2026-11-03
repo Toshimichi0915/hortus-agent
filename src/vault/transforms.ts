@@ -242,10 +242,11 @@ export function runTests(name: string): { file: string; ok: boolean; diff?: stri
 }
 
 /**
- * The manifest a vault credential follows: its own transform's (`transform`, else the one of its name), else the
- * requested host's manifest only when that manifest names it. Never another manifest's same-type entry: a key saved
- * without a transform must not ride to every host whose manifest has a token credential.
+ * The manifest a vault credential follows: its own transform's (`transform`, else the one of its name), else — only
+ * for an entry bound to no transform — the requested host's manifest when that manifest names it. Never another
+ * manifest's same-type entry: a key saved without a transform must not ride to every host whose manifest has a token
+ * credential; an entry bound to a transform that is not loaded (disabled, tampered) follows none.
  */
 export function credentialManifest(name: string, entry: { transform?: string }, host?: Manifest): Manifest | undefined {
-  return get(entry.transform ?? name)?.manifest ?? (host?.credentials[name] ? host : undefined);
+  return get(entry.transform ?? name)?.manifest ?? (!entry.transform && host?.credentials[name] ? host : undefined);
 }

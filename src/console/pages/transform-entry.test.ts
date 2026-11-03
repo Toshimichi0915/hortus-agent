@@ -28,3 +28,10 @@ test("transforms entry: one header line, configured names, password fields posti
   );
   assert.ok(!form.includes("credentials.slack"));
 });
+
+test("transforms entry: a changed transform.js says so even when the manifest is the same", () => {
+  const view = summaryView("request", "transforms", { ...s, new: false, manifestDiff: " {}\n", codeChanged: 3 }).html;
+  assert.match(view, /\(changed\)/);
+  assert.match(view, /<code>transform\.js<\/code> changed \(3 lines\)/);
+  assert.ok(!summaryView("request", "transforms", s).html.includes("transform.js</code> changed"));
+});
