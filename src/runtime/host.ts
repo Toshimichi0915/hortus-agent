@@ -79,6 +79,14 @@ export function sandboxEnv(task: TaskJson, config?: Config): Record<string, stri
     const host = d.host ?? "github.com";
     git.push([`url.https://x-access-token:hortus-secret-${name}@${host}/.insteadOf`, `https://${host}/`]);
   }
+  // 18-gitlab-bitbucket.md: the static token as the Basic password under the user each forge expects
+  for (const [name, d] of Object.entries(config?.dofs ?? {})) {
+    if (d.type === "gitlab") {
+      const host = d.host ?? "gitlab.com";
+      git.push([`url.https://oauth2:hortus-secret-${name}@${host}/.insteadOf`, `https://${host}/`]);
+    } else if (d.type === "bitbucket")
+      git.push([`url.https://x-token-auth:hortus-secret-${name}@bitbucket.org/.insteadOf`, "https://bitbucket.org/"]);
+  }
   env.GIT_CONFIG_COUNT = String(git.length);
   git.forEach(([k, v], i) => {
     env[`GIT_CONFIG_KEY_${i}`] = k;

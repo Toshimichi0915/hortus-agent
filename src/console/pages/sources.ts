@@ -30,6 +30,34 @@ function forgeRows(ctx: Ctx, name: string): Raw {
   }`;
 }
 
+/** GitLab and Bitbucket (18-gitlab-bitbucket.md): where the token is made and which header carries the secret. */
+const STATIC_FORGES: Record<string, { token: string; header: string; host?: string }> = {
+  gitlab: {
+    token: "project access token (or group access token), scope api, role Developer",
+    header: "X-Gitlab-Token (GitLab's “Secret token” field: the secret itself)",
+  },
+  bitbucket: {
+    token: "repository access token, scopes repository:write, pullrequest:write, issue:write, webhook",
+    header: "X-Hub-Signature (Bitbucket's webhook “Secret”: HMAC-SHA256 of the body)",
+    host: "bitbucket.org",
+  },
+};
+
+/** A static-token forge's rows: host, token type, the secret's header, deliveries, the URL to give the webhook. */
+function staticForgeRows(ctx: Ctx, name: string, type: string): Raw {
+  const f = STATIC_FORGES[type];
+  if (!f) return h``;
+  const host = f.host ?? ctx.config.dofs[name]?.host ?? `${type}.com`;
+  const e = readVault()[name];
+  const token = e?.type === "token" ? f.token : `no token credential ${name} (create a ${f.token})`;
+  const secret = readVault()[`${name}-webhook`] ? "" : h` <span class="error">(no ${name}-webhook credential)</span>`;
+  const q = ctx.db.prepare("SELECT count(*) AS n, max(created) AS last FROM events WHERE dof = ? AND created >= ?");
+  const today = q.get(name, new Date().toISOString().slice(0, 10)) as { n: number; last: string | null };
+  const last = (ctx.db.prepare("SELECT max(created) AS t FROM events WHERE dof = ?").get(name) as { t: string | null })
+    .t;
+  return h`<p>host: ${host} · token: ${token} · deliveries today ${today.n} · last delivery ${time(last)}</p><p class="hint">Webhook URL: <code>https://&lt;your tunnel&gt;/${name}/webhook</code>; secret: the <code>${name}-webhook</code> credential, sent as ${f.header}${secret}. No delivery log is read back: the 10-min reconcile fills what the tunnel drops. The tunnel forwards to <code>http://127.0.0.1:7701</code>: <code>cloudflared tunnel --url http://127.0.0.1:7701</code> or <code>ssh -R</code>; hortus installs neither.</p>`;
+}
+
 const sizes = new Map<string, { at: number; text: string }>();
 
 /** `du` of the mirror worktree, cached 1 min. */
@@ -76,7 +104,7 @@ export const sources: Page = async (ctx) => {
         s?.error ? h`<p class="error">${s.error}</p>` : ""
       }${(s?.notes ?? []).map((n) => h`<p class="hint">${n}</p>`)}${
         ctx.config.dofs[name]?.type === "github" ? forgeRows(ctx, name) : ""
-      }${
+      }${staticForgeRows(ctx, name, ctx.config.dofs[name]?.type ?? "")}${
         scopes.length
           ? h`<table><thead><tr><th>Scope</th><th>Last sync</th><th></th></tr></thead><tbody>${scopes.map(
               (x) =>

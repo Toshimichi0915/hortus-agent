@@ -111,6 +111,20 @@ export function hmacVerify(name: string, body: Buffer, sig: string | undefined):
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
+/**
+ * `value` equals the `webhook-secret` credential `name` (GitLab's `X-Gitlab-Token`), constant time: `value` is copied
+ * into a buffer of the secret's length, so a length mismatch still compares every byte before answering false.
+ */
+export function equals(name: string, value: string | undefined): boolean {
+  const e = read()[name];
+  if (e?.type !== "webhook-secret" || value === undefined) return false;
+  const want = Buffer.from(e.value);
+  const raw = Buffer.from(value);
+  const got = Buffer.alloc(want.length);
+  raw.copy(got);
+  return timingSafeEqual(got, want) && raw.length === want.length;
+}
+
 /** v6 › Projects › GitHub permissions. */
 export const PERMISSIONS = {
   worker: { contents: "write", issues: "write", pull_requests: "write", checks: "read", actions: "read" },

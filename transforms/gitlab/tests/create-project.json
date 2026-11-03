@@ -1,0 +1,39 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://gitlab.com/api/v4/projects",
+    "headers": {
+      "authorization": "Bearer hortus-secret-gitlab",
+      "content-type": "application/json"
+    },
+    "body": "{\"name\":\"new\",\"namespace_id\":3}",
+    "stream": false
+  },
+  "template": {
+    "method": "POST",
+    "url": "https://gitlab.com/api/v4/projects",
+    "headers": {
+      "authorization": "Bearer {secret:gitlab}",
+      "content-type": "application/json"
+    },
+    "body": "{\"name\":\"new\",\"namespace_id\":3}",
+    "stream": false
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"path_with_namespace\":\"g/new\"}"
+  },
+  "expected": {
+    "res": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"path_with_namespace\":\"g/new\"}"
+    },
+    "repos": ["gitlab:g/new"]
+  }
+}

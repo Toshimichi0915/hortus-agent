@@ -1,0 +1,14 @@
+{
+  "name": "gitlab",
+  "vars": { "host": "gitlab.com", "api": "gitlab.com/api/v4", "host_api": "{host}/api/v4" },
+  "credentials": {
+    "gitlab": {
+      "type": "token",
+      "hosts": ["{host}"],
+      "locations": ["header:PRIVATE-TOKEN", "header:Authorization", "basic:password"]
+    },
+    "gitlab-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
+  },
+  "scope": ["{host}/api/v4/projects/{project}", "{host}/api/v4/projects/{project}/**", "{host}/{project}.git/**"],
+  "consequential": ["DELETE {host}/api/v4/**", "POST {host}/**/git-receive-pack", "POST {host}/api/v4/projects"]
+}
