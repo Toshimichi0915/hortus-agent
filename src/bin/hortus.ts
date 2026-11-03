@@ -260,6 +260,10 @@ const commands: Record<string, Command> = {
       console.log("resumed");
     },
   },
+  image: {
+    usage: "image build [--no-browser]          build the Worker VM image (sudo)",
+    run: async (a) => (await import("../runtime/image.ts")).imageBuild(a),
+  },
   install: {
     usage: "install [--ca] [--force]            install the systemd unit (and the CA system-wide)",
     async run(args) {

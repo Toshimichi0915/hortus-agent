@@ -194,15 +194,24 @@ export async function addTap(n: number, user: string): Promise<{ tap: string; ho
   return t;
 }
 
-/** The VM on `tap` (source `vmAddr`) reaches the proxy's 80/443/53 and nothing else on the host. */
+/**
+ * The VM on `tap` (source `vmAddr`) reaches the proxy's 80/443/53 and nothing else on the host. The proxy listens on
+ * 8080/8443/5353 (a root process may hold *:80/*:443), so the standard ports are DNAT'd to those in `prerouting`.
+ */
 export async function vmLinkRules(tap: string, vmAddr: string): Promise<void> {
   if (off(`vmLinkRules ${tap}`)) return;
   await deleteByComment(`hortus:${tap}`);
   const c = `comment ${quote(`hortus:${tap}`)}`;
   const r = (x: string) => `add rule ${T()} input iifname ${quote(tap)} ${x} ${c}\n`;
+  const d = (x: string) => `add rule ${T()} prerouting iifname ${quote(tap)} ip daddr ${PROXY} ${x} ${c}\n`;
+  // ponytail: prerouting is added here, not in ensureTable, so this lands without touching step 2's table layout
   await nft(
-    r(`ip saddr ${vmAddr} ip daddr ${PROXY} tcp dport { 80, 443 } accept`) +
-      r(`ip saddr ${vmAddr} ip daddr ${PROXY} udp dport 53 accept`) +
+    `add chain ${T()} prerouting { type nat hook prerouting priority -100; policy accept; }\n` +
+      d(`tcp dport 443 dnat ip to ${PROXY}:8443`) +
+      d(`tcp dport 80 dnat ip to ${PROXY}:8080`) +
+      d(`udp dport 53 dnat ip to ${PROXY}:5353`) +
+      r(`ip saddr ${vmAddr} ip daddr ${PROXY} tcp dport { 80, 443, 8080, 8443 } accept`) +
+      r(`ip saddr ${vmAddr} ip daddr ${PROXY} udp dport { 53, 5353 } accept`) +
       r("drop"),
   );
 }

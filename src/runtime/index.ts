@@ -7,6 +7,7 @@ export * as cgroup from "./cgroup.ts";
 export { agentCmd, type Child, type Exit, type SpawnOpts, sandboxEnv, spawnSandboxed } from "./host.ts";
 export { abi, denySet, type Kind, type ProfileTask, profile, shim } from "./landlock.ts";
 export * as sessionNet from "./session-net.ts";
+export * as vm from "./vm.ts";
 export { net };
 
 /** Logs the Landlock ABI once; outside HORTUS_NO_NET flushes stale rules, taps and addresses and sets up hortus0. */

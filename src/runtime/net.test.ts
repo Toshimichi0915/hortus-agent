@@ -209,7 +209,7 @@ if (!enabled) {
     await net.addTap(200, userInfo().username);
     await net.vmLinkRules(t.tap, t.vmAddr);
     await net.vmLinkRules(t.tap, t.vmAddr);
-    assert.equal(ruleset().match(/hortus:hortustt200/g)?.length, 3);
+    assert.equal(ruleset().match(/hortus:hortustt200/g)?.length, 6); // 3 input + 3 prerouting DNAT
     await net.removeVmLink(t.tap);
     assert.ok(!ruleset().includes("hortus:hortustt200"));
     assert.equal(spawnSync("ip", ["link", "show", "dev", t.tap]).status, 1);
