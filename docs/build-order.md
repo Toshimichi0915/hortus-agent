@@ -79,6 +79,6 @@ Solid arrows are hard dependencies; dotted ones improve the done-when (no click 
 | 4 | Planner: batch loop, tools, `scope.project`, `owner.notify`, guards, `planner.runtime` | as v6 step 4 | 4b | done with a scripted Planner (`src/e2e/step4.test.ts`); live Planner opt-in (`step4live`); the Planner VM path untested |
 | 4b | `discord`, `telegram`, `ws:text` | as v6 step 4b | 4 | done against fake Discord/Telegram; real services pending credentials |
 | 6 | Forge interface, `github` | as v6 step 6 | — | done against the fake GitHub (`src/e2e/step6.test.ts`, Planner-routed); a real GitHub App pending credentials |
-| 6b | `gitlab`, `bitbucket`, `equals`, `host` | as v6 step 6b | — | in progress (separate branch) |
+| 6b | `gitlab`, `bitbucket`, `equals`, `host` | as v6 step 6b | — | done against fake GitLab/Bitbucket (`src/connectors/forges.test.ts`, parameterized over the three forges); real services pending credentials |
 
 Critical path: F0 → {F1, F2} → 1 → 2 → 3 → 4 → 6. Everything in wave 3b–3h is off it.

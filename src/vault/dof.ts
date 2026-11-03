@@ -59,8 +59,11 @@ export async function load(): Promise<void> {
   notes = bad.length ? [`transforms: ${bad.length} disabled (hash mismatch)`] : [];
 }
 
-/** Shipped transforms whose name has no binding yet → one commit and their rows. */
-// ponytail: a shipped transform already bound is never refreshed by a release; re-ship by deleting its row
+/**
+ * Shipped transforms whose binding is missing or older than this release's files → one commit and their rows. A
+ * Worker can never submit a shipped name, so a bound shipped transform is always an earlier release's: a release that
+ * tightens a manifest (a new consequential endpoint) reaches existing installs.
+ */
 export async function ship(root = transforms.shippedDir()): Promise<string[]> {
   if (!existsSync(root)) return [];
   const have = bound();
@@ -68,12 +71,17 @@ export async function ship(root = transforms.shippedDir()): Promise<string[]> {
   const binds: [string, string][] = [];
   for (const name of readdirSync(root).sort()) {
     const dir = join(root, name);
-    if (have.has(name) || !existsSync(join(dir, "manifest.json")) || !existsSync(join(dir, "transform.js"))) continue;
-    for (const f of filesOf(dir)) changes.push({ op: "put", path: `${name}/${f}`, bytes: readFileSync(join(dir, f)) });
+    if (!existsSync(join(dir, "manifest.json")) || !existsSync(join(dir, "transform.js"))) continue;
     const hash = transforms.hashOf(
       readFileSync(join(dir, "manifest.json"), "utf8"),
       readFileSync(join(dir, "transform.js"), "utf8"),
     );
+    if (have.get(name) === hash) continue;
+    const files = filesOf(dir);
+    for (const f of files) changes.push({ op: "put", path: `${name}/${f}`, bytes: readFileSync(join(dir, f)) });
+    const old = join(paths.dof(DOF), name);
+    if (existsSync(old))
+      for (const f of filesOf(old)) if (!files.includes(f)) changes.push({ op: "delete", path: `${name}/${f}` });
     binds.push([name, hash]);
   }
   if (!binds.length) return [];

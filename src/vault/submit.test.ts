@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
@@ -534,4 +534,62 @@ test("approve and reject in parallel: one wins, and the transform is enabled exa
   assert.deepEqual(res.map((x) => x.status).sort(), ["fulfilled", "rejected"]);
   const st = (await entry(id)).status;
   assert.equal(st === "approved", !!transforms.get("racey"), st);
+});
+
+test("an approval that failed after its claim keeps the names it introduces: the re-approval still grants them", async () => {
+  const id = (await submit("crashy", files("crashy"))).approval as number;
+  const dir = paths.dof("transforms");
+  chmodSync(dir, 0o500);
+  try {
+    await assert.rejects(decide(id, "approve", { crashy: { value: "v1" } }));
+  } finally {
+    chmodSync(dir, 0o700);
+  }
+  assert.equal((await entry(id)).status, "pending");
+  // what a crash after the vault write leaves: the name is configured, the entry pending, no grant yet; the Worker
+  // resubmits meanwhile (same entry)
+  writeVault({ ...readVault(), crashy: { type: "token", value: "v1", transform: "crashy" } });
+  assert.equal((await submit("crashy", files("crashy"))).approval, id);
+  await decide(id, "approve");
+  const grants = ctx.db
+    .prepare("SELECT count(*) AS n FROM approvals WHERE kind = 'grant' AND hash = 'grant:crashy' AND task_id = 'T'")
+    .get() as { n: number };
+  assert.equal(grants.n, 1);
+  assert.equal((await entry(id)).status, "approved");
+});
+
+test("a resubmission while the owner's approval installs returns that entry, not a second pending one", async () => {
+  const id = (await submit("busy", files("busy"))).approval as number;
+  ctx.db.prepare("UPDATE approvals SET status = 'installing' WHERE id = ?").run(id);
+  try {
+    assert.equal((await submit("busy", files("busy"))).approval, id);
+  } finally {
+    ctx.db.prepare("UPDATE approvals SET status = 'pending' WHERE id = ?").run(id);
+  }
+  const n = ctx.db
+    .prepare(
+      "SELECT count(*) AS n FROM approvals WHERE category = 'transforms' AND status = 'pending' AND summary LIKE '%\"busy\"%'",
+    )
+    .get() as { n: number };
+  assert.equal(n.n, 1);
+});
+
+test("a release's shipped transform replaces the earlier release's copy; an unchanged one is left alone", async () => {
+  const root = join(paths.home(), "shipped");
+  const put = (consequential: string[], extra?: string) => {
+    const f = files("shipx", { extra: { consequential } });
+    mkdirSync(join(root, "shipx", "tests"), { recursive: true });
+    for (const [k, v] of Object.entries(f)) writeFileSync(join(root, "shipx", k), v);
+    if (extra) writeFileSync(join(root, "shipx", extra), "x");
+  };
+  put([], "tests/old.json");
+  assert.deepEqual(await dof.ship(root), ["shipx"]);
+  assert.deepEqual(await dof.ship(root), []);
+  assert.ok(existsSync(join(paths.dof("transforms"), "shipx", "tests/old.json")));
+  put(["POST api.shipx.com/**"]);
+  rmSync(join(root, "shipx", "tests/old.json"));
+  assert.deepEqual(await dof.ship(root), ["shipx"]);
+  await dof.load();
+  assert.deepEqual(transforms.get("shipx")?.manifest.consequential, ["POST api.shipx.com/**"]);
+  assert.equal(existsSync(join(paths.dof("transforms"), "shipx", "tests/old.json")), false);
 });

@@ -323,4 +323,10 @@ test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., link
     assert.ok(!b.body.includes("SECRET") && !b.body.includes("alert(1)"), bad);
     assert.match(b.body, /<h1>Not found<\/h1>/, bad);
   }
+  // the bare repo next to the worktree is no DOF; an attachment is named, not dumped
+  mkdirSync(paths.dofRepo("planted"), { recursive: true });
+  writeFileSync(join(paths.dofRepo("planted"), "config"), "[core]");
+  assert.match((await get("/dof/planted.git/config")).body, /<h1>Not found<\/h1>/);
+  writeFileSync(join(thread, "f.png"), Buffer.from([0x89, 0x50, 0, 1, 2]));
+  assert.match((await get(`${base}/f.png`)).body, /binary file, 5 bytes/);
 });

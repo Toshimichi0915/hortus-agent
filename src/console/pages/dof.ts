@@ -26,6 +26,8 @@ export const dofFile: Page = (ctx, { m }) => {
   const no = (why: string) => layout(ctx, "search", "Not found", h`<p>${why}</p>`);
   if (!segs) return no("bad path");
   const [dof, ...rel] = segs as [string, ...string[]];
+  // `dof/<name>.git` (the mirror's bare repo) and dot-entries sit next to the worktrees: not a DOF
+  if (dof.startsWith(".") || dof.endsWith(".git")) return no(`no DOF ${dof}`);
   const root = ctx.paths.dof(dof);
   const file = join(root, ...rel);
   let real: string;
@@ -51,9 +53,9 @@ export const dofFile: Page = (ctx, { m }) => {
     ctx,
     "search",
     name,
-    h`<p class="hint">${dof}:${rel.join("/")} (read-only mirror)</p><pre>${r.text}</pre>${
-      r.size > MAX ? h`<p class="hint">first ${MAX / 1024} KB of ${r.size} bytes</p>` : ""
-    }${
+    h`<p class="hint">${dof}:${rel.join("/")} (read-only mirror)</p>${
+      r.text.includes("\0") ? h`<p>binary file, ${r.size} bytes</p>` : h`<pre>${r.text}</pre>`
+    }${r.size > MAX && !r.text.includes("\0") ? h`<p class="hint">first ${MAX / 1024} KB of ${r.size} bytes</p>` : ""}${
       siblings.length > 1
         ? h`<h2>In this thread</h2><ul class="hits">${siblings.map((f) =>
             f === name ? h`<li><b>${f}</b></li>` : h`<li><a href="/dof/${enc([dof, ...dir, f])}">${f}</a></li>`,

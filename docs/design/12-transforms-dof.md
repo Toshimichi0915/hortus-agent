@@ -6,7 +6,7 @@ Spec: v6 › Secret Vault › Adding transforms, Built-in operations. Depends on
 
 ### The `transforms` DOF
 
-`dofs.transforms` is implicit like `logs`: a repo at `dof/transforms.git` + worktree, no connector, written only by `hortusd`. Shipped transforms are copied into it at first start (one commit `ship: <names>`), so a Worker reads every transform under `<dof>/transforms/<name>/`. The `transforms` table binds `(name, hash)`; `transforms.load()` takes the enabled rows from the worktree and ignores files whose content hash differs from the row (a tampered worktree disables the transform and logs).
+`dofs.transforms` is implicit like `logs`: a repo at `dof/transforms.git` + worktree, no connector, written only by `hortusd`. Shipped transforms are copied into it at first start and again when a release changes them (one commit `ship: <names>`), so a Worker reads every transform under `<dof>/transforms/<name>/`. The `transforms` table binds `(name, hash)`; `transforms.load()` takes the enabled rows from the worktree and ignores files whose content hash differs from the row (a tampered worktree disables the transform and logs).
 
 ### Submission (`src/vault/submit.ts`)
 

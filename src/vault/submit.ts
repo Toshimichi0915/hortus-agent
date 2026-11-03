@@ -209,6 +209,13 @@ export function submit(s: Submission, caller: Caller): SubmitResult {
     | { hash: string }
     | undefined;
   if (row?.hash === hash) return { approval: null };
+  // the owner is approving this content right now: the same entry, not a second one left pending once it lands
+  const busy = db
+    .prepare(
+      "SELECT id FROM approvals WHERE kind = 'request' AND category = 'transforms' AND hash = ? AND status = 'installing'",
+    )
+    .get(hash) as { id: number } | undefined;
+  if (busy) return { approval: busy.id, url: gate.approvalUrl(busy.id) };
   // an earlier approved version is not the enabled one: going back to it is a fresh entry, not a pass
   db.prepare(
     "UPDATE approvals SET status = 'used' WHERE kind = 'request' AND category = 'transforms' AND hash = ? AND status = 'approved'",
@@ -230,9 +237,12 @@ export function submit(s: Submission, caller: Caller): SubmitResult {
   };
   const g = gate.check({ caller, category: "transforms", hash, summary, consequential: false });
   if (g === "pass") return { approval: null };
-  // the latest files of this hash ride on the entry (a resubmission with only new tests refreshes them)
+  // the latest files of this hash ride on the entry (a resubmission with only new tests refreshes them); `fresh` from
+  // an interrupted approval stays
+  const prev = db.prepare("SELECT payload FROM approvals WHERE id = ?").get(g.pending) as { payload: string | null };
+  const fresh = (JSON.parse(prev.payload ?? "{}") as { fresh?: string[] }).fresh;
   db.prepare("UPDATE approvals SET payload = ? WHERE id = ? AND status = 'pending'").run(
-    JSON.stringify({ consequential: false, name: s.name, hash, files: s.files }),
+    JSON.stringify({ consequential: false, name: s.name, hash, files: s.files, ...(fresh ? { fresh } : {}) }),
     g.pending,
   );
   return { approval: g.pending, url: gate.approvalUrl(g.pending) };
@@ -275,11 +285,13 @@ export async function approveTransform(
   const db = ctx().db;
   const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as gate.ApprovalRow | undefined;
   if (row?.category !== "transforms" || row.status !== "pending" || !row.payload) return false;
-  const { name, hash, files } = JSON.parse(row.payload) as {
+  const payload = JSON.parse(row.payload) as {
     name: string;
     hash: string;
     files: Record<string, string>;
+    fresh?: string[];
   };
+  const { name, hash, files } = payload;
   const manifest = JSON.parse(files["manifest.json"] ?? "{}") as Manifest;
   const vault = read();
   const added: Record<string, VaultEntry> = {};
@@ -292,36 +304,40 @@ export async function approveTransform(
     if (!r.success) invalid(`credential ${cred} (${c.type}): ${z.prettifyError(r.error)}`);
     added[cred] = { type: c.type, ...r.data, transform: name } as VaultEntry;
   }
+  // only the names this transform introduces: one that already existed (`stripe`, say) or that another transform
+  // declares (`github`, not yet configured) keeps its own grant flow. Fixed at the first claim and kept on the row: a
+  // crash after the vault write would otherwise see them as existing on the re-approval and grant nothing
+  const others = [...transforms.all().values()].filter((t) => t.manifest.name !== name);
+  const fresh =
+    payload.fresh ??
+    Object.keys(manifest.credentials).filter(
+      (c) => !Object.hasOwn(vault, c) && !others.some((t) => Object.hasOwn(t.manifest.credentials, c)),
+    );
   // claimed while installing: `installing` is neither pending (decide, expire) nor decided
   // a crash mid-install leaves the row `installing`; the vault's start puts it back to pending
-  if (
-    db.prepare("UPDATE approvals SET status = 'installing' WHERE id = ? AND status = 'pending'").run(id).changes !== 1
-  )
-    invalid("already decided");
+  const claim = db.prepare(
+    "UPDATE approvals SET status = 'installing', payload = ? WHERE id = ? AND status = 'pending'",
+  );
+  if (claim.run(JSON.stringify({ ...payload, fresh }), id).changes !== 1) invalid("already decided");
   try {
     await dof.install(name, files, hash);
     if (Object.keys(added).length) write({ ...read(), ...added });
   } finally {
     db.prepare("UPDATE approvals SET status = 'pending' WHERE id = ?").run(id);
   }
-  gate.decide(id, "approve", "owner", { reason });
-  if (!row.task_id) return true;
-  // only the names this transform introduces: one that already existed (`stripe`, say) or that another transform
-  // declares (`github`, not yet configured) keeps its own grant flow
-  const others = [...transforms.all().values()].filter((t) => t.manifest.name !== name);
-  const fresh = Object.keys(manifest.credentials).filter(
-    (c) => !Object.hasOwn(vault, c) && !others.some((t) => Object.hasOwn(t.manifest.credentials, c)),
-  );
+  // the decision and the task's grants commit together: a crash between them never leaves one without the other
   const now = new Date().toISOString();
-  const t = db.prepare("SELECT scope FROM tasks WHERE id = ?").get(row.task_id) as { scope: string | null } | undefined;
   db.exec("BEGIN");
   try {
+    const t = row.task_id
+      ? (db.prepare("SELECT scope FROM tasks WHERE id = ?").get(row.task_id) as { scope: string | null } | undefined)
+      : undefined;
     if (t) {
       const scope = (t.scope ? JSON.parse(t.scope) : {}) as { credentials?: string[] };
       scope.credentials = [...new Set([...(scope.credentials ?? []), ...fresh])];
       db.prepare("UPDATE tasks SET scope = ? WHERE id = ?").run(JSON.stringify(scope), row.task_id);
     }
-    for (const cred of fresh) {
+    for (const cred of row.task_id ? fresh : []) {
       const has = db
         .prepare("SELECT 1 FROM approvals WHERE kind = 'grant' AND hash = ? AND task_id = ? AND status = 'approved'")
         .get(`grant:${cred}`, row.task_id);
@@ -338,6 +354,7 @@ export async function approveTransform(
         JSON.stringify({ approval: id }),
       );
     }
+    gate.decide(id, "approve", "owner", { reason });
     db.exec("COMMIT");
   } catch (e) {
     db.exec("ROLLBACK");

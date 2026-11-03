@@ -665,7 +665,10 @@ for (const h of H) {
       });
       assert.ok(isApproval(a), a.body);
       const aid = JSON.parse(a.body).approval as number;
-      assert.ok(pending(true).some((p) => p.id === aid), "consequential");
+      assert.ok(
+        pending(true).some((p) => p.id === aid),
+        "consequential",
+      );
       gate.decide(aid, "reject", "owner");
     }
   });
@@ -732,6 +735,13 @@ test("gitlab host: gitlab.example.com expands hosts and scope patterns; the conn
     assert.ok(m.scope?.includes("gitlab.com/api/v4/projects/{project}/**"));
     assert.ok(m.consequential?.includes("POST gitlab.example.com/api/v4/projects"));
     assert.ok(m.consequential?.includes("DELETE gitlab.example.com/api/v4/**"));
+    // protected branches change by PATCH; invitations and remote mirrors hand the project to someone else
+    for (const c of [
+      "PATCH {h}/api/v4/projects/*/**",
+      "POST {h}/api/v4/projects/*/invitations**",
+      "POST {h}/api/v4/projects/*/remote_mirrors**",
+    ])
+      assert.ok(m.consequential?.includes(c.replace("{h}", "gitlab.example.com")), c);
     const gle = ctx.config.dofs.gle ?? { type: "gitlab" };
     const conn = (await connectors.gitlab?.({
       name: "gle",

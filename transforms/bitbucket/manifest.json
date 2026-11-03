@@ -31,6 +31,14 @@
     "POST api.bitbucket.org/2.0/repositories/*/*/branch-restrictions**",
     "PUT api.bitbucket.org/2.0/repositories/*/*/branch-restrictions**",
     "POST api.bitbucket.org/2.0/repositories/*/*/pipelines_config**",
-    "PUT api.bitbucket.org/2.0/repositories/*/*/pipelines_config**"
+    "PUT api.bitbucket.org/2.0/repositories/*/*/pipelines_config**",
+    "POST api.bitbucket.org/2.0/repositories/*/*/forks**",
+    "PUT api.bitbucket.org/2.0/repositories/*/*/forks**",
+    "POST api.bitbucket.org/2.0/repositories/*/*/default-reviewers**",
+    "PUT api.bitbucket.org/2.0/repositories/*/*/default-reviewers**",
+    "POST api.bitbucket.org/2.0/repositories/*/*/branching-model/settings**",
+    "PUT api.bitbucket.org/2.0/repositories/*/*/branching-model/settings**",
+    "POST api.bitbucket.org/2.0/repositories/*/*/override-settings**",
+    "PUT api.bitbucket.org/2.0/repositories/*/*/override-settings**"
   ]
 }
