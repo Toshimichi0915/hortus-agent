@@ -56,6 +56,8 @@ export interface Gateway {
   reconcile(dof?: string, scope?: string): Promise<void>;
   list(): SourceStatus[];
   resync(dof: string, scope?: string): Promise<void>;
+  /** owner.notify: a DM to `dofs.<dof>.owner` through the running connector */
+  dm(dof: string, text: string): Promise<void>;
 }
 
 interface Runner {
@@ -72,8 +74,10 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createGateway(deps: GatewayDeps): Gateway {
   const { db, log } = deps;
   const runners = new Map<string, Runner>();
-  const insert = db.prepare(`INSERT INTO events(dof, key, ts, author, member, trusted, bot, payload, created)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dof, key) DO NOTHING`);
+  // a bot's event is consumed (-1) at insert: the Planner never sees it (loop guard, 15-planner.md)
+  const insert = db.prepare(`INSERT INTO events(dof, key, ts, author, member, trusted, bot, payload, created, summary,
+    refs, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dof, key) DO NOTHING`);
+  const quiet = db.prepare("UPDATE events SET consumed = -1 WHERE dof = ? AND key = ? AND consumed = 0");
   const getCursor = db.prepare("SELECT cursor FROM syncs WHERE dof = ? AND scope = ?");
   const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync) VALUES (?, ?, ?, ?)
     ON CONFLICT(dof, scope) DO UPDATE SET cursor = excluded.cursor, last_sync = excluded.last_sync`);
@@ -97,6 +101,9 @@ export function createGateway(deps: GatewayDeps): Gateway {
                 Number(event.bot),
                 JSON.stringify(event.payload ?? null),
                 now(),
+                event.summary,
+                JSON.stringify(event.refs),
+                event.bot ? -1 : 0,
               ).changes > 0;
           } catch (e) {
             log.error(`${name}: event insert failed, not acked`, e, { key: event.key });
@@ -113,6 +120,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
             if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${event.summary}`);
             log.info(`sync(${name}): ${event.summary} +${m.changes.length}`);
             if (m.wake && !event.bot) deps.wake();
+            else quiet.run(name, event.key); // reactions, deletes, joins: mirrored, not Planner input
           } catch (e) {
             log.error(`${name}: mirror failed`, e, { key: event.key });
           }
@@ -241,6 +249,12 @@ export function createGateway(deps: GatewayDeps): Gateway {
       else db.prepare("DELETE FROM syncs WHERE dof = ?").run(dof);
       await reconcile(dof, scope);
     },
+    async dm(dof, text) {
+      const conn = runners.get(dof)?.conn;
+      const owner = deps.config().dofs[dof]?.owner;
+      if (!conn?.dm || !owner) throw new Error(`${dof}: no running messenger with an owner`);
+      await conn.dm(owner, text);
+    },
   };
   return gw;
 }
@@ -258,6 +272,12 @@ define("source.resync", {
     return { ok: true };
   },
 });
+
+/** owner.notify (15-planner.md): the DM is the bot's own message, mirrored and never waking the Planner. */
+export function ownerDm(dof: string, text: string): Promise<void> {
+  if (!current) return Promise.reject(new Error("the gateway is not running"));
+  return current.dm(dof, text);
+}
 
 /**
  * What the integration step injects before hortusd starts the module: the mirror writer, the Planner, task_refs, and

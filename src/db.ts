@@ -46,6 +46,9 @@ const migrations: string[] = [
   `,
   // step 3: the card's error line (a Worker that exited non-zero without an outbox message)
   "ALTER TABLE tasks ADD COLUMN error TEXT;",
+  // step 4: the Planner's batch line (Event.summary, Event.refs as JSON) and which result rows a batch has read
+  `ALTER TABLE events ADD COLUMN summary TEXT; ALTER TABLE events ADD COLUMN refs TEXT;
+  ALTER TABLE outbox ADD COLUMN consumed INTEGER DEFAULT 0;`,
 ];
 
 export function openDb(path: string): DatabaseSync {

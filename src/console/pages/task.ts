@@ -27,6 +27,11 @@ export const task: Page = (ctx, { m }) => {
       .all(id) as unknown as MsgRow[]
   ).reverse();
   const replies = lastReplies(ctx, id, -1, 200);
+  // a Planner-created task: the event it came from (15-planner.md › UI/UX)
+  const origin = ctx.db
+    .prepare("SELECT dof, author, refs, summary FROM events WHERE task_id = ? ORDER BY id LIMIT 1")
+    .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
+  const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
   const open = isOpen(t.status);
   return layout(
     ctx,
@@ -38,6 +43,7 @@ ${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${details(
 <table class="kv">
 <tr><th>Status</th><td>${t.status ?? ""}${t.outcome ? ` (${t.outcome})` : ""}</td></tr>
 <tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Project</th><td>${t.project ?? "—"}</td></tr>
+${origin ? h`<tr><th>Origin</th><td>${origin.dof} · channel ${channel} · author ${origin.author ?? "—"}<br><span class="pre">${origin.summary ?? ""}</span></td></tr>` : ""}
 <tr><th>Budget</th><td>${budget(t)}</td></tr><tr><th>Created</th><td>${time(t.created)}</td></tr>
 <tr><th>Updated</th><td>${time(t.updated)}</td></tr>${t.closed ? h`<tr><th>Closed</th><td>${time(t.closed)}</td></tr>` : ""}
 </table>
