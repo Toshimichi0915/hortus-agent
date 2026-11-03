@@ -9,6 +9,7 @@ import { bus } from "./events.ts";
 import { parse } from "./html.ts";
 import { lastReplies } from "./pages/chat.ts";
 import { CLOSED_SQL, OPEN_SQL, type TaskRow } from "./pages/tasks.ts";
+import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
 import { type Console, startServer } from "./server.ts";
 
 export { bus } from "./events.ts";
@@ -107,11 +108,16 @@ export const consoleModule: Module & { port(): number } = {
     current = c;
     server = await startServer(c, Number(process.env.HORTUS_CONSOLE_PORT ?? 7700));
     c.log("console").info("listening", { port: server.port });
+    if (c.config.console?.listen) await startRemote(c);
   },
   async stop() {
+    await stopRemote();
     await server?.close();
     server = undefined;
     current = undefined;
   },
   port: () => server?.port ?? 0,
 };
+
+/** The console's base URL for links sent elsewhere (owner.notify): the remote listener's when it runs. */
+export const consoleUrl = (): string => remoteUrl() ?? `http://127.0.0.1:${server?.port ?? 7700}`;

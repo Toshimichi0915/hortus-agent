@@ -22,6 +22,8 @@ export const names = { table: "hortus", iface: "hortus0", tap: "hortus-t" };
 export const PROXY = "10.77.0.1";
 export const SESSIONS = "10.77.1.0/24";
 const CONSOLE_PORT = 7700;
+/** The remote console listener's port while it runs (console/remote.ts): dropped on every address for sessions. */
+export const remoteConsole = { port: 0 };
 
 const log = logger("net");
 
@@ -160,6 +162,7 @@ export async function sessionRules(
     `add rule ${T()} nat ${m} meta nfproto ipv4 udp dport 53 dnat ip to ${address}:53 ${c}\n` +
       s(`ip daddr ${address} tcp dport { 80, 443 } accept`) +
       s(`ip daddr ${address} udp dport 53 accept`) +
+      (remoteConsole.port ? s(`tcp dport ${remoteConsole.port} drop`) : "") +
       s(`ip daddr 127.0.0.1 tcp dport ${CONSOLE_PORT} drop`) +
       s("ip daddr 127.0.0.0/8 accept") +
       s(`ip6 daddr ::1 tcp dport ${CONSOLE_PORT} drop`) +
