@@ -13,6 +13,7 @@ export interface ApprovalRow {
   decided_at: string | null;
   decided_by: string | null;
   reason: string | null;
+  payload?: string | null;
 }
 
 type Summary = Record<string, unknown>;
@@ -30,20 +31,48 @@ ${body ? (body.length > 300 ? details(`body (${body.length} chars)`, body) : h`<
 }
 
 /** One case per kind; merge (3b), transforms (3f) and login (3h) fall back to the JSON until their steps add a view. */
-export function summaryView(kind: string | null, category: string | null, summary: Summary | undefined): Raw {
+export function summaryView(
+  kind: string | null,
+  category: string | null,
+  summary: Summary | undefined,
+  taskId?: string | null,
+): Raw {
   const s = summary ?? {};
   if (category === "transforms") return transformView(s as TransformSummary);
   switch (kind) {
     case "request":
       return requestView(s);
     case "grant":
-      return h`<p>grant <b>${str(s.grant ?? category?.replace(/^credential:/, ""))}</b> to this task${
-        s.host ? h` for ${str(s.host)}` : ""
-      }</p>${s.method ? requestView(s) : details("details", s)}`;
+      return h`<p class="grant">${
+        taskId
+          ? h`allow <b>${grantName(category, s)}</b> for this task only (outside its scope.credentials)`
+          : h`enable <b>${grantName(category, s)}</b> for every task (durable)${s.task ? h`, first used by task ${str(s.task)}` : ""}`
+      }; the request:</p>${s.method ? requestView(s) : details("details", s)}`;
     default:
       if (s.method || s.host) return requestView(s);
       return details(`${kind ?? "entry"} details`, s);
   }
+}
+
+const grantName = (category: string | null, s: Summary): string =>
+  str(s.grant ?? category?.replace(/^credential:/, ""));
+
+/** The entry's headline: a grant reads as what it enables, anything else as its category. */
+function label(a: ApprovalRow): string {
+  if (a.kind !== "grant") return a.category ?? a.kind ?? "";
+  const name = grantName(a.category, parse<Summary>(a.summary) ?? {});
+  return a.task_id ? `allow ${name} for task ${a.task_id}` : `enable ${name}`;
+}
+
+/** A judge allow: one line, so they do not bury the owner's decisions. The reason is verbatim, capped at 200 chars. */
+function judgeLine(a: ApprovalRow): Raw {
+  const s = parse<Summary>(a.summary) ?? {};
+  const reason = a.reason ?? "";
+  return h`<p class="judged" id="a${a.id}"><a href="/approvals/${a.id}">#${a.id}</a> ${a.category ?? ""}${
+    a.task_id ? h` · <a href="/tasks/${a.task_id}">${a.task_id}</a>` : ""
+  } · <b>${str(s.method)}</b> ${str(s.host)}${str(s.path)} · ${time(a.decided_at)} — allowed by judge: ${
+    reason.length > 200 ? `${reason.slice(0, 199)}…` : reason
+  } <a href="/settings">judge notes</a></p>`;
 }
 
 function decidedLine(a: ApprovalRow): Raw {
@@ -62,11 +91,13 @@ function decidedLine(a: ApprovalRow): Raw {
 }
 
 export function approvalEntry(a: ApprovalRow): Raw {
-  return h`<article class="approval ${a.status ?? ""}" id="a${a.id}">
-<header><a href="/approvals/${a.id}">#${a.id}</a> <b>${a.category ?? a.kind ?? ""}</b>${
+  const escalated = a.status === "pending" ? parse<{ judge?: string }>(a.payload)?.judge : undefined;
+  return h`<article class="approval ${a.status ?? ""} kind-${a.kind ?? ""}" id="a${a.id}">
+<header><a href="/approvals/${a.id}">#${a.id}</a> <b>${label(a)}</b>${
     a.task_id ? h` · task <a href="/tasks/${a.task_id}">${a.task_id}</a>` : ""
   } · ${time(a.requested_at)}</header>
-${summaryView(a.kind, a.category, parse<Summary>(a.summary))}
+${escalated ? h`<p class="hint">escalated by judge: ${escalated.slice(0, 200)}</p>` : ""}
+${summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id)}
 ${
   a.status === "pending" && a.category === "transforms"
     ? transformForm(a.id, parse<TransformSummary>(a.summary) ?? {})
@@ -86,7 +117,7 @@ export const pendingFor = (ctx: Ctx, task: string): ApprovalRow[] =>
     .prepare("SELECT * FROM approvals WHERE status = 'pending' AND task_id = ? ORDER BY id DESC")
     .all(task) as unknown as ApprovalRow[];
 
-export const approvals: Page = (ctx, { m }) => {
+export const approvals: Page = (ctx, { m, q }) => {
   const id = m[1];
   if (id !== undefined) {
     const a = ctx.db.prepare("SELECT * FROM approvals WHERE id = ?").get(Number(id)) as ApprovalRow | undefined;
@@ -100,9 +131,10 @@ export const approvals: Page = (ctx, { m }) => {
   const pending = ctx.db
     .prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY id DESC")
     .all() as unknown as ApprovalRow[];
+  const hideJudge = q.get("judge") === "hide";
   const decided = ctx.db
     .prepare(
-      "SELECT * FROM approvals WHERE status <> 'pending' ORDER BY coalesce(decided_at, requested_at) DESC LIMIT 50",
+      `SELECT * FROM approvals WHERE status <> 'pending'${hideJudge ? " AND decided_by IS NOT 'judge'" : ""} ORDER BY coalesce(decided_at, requested_at) DESC LIMIT 50`,
     )
     .all() as unknown as ApprovalRow[];
   return layout(
@@ -110,6 +142,14 @@ export const approvals: Page = (ctx, { m }) => {
     "approvals",
     "Approvals",
     h`<div data-refresh id="list"><h2>Pending</h2>${pending.length ? pending.map(approvalEntry) : h`<p class="empty">nothing pending</p>`}
-<h2>Decided</h2>${decided.length ? decided.map(approvalEntry) : h`<p class="empty">none yet</p>`}</div>`,
+<h2>Decided</h2><p class="hint">${
+      hideJudge
+        ? h`<a href="/approvals">show judge allows</a>`
+        : h`<a href="/approvals?judge=hide">hide judge allows</a>`
+    }</p>${
+      decided.length
+        ? decided.map((a) => (a.decided_by === "judge" ? judgeLine(a) : approvalEntry(a)))
+        : h`<p class="empty">none yet</p>`
+    }</div>`,
   );
 };

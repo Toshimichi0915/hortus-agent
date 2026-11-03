@@ -87,8 +87,10 @@ export const Config = z.looseObject({
     })
     .optional(),
   projects: z.record(z.string(), ProjectConfig).default({}),
-  /** category → mode, plus the Landlock extensions `deny` and `cache` (path lists, v7 › Security) */
+  /** category (`credential:<name>`, `*`, …) → `human` | `auto`, plus the Landlock extensions `deny` and `cache` (path
+   * lists, v7 › Security). Read per request: a Settings edit applies to the next one. */
   policy: z.object({ deny: Strings.optional(), cache: Strings.optional() }).catchall(Mode).default({ "*": "human" }),
+  /** category or `*` → owner text the `auto` judge reads after its fixed prompt (never in place of it) */
   judge_notes: z.record(z.string(), z.string()).optional(),
   /** test-only: host → where the proxy really connects; consumers refuse it unless HORTUS_HOME is set */
   dev: z.looseObject({ upstreams: z.record(z.string(), z.string()).default({}) }).optional(),

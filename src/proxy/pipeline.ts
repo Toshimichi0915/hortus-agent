@@ -427,10 +427,15 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   }
 
   // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
-  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault)
+  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault); core's
+  // model is the Planner's (the gate's judge, whose prompt quotes the request's handles)
   const cfg = ctx().config;
   const llm =
-    client.role === "planner" ? cfg.planner.provider : client.role === "worker" ? cfg.worker.provider : undefined;
+    client.role === "planner" || client.role === "core"
+      ? cfg.planner.provider
+      : client.role === "worker"
+        ? cfg.worker.provider
+        : undefined;
   const llmCall = llm !== undefined && tf !== undefined && readVault()[llm]?.transform === tf.name;
 
   // 7. placeholders the transform did not map
@@ -522,7 +527,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   if (found.length && category && !found.every((f) => f.h.name === llm)) {
     const hash = hashTemplate(template);
     if (client.role !== "core") {
-      const g = gate.check({
+      const g = await gate.request({
         caller: client,
         category,
         hash,
