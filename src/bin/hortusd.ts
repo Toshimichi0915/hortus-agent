@@ -11,6 +11,7 @@ import * as paths from "../paths.ts";
 import { browserModule } from "../browser/login-view.ts";
 import { consoleModule, consoleUrl } from "../console/index.ts";
 import { gatewayModule, ownerDm, wireGateway } from "../gateway/gateway.ts";
+import { webhooksModule } from "../gateway/webhooks.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
 import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
@@ -32,6 +33,7 @@ const modules: Module[] = [
   runtimeModule,
   proxyModule,
   gatewayModule,
+  webhooksModule,
   dispatcherModule,
   schedulesModule,
   plannerModule,

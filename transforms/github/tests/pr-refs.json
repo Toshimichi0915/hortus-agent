@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.github.com/repos/o/r/pulls",
+    "headers": { "authorization": "Bearer hortus-secret-github" },
+    "body": "{\"title\":\"Fix\",\"head\":\"hortus/t1\",\"base\":\"main\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 201,
+    "headers": { "content-type": "application/json" },
+    "body": "{\"number\":7,\"html_url\":\"https://github.com/o/r/pull/7\"}"
+  },
+  "expected": {
+    "res": {
+      "status": 201,
+      "headers": { "content-type": "application/json" },
+      "body": "{\"number\":7,\"html_url\":\"https://github.com/o/r/pull/7\"}"
+    },
+    "refs": ["github:o/r:!7"]
+  }
+}

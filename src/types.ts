@@ -138,10 +138,12 @@ export interface Forge extends Connector {
   clone(project: string): string;
   /** the project whose repo mirror to fetch */
   pushed(e: Event): string | null;
-  /** verify and parse one webhook delivery */
+  /** verify and parse one webhook delivery (`ok` without `event`: verified, nothing to route, e.g. `ping`) */
   webhook(req: { headers: Record<string, string>; body: Buffer }): Promise<{ ok: boolean; event?: Event }>;
-  /** the delivery log, for the hourly redelivery check */
-  redeliveries?(since: string): AsyncIterable<{ key: string; event: Event }>;
+  /** hand an event to `events()` (the webhook listener's queue); resolves once the gateway inserted or deduped it */
+  enqueue(e: Event): Promise<void>;
+  /** the delivery log since `since`, skipping keys `seen` knows (in `events`), for the hourly redelivery check */
+  redeliveries?(since: string, seen: (key: string) => boolean): AsyncIterable<{ key: string; event: Event }>;
 }
 
 /** What a connector gets from hortusd. `fetch` is placeholder-aware: step 1 swaps from vault.json, step 2 is the pipeline. */
@@ -294,6 +296,8 @@ export interface Manifest {
   consequential?: string[];
   /** 3h: what a site transform captures from responses */
   captures?: unknown[];
+  /** forges: defaults for `{host}`/`{api}` in hosts and patterns (`host_api`: the api of a configured `host`), v7 */
+  vars?: { host: string; api: string; host_api?: string };
 }
 
 export interface Req {

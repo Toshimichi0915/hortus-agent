@@ -75,7 +75,7 @@ writeFileSync(
   join(fixtures, "ghfake", "manifest.json"),
   JSON.stringify({
     name: "ghfake",
-    credentials: { ghfake: { type: "token", hosts: ["api.github.com"], locations: ["header:Authorization"] } },
+    credentials: { ghfake: { type: "token", hosts: ["api.gh.test"], locations: ["header:Authorization"] } },
   }),
 );
 writeFileSync(
@@ -106,7 +106,7 @@ before(async () => {
     dev: {
       upstreams: {
         "slack.com": up,
-        "api.github.com": up,
+        "api.gh.test": up,
         "api.openai.com": `http://127.0.0.1:${(llm.address() as AddressInfo).port}`,
       },
     },
@@ -316,7 +316,7 @@ test("judge failures escalate: timeout, 500, non-JSON, bad verdict → a normal 
 test("task scope: a credential outside scope asks a task grant; it does not cover another task", async () => {
   // T2 lacks github: a task-scoped grant, whatever the policy
   const id = pendingId(
-    await send({ host: "api.github.com", path: "/repos/o/r/issues", cred: "github", from: "127.0.0.4" }),
+    await send({ host: "api.gh.test", path: "/repos/o/r/issues", cred: "github", from: "127.0.0.4" }),
   );
   assert.deepEqual([row(id).kind, row(id).task_id, row(id).category], ["grant", "T2", "credential:github"]);
   await approve(id);
@@ -328,18 +328,18 @@ test("task scope: a credential outside scope asks a task grant; it does not cove
   // the task grant is also the auto grant for T2: judged, no more clicks
   const before = llmSeen.length;
   assert.equal(
-    (await send({ host: "api.github.com", path: "/repos/o/r/issues", cred: "github", from: "127.0.0.4" })).status,
+    (await send({ host: "api.gh.test", path: "/repos/o/r/issues", cred: "github", from: "127.0.0.4" })).status,
     200,
   );
   assert.equal(llmSeen.length, before + 1);
   // T4 (also lacking github) still asks its own task grant
   const other = pendingId(
-    await send({ host: "api.github.com", path: "/repos/o/r", cred: "github", from: "127.0.0.7" }),
+    await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.7" }),
   );
   assert.deepEqual([row(other).kind, row(other).task_id], ["grant", "T4"]);
   // T3 has github in scope but no durable grant exists: T2's task grant does not cover it
   const durable = pendingId(
-    await send({ host: "api.github.com", path: "/repos/o/r", cred: "github", from: "127.0.0.5" }),
+    await send({ host: "api.gh.test", path: "/repos/o/r", cred: "github", from: "127.0.0.5" }),
   );
   assert.deepEqual([row(durable).kind, row(durable).task_id], ["grant", null]);
   await approve(durable);
@@ -361,7 +361,7 @@ test("judge_notes come after the fixed prompt and before the summary; prompt_has
   setConfig({
     judge_notes: { "credential:github": "anything touching main is dangerous", "*": "a DELETE is dangerous" },
   });
-  const r = await send({ host: "api.github.com", path: "/repos/o/r/git/refs/heads/main", cred: "github" });
+  const r = await send({ host: "api.gh.test", path: "/repos/o/r/git/refs/heads/main", cred: "github" });
   assert.equal(r.status, 200, r.body);
   const sent = llmSeen.at(-1)?.body.messages ?? [];
   const system = sent[0]?.content ?? "";
@@ -379,7 +379,7 @@ test("judge_notes come after the fixed prompt and before the summary; prompt_has
   assert.equal(a.prompt_hash, sha(`${system}\n\n${user}`));
 
   setConfig({ judge_notes: { "credential:github": "pushes to hortus/** are routine" } });
-  await send({ host: "api.github.com", path: "/repos/o/r/git/refs/heads/main", cred: "github" });
+  await send({ host: "api.gh.test", path: "/repos/o/r/git/refs/heads/main", cred: "github" });
   const b = lastRow();
   assert.notEqual(b.prompt_hash, a.prompt_hash, "new notes, new hash");
   setConfig({});
@@ -417,7 +417,7 @@ test("chat tasks: every configured name in scope; a credential added later only 
   const b = (await call("task.open", { text: "hi again" }, owner)) as { id: string };
   assert.deepEqual(scopeOf(b.id), ["gh2", "github", "llm", "slack"]);
   links.register("127.0.0.9", "worker", a.id, "session");
-  const id = pendingId(await send({ host: "api.github.com", path: "/user", cred: "gh2", from: "127.0.0.9" }));
+  const id = pendingId(await send({ host: "api.gh.test", path: "/user", cred: "gh2", from: "127.0.0.9" }));
   assert.deepEqual([row(id).kind, row(id).task_id], ["grant", a.id]);
 });
 

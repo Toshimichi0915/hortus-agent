@@ -1,0 +1,19 @@
+{
+  "name": "github",
+  "vars": { "host": "github.com", "api": "api.github.com", "host_api": "{host}/api/v3" },
+  "credentials": {
+    "github": {
+      "type": "github-app",
+      "hosts": ["{api}", "{host}", "uploads.github.com"],
+      "locations": ["header:Authorization", "basic:password"]
+    },
+    "github-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
+  },
+  "scope": ["{api}/repos/{project}", "{api}/repos/{project}/**", "{host}/{project}.git/**", "{host}/{project}/**"],
+  "consequential": [
+    "DELETE {api}/**",
+    "POST {host}/**/git-receive-pack",
+    "POST {api}/user/repos",
+    "POST {api}/orgs/*/repos"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/o/r/issues?state=all",
+    "headers": { "authorization": "Bearer hortus-secret-github", "accept": "application/vnd.github+json" },
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://api.github.com/repos/o/r/issues?state=all",
+    "headers": {
+      "authorization": "Bearer {sign:installation-token({\"name\":\"github\"})}",
+      "accept": "application/vnd.github+json"
+    },
+    "body": null,
+    "stream": false
+  }
+}

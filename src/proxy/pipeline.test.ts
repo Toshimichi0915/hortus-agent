@@ -104,7 +104,7 @@ const bearer = `export function request(req) {
 export function response(res) { return { res }; }`;
 fixture(
   "ghfake",
-  ["api.github.com"],
+  ["api.gh.test"],
   `${bearer}\nexport function render(t) { return "render: " + t.method + " " + t.url; }`,
 );
 fixture(
@@ -125,7 +125,7 @@ const HOSTS = [
   "slack.com",
   "registry.npmjs.org",
   "example.com",
-  "api.github.com",
+  "api.gh.test",
   "sse.test",
   "git.test",
   "ws.test",
@@ -306,8 +306,8 @@ test("a placeholder outside a declared location → 403 unmapped placeholder", a
   assert.match(e.body, /unmapped placeholder/);
 });
 
-test("destination: a slack handle to api.github.com → 403", async () => {
-  const r = await send({ host: "api.github.com", path: "/user", headers: slackAuth });
+test("destination: a slack handle to api.gh.test → 403", async () => {
+  const r = await send({ host: "api.gh.test", path: "/user", headers: slackAuth });
   assert.equal(r.status, 403);
   assert.match(r.body, /destination/);
 });
@@ -448,14 +448,14 @@ test("transform failures → 502: infinite loop (interrupted fast), 100 MB, non-
 
 test("render() output appears in the approval summary", async () => {
   const r = await send({
-    host: "api.github.com",
+    host: "api.gh.test",
     path: "/user",
     headers: { authorization: "Bearer hortus-secret-gh" },
   });
   assert.equal(r.status, 403);
   const { approval } = JSON.parse(r.body);
   const e = (await call("approval.get", { id: approval }, owner)) as { summary: { rendered?: string } };
-  assert.equal(e.summary.rendered, "render: GET https://api.github.com/user");
+  assert.equal(e.summary.rendered, "render: GET https://api.gh.test/user");
 });
 
 test("refs from slack's response() on chat.postMessage land in task_refs for the task", async () => {
@@ -567,7 +567,7 @@ test("the session's own model credential: no gate, placeholders in its body (the
       messages: [{ role: "user", content: "curl -H 'Bearer hortus-secret-slack' → Bearer {secret:slack}" }],
     });
     const r = await send({
-      host: "api.github.com",
+      host: "api.gh.test",
       method: "POST",
       path: "/llm",
       headers: { authorization: "Bearer hortus-secret-gh" },

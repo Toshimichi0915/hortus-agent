@@ -60,6 +60,8 @@ export interface Gateway {
   resync(dof: string, scope?: string): Promise<void>;
   /** owner.notify: a DM to `dofs.<dof>.owner` through the running connector */
   dm(dof: string, text: string): Promise<void>;
+  /** the running connector of `dof` (the webhook listener hands forges their deliveries) */
+  connector(dof: string): Connector | undefined;
 }
 
 interface Runner {
@@ -264,12 +266,16 @@ export function createGateway(deps: GatewayDeps): Gateway {
       if (!conn?.dm || !owner) throw new Error(`${dof}: no running messenger with an owner`);
       await conn.dm(owner, text);
     },
+    connector: (dof) => runners.get(dof)?.conn,
   };
   return gw;
 }
 
 /** The running gateway the RPCs answer from. */
 let current: Gateway | undefined;
+
+/** The running gateway's connector for `dof` (webhooks.ts). */
+export const connectorOf = (dof: string): Connector | undefined => current?.connector(dof);
 
 define("source.list", { roles: ["owner"], input: z.unknown(), run: () => current?.list() ?? [] });
 define("source.resync", {

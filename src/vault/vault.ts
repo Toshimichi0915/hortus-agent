@@ -92,7 +92,8 @@ export function secretValues(): { value: string; placeholder: string }[] {
     else if (e.type === "github-app") out.push({ value: e.privateKey, placeholder: p });
     else if (e.type === "aws") out.push({ value: e.secret, placeholder: p }, { value: e.keyId, placeholder: p });
   }
-  for (const [key, m] of minted) out.push({ value: m.value, placeholder: placeholder(key) });
+  // keys are `<credential>#<cache key>`: a minted token reads back as its credential's placeholder
+  for (const [key, m] of minted) out.push({ value: m.value, placeholder: placeholder(key.split("#")[0] ?? key) });
   if (bound) {
     for (const r of ctx().db.prepare("SELECT name, value FROM captured").all() as { name: string; value: string }[])
       out.push({ value: r.value, placeholder: placeholder(r.name) });

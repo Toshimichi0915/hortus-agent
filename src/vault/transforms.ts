@@ -10,7 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import { newQuickJSWASMModule, type QuickJSWASMModule, shouldInterruptAfterDeadline } from "quickjs-emscripten";
 import { z } from "zod";
 import type { Manifest, Req, Res, ResponseResult, Template } from "../types.ts";
-import { read } from "./vault.ts";
+import { ctx, read } from "./vault.ts";
 
 export interface Loaded {
   manifest: Manifest;
@@ -49,12 +49,52 @@ export async function load(
       const code = readFileSync(js, "utf8");
       const hash = hashOf(text, code);
       if (keep && !keep(name, hash)) continue;
-      const manifest = JSON.parse(text) as Manifest;
+      const manifest = expand(JSON.parse(text) as Manifest);
       next.set(manifest.name, { manifest, code, hash, dir });
     }
   }
   loaded = next;
   return loaded;
+}
+
+/**
+ * Forge manifests: `{host}`/`{api}` in hosts, `scope` and `consequential` become one entry per DOF of the manifest's
+ * type (its `host`, its `api` or `vars.host_api` for that host), else `vars` (v7 › Secret Vault). Hosts keep the host.
+ */
+function expand(m: Manifest): Manifest {
+  const vars = m.vars;
+  if (!vars) return m;
+  let dofs: { host?: string; api?: string }[] = [];
+  try {
+    dofs = Object.values(ctx().config.dofs).filter((d) => d.type === m.name);
+  } catch {} // not bound (tests loading transforms alone): the defaults
+  const sets = (dofs.length ? dofs : [{}]).map((d) => {
+    const host = d.host ?? vars.host;
+    const api = d.api
+      ? d.api.replace(/^https?:\/\//, "").replace(/\/$/, "")
+      : d.host
+        ? (vars.host_api ?? "{host}").replace("{host}", d.host)
+        : vars.api;
+    return { host, api };
+  });
+  const PH = /\{(host|api)\}/g;
+  const each = (list: string[] | undefined, hostOnly = false) =>
+    list && [
+      ...new Set(
+        list.flatMap((s) =>
+          s.match(PH)
+            ? sets.map((v) => {
+                const r = s.replace(PH, (_, k: "host" | "api") => v[k]);
+                return hostOnly ? (r.split("/")[0] ?? r) : r;
+              })
+            : [s],
+        ),
+      ),
+    ];
+  const credentials = Object.fromEntries(
+    Object.entries(m.credentials).map(([k, c]) => [k, { ...c, hosts: each(c.hosts, true) ?? [] }]),
+  );
+  return { ...m, credentials, scope: each(m.scope), consequential: each(m.consequential) };
 }
 
 export const get = (name: string): Loaded | undefined => loaded.get(name);
@@ -154,8 +194,8 @@ function shaped<T>(name: string, fn: string, shape: z.ZodType<T>, v: unknown): T
 /** `code` given: run that instead of the loaded transform (submission tests, 3f). */
 export function request(name: string, req: Req, ctx: { now: number; nonce: string }, code?: string): Template {
   const t = shaped(name, "request", ReqShape, invoke(name, "request", [req, ctx], code ? { code } : undefined));
-  // a streamed body never passes through the transform, so it cannot invent one
-  return req.stream ? { ...t, body: null, stream: true } : t;
+  // a streamed body never passes through the transform, so it cannot invent one (a push's ref commands stay as read)
+  return req.stream ? { ...t, body: req.body, stream: true } : t;
 }
 
 /** `site`: the site manifest's data, handed to the `cookie` layer as a third argument (3h). */
