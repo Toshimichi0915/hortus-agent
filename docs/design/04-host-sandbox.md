@@ -27,7 +27,7 @@ profile(kind: "unattended" | "chat", task: { id: string; clone?: string; schedul
 
 - `deny` = v7's deny set (Security) + `config.policy.deny`, as absolute existing paths; `~/.hortus` is denied as a whole with carve-outs `dof/`, `repos/`, `tasks/<id>/ctl`, `tasks/<id>/out`, `clones/<id>`, `schedules/<id>`.
 - `grant(dir, mode)`: if no denied path lies under `dir` → one directive for `dir`; else one directive per entry of `dir` that is not itself denied, recursing into entries that contain a denied path. Applied to `/`.
-- Modes: `unattended`: everything `ro`; `rw` for the clone, `out`, the schedule dir, `/tmp`, `/dev/{null,zero,full,random,urandom,tty,ptmx,pts,shm}`, `~/.cache`, `~/.npm`, `~/.local/share/pnpm`, `~/.cargo`, `~/.gradle`, `~/.m2`, `~/.pyenv`, `~/.rustup`, `config.policy.cache`; `chat`: everything `rw` except the deny set. A carve-out under a denied directory (`~/.hortus/dof`) is granted explicitly with its mode. Both: `scope signal`, `scope abstract`.
+- Modes: `unattended`: everything `ro`; `rw` for the clone, `out`, the schedule dir, `/tmp`, `/dev/{null,zero,full,random,urandom,tty,ptmx,pts,shm}`, the shared caches `~/.cache`, `~/.npm/_cacache`, `~/.cargo/{registry,git}`, `~/.gradle/caches`, `~/.m2/repository` and `config.policy.cache` (`rn`; tool homes are task-local under `out/work/.cache`: v7 › Security › Host); `chat`: everything `rw` except the deny set. A carve-out under a denied directory (`~/.hortus/dof`) is granted explicitly with its mode. Both: `scope signal`, `scope abstract`.
 - Symlinks: Landlock works on the opened path, so `/bin → usr/bin` style links need no special care; a denied path given as a symlink is resolved with `realpath` first.
 
 ### `src/runtime/cgroup.ts`
