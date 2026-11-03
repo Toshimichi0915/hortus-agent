@@ -207,6 +207,9 @@ function suite(): void {
       const env = caches(out);
       assert.equal(env.CARGO_HOME, join(out, "work/.cache/cargo"));
       assert.ok(existsSync(join(out, "work/.cache/gradle")));
+      assert.equal(env.npm_config_cache, join(out, "work/.cache/npm"));
+      // the tools' plain-file tokens stay out of reach
+      for (const p of [".npmrc", ".config/gh"]) assert.ok(denySet(config).includes(join(homedir(), p)), p);
       const evil = join(root, "cache-evil");
       mkdirSync(evil);
       rmSync(out, { recursive: true });

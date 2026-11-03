@@ -68,6 +68,10 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     LANG: process.env.LANG ?? "C.UTF-8",
     TERM: "dumb",
     HORTUS_TASK: join(ctl, "task.json"),
+    // ~/.config/gh (its hosts.yml holds the owner's token) and ~/.npmrc are denied: gh refuses to run without a
+    // config dir, pnpm warns on every run (yarn 1 reads ~/.npmrc regardless and fails)
+    GH_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "gh"),
+    npm_config_userconfig: join(paths.out(task.id), "work", ".cache", "npmrc"),
   };
   const ca = join(ctl, "ca.crt");
   if (existsSync(ca))
@@ -121,7 +125,7 @@ export function caches(out: string): Record<string, string> {
     }
   };
   const h = homedir();
-  const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"] };
+  const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"], npm: ["_cacache"] };
   if ([join(out, "work"), w].every(real))
     for (const [tool, subs] of Object.entries(links))
       if (real(join(w, tool)))
@@ -133,9 +137,10 @@ export function caches(out: string): Record<string, string> {
   return {
     CARGO_HOME: join(w, "cargo"),
     GRADLE_USER_HOME: join(w, "gradle"),
+    // pnpm's store defaults to $PNPM_HOME/store (npm_config_store_dir made npm warn on every command)
     PNPM_HOME: join(w, "pnpm"),
-    npm_config_store_dir: join(w, "pnpm", "store"),
-    npm_config_logs_dir: join(w, "npm-logs"),
+    // _npx, _logs and the rest task-local (~/.npm is read-only); _cacache is the shared one, linked
+    npm_config_cache: join(w, "npm"),
     npm_config_update_notifier: "false",
   };
 }

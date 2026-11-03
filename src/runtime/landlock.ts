@@ -65,6 +65,11 @@ export function denySet(config: Pick<Config, "policy">): string[] {
     ...[".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud", ".kube", ".docker", ".netrc", ".password-store"].map(
       (p) => join(h, p),
     ),
+    // tools' credentials in plain files (the session's gh and npm get their own config, host.ts › sandboxEnv)
+    ...[".npmrc", ".config/gh", ".git-credentials", ".config/git/credentials", ".pypirc", ".cargo/credentials"].map(
+      (p) => join(h, p),
+    ),
+    ...[".cargo/credentials.toml", ".gradle/gradle.properties"].map((p) => join(h, p)),
     ...[".local/share/keyrings", ".mozilla", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware"].map(
       (p) => join(h, p),
     ),
