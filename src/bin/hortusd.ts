@@ -7,10 +7,14 @@ import type { Ctx, Module } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
+import { consoleModule } from "../console/index.ts";
+import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
+import { commit, mirrorModule } from "../mirror/index.ts";
 import { define, serveSocket } from "../rpc.ts";
 
-/** Later steps append their module here (gateway, proxy, console, dispatcher, scheduler). */
-const modules: Module[] = [];
+/** Start order: the mirror (commit, dof.search) before the gateway that writes it; the console last. Later steps add
+ * the proxy, dispatcher and scheduler. */
+const modules: Module[] = [mirrorModule, gatewayModule, consoleModule];
 
 const log = logger("hortusd");
 
@@ -43,6 +47,11 @@ async function main(): Promise<void> {
       for (const m of started) await m.reload?.(prev);
     },
   };
+
+  wireGateway({
+    commit,
+    hasRef: (ref) => ctx.db.prepare("SELECT 1 FROM task_refs WHERE ref = ?").get(ref) !== undefined,
+  });
 
   const started: Module[] = [];
   let stopping = false;
