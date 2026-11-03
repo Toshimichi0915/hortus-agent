@@ -1,0 +1,300 @@
+/**
+ * Shim, profiles, cgroups, spawnSandboxed (no capabilities). Re-runs itself inside
+ * `systemd-run --user --scope -p Delegate=yes` when available, so the cgroup assertions get a delegated cgroup.
+ */
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { Writable } from "node:stream";
+import { after, before, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { Config } from "../config.ts";
+import * as paths from "../paths.ts";
+import type { TaskJson } from "../types.ts";
+import * as cgroup from "./cgroup.ts";
+import { sandboxEnv, spawnSandboxed } from "./host.ts";
+import { abi, denySet, profile, shim } from "./landlock.ts";
+
+const inScope = process.env.HORTUS_TEST_SCOPE === "1";
+const hasSystemdRun = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
+
+if (!inScope && hasSystemdRun) {
+  test("sandbox tests inside a delegated user scope", () => {
+    const r = spawnSync(
+      "systemd-run",
+      [
+        "--user",
+        "--scope",
+        "-p",
+        "Delegate=yes",
+        "-q",
+        "--",
+        process.execPath,
+        "--test",
+        fileURLToPath(import.meta.url),
+      ],
+      {
+        env: { ...process.env, HORTUS_TEST_SCOPE: "1", NODE_TEST_CONTEXT: undefined },
+        encoding: "utf8",
+        timeout: 60_000,
+      },
+    );
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stdout, /# skipped 0/, r.stdout);
+  });
+} else {
+  suite();
+}
+
+function suite(): void {
+  // Under $HOME, not /tmp: /tmp is an rw tree in the unattended profile and must not contain a denied path here.
+  const root = mkdtempSync(join(homedir(), ".hortus-f4-test-"));
+  const H = join(root, "home");
+  process.env.HORTUS_HOME = H;
+  process.env.HORTUS_NO_NET = "1";
+
+  const secret = join(root, "secret");
+  const config = Config.parse({ policy: { deny: [join(root, "denylink")] } });
+  const files: Record<string, string> = {
+    "vault.json": "{}",
+    "hortusd.json": "{}",
+    "tasks/O/ctl/task.json": "{}",
+    "tasks/T/ctl/task.json": "{}",
+    "tasks/T/out/.keep": "",
+    "dof/slack/C1/channel.md": "# C1\n",
+    "clones/T/README": "x",
+  };
+  before(() => {
+    for (const [p, body] of Object.entries(files)) {
+      mkdirSync(join(H, p, ".."), { recursive: true });
+      writeFileSync(join(H, p), body);
+    }
+    mkdirSync(secret);
+    writeFileSync(join(secret, "f"), "s");
+    symlinkSync(secret, join(root, "denylink"));
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  interface Ran {
+    code: number | null;
+    out: string;
+    err: string;
+  }
+  /** Run `sh -c script` under the shim with `prof` on fd 3. */
+  function shimRun(prof: string, script: string, args: string[] = ["sh", "-c", script]): Promise<Ran> {
+    return new Promise((resolve) => {
+      const c = spawn(shim.path, args, { cwd: "/", stdio: ["ignore", "pipe", "pipe", "pipe"] });
+      let out = "";
+      let err = "";
+      c.stdout?.on("data", (d) => {
+        out += d;
+      });
+      c.stderr?.on("data", (d) => {
+        err += d;
+      });
+      (c.stdio[3] as Writable).on("error", () => {}).end(prof);
+      c.on("close", (code) => resolve({ code, out, err }));
+    });
+  }
+  const shimSh = (prof: string, script: string) => shimRun(prof, script, ["--", "sh", "-c", script]);
+  const task = { id: "T", clone: join(H, "clones/T") };
+  const denied = (r: Ran) => assert.match(r.err, /Permission denied|Operation not permitted/, r.err);
+  const ok = (r: Ran) => assert.equal(r.code, 0, r.err);
+
+  describe("shim", () => {
+    test("reports the ABI", async () => assert.ok((await abi()) >= 1));
+    test("refuses an unknown directive, a missing --, a truncated or oversize profile", async () => {
+      assert.equal((await shimSh("bogus /x\nend\n", "true")).code, 64);
+      assert.equal((await shimRun("end\n", "", ["sh", "-c", "true"])).code, 64);
+      assert.equal((await shimSh("ro /usr\n", "true")).code, 64); // fd 3 closed early: no `end`
+      assert.equal((await shimSh(`${"ro /usr\n".repeat(140_000)}end\n`, "true")).code, 64);
+      assert.equal((await shimSh(`ro /${"a".repeat(5000)}\nend\n`, "true")).code, 64);
+    });
+    test("no ro/rw line: everything denied, exec fails", async () => {
+      const r = await shimSh("end\n", "true");
+      assert.equal(r.code, 67);
+      assert.match(r.err, /exec failed: sh \(Permission denied\)/);
+    });
+  });
+
+  describe("profile", () => {
+    test("no path under a denied directory except carve-outs; every path exists", () => {
+      const deny = denySet(config);
+      const carve = ["dof", "repos", "tasks/T/ctl", "tasks/T/out", "clones/T"].map((p) => join(H, p));
+      for (const kind of ["unattended", "chat"] as const) {
+        const lines = profile(kind, task, config).trim().split("\n");
+        assert.equal(lines.at(-1), "end");
+        for (const l of lines.filter((l) => /^r[ow] /.test(l))) {
+          const p = l.slice(3);
+          const real = realpathSync(p);
+          const inCarve = carve.some((c) => real === c || real.startsWith(`${c}/`));
+          assert.ok(inCarve || !deny.some((d) => real === d || real.startsWith(`${d}/`)), `${kind}: ${l}`);
+        }
+      }
+    });
+    test("carve-out modes; chat has no ro lines except read-only carve-outs", () => {
+      const u = profile("unattended", task, config).split("\n");
+      assert.ok(u.includes(`ro ${join(H, "dof")}`));
+      assert.ok(u.includes(`rw ${join(H, "tasks/T/out")}`));
+      assert.ok(u.includes("scope signal") && u.includes("scope abstract"));
+      const ro = profile("chat", task, config)
+        .split("\n")
+        .filter((l) => l.startsWith("ro "));
+      assert.deepEqual(ro.sort(), [`ro ${join(H, "dof")}`, `ro ${join(H, "tasks/T/ctl")}`]); // no repos/ in this home
+    });
+    test("a policy.deny symlink is denied by its target", () => {
+      assert.ok(denySet(config).includes(secret));
+      assert.ok(!profile("chat", task, config).includes(secret));
+    });
+  });
+
+  describe("unattended domain", () => {
+    const prof = () => profile("unattended", task, config);
+    test("denied: vault.json, hortusd.json, other tasks, ~/x", async () => {
+      denied(await shimSh(prof(), `cat ${H}/vault.json`));
+      denied(await shimSh(prof(), `cat ${H}/hortusd.json`));
+      denied(await shimSh(prof(), `ls ${H}/tasks/O`));
+      denied(await shimSh(prof(), `touch ${homedir()}/.hortus-f4-x`));
+    });
+    test("allowed: dof read, out/clone/tmp write, /dev/null", async () => {
+      ok(await shimSh(prof(), `cat ${H}/dof/slack/C1/channel.md`));
+      ok(await shimSh(prof(), `touch ${H}/tasks/T/out/x ${H}/clones/T/x`));
+      ok(await shimSh(prof(), "f=$(mktemp /tmp/hortus-f4-XXXXXX) && rm $f"));
+      ok(await shimSh(prof(), "echo > /dev/null"));
+      denied(await shimSh(prof(), `touch ${H}/dof/x`));
+    });
+    test("a file created in a denied directory after spawn stays unreachable", async () => {
+      const p = shimSh(prof(), `sleep 0.3; cat ${H}/late.txt`);
+      writeFileSync(join(H, "late.txt"), "x");
+      denied(await p);
+    });
+  });
+
+  describe("chat domain", () => {
+    const prof = () => profile("chat", task, config);
+    test("rw beneath home entries, the deny set still closed", async () => {
+      const cache = join(homedir(), ".cache");
+      ok(await shimSh(prof(), `mkdir -p ${cache} && f=$(mktemp ${cache}/hortus-f4-XXXXXX) && rm $f`));
+      denied(await shimSh(prof(), `cat ${homedir()}/.ssh/id_ed25519 > /dev/null`));
+      denied(await shimSh(prof(), `cat ${homedir()}/.hortus/secrets.json > /dev/null`));
+      denied(await shimSh(prof(), `cat ${H}/vault.json`));
+      denied(await shimSh(prof(), `cat ${secret}/f`));
+    });
+  });
+
+  describe("scoping", () => {
+    test("no signal to the parent, no abstract socket", async () => {
+      const prof = profile("chat", task, config);
+      denied(await shimSh(prof, `kill -0 ${process.pid}`));
+      const name = `\0hortus-f4-test-${process.pid}`;
+      const server = createServer().listen(name);
+      const js = `require("net").connect(${JSON.stringify(name)}).on("error",(e)=>{console.error(e.code);process.exit(1)}).on("connect",()=>process.exit(0))`;
+      const r = await shimRun(prof, "", ["--", process.execPath, "-e", js]);
+      server.close();
+      assert.equal(r.code, 1);
+      assert.match(r.err, /EPERM/);
+    });
+  });
+
+  describe("cgroup", { skip: !inScope && "no delegated cgroup (systemd-run --user)" }, () => {
+    test("the shim joins it; the domain cannot write to /sys/fs/cgroup", async () => {
+      const cg = await cgroup.create("C1");
+      const prof = profile("unattended", { ...task, cgroup: cg }, config);
+      const r = await shimSh(prof, `cat /proc/self/cgroup; echo $$ > ${cgroup.base()}/cgroup.procs`);
+      assert.ok(r.out.includes(`0::/${cgroup.relative(cg)}\n`), r.out);
+      denied(r);
+      await cgroup.kill("C1");
+    });
+    test("cgroup.kill ends a child and its forked grandchild", async () => {
+      const cg = await cgroup.create("C2");
+      const prof = profile("unattended", { ...task, cgroup: cg }, config);
+      const run = shimSh(prof, "sleep 1000 & sleep 1000");
+      for (let i = 0; i < 50 && (await cgroup.pids("C2")).length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+      assert.ok((await cgroup.pids("C2")).length >= 2);
+      await cgroup.kill("C2");
+      assert.equal((await run).code, null);
+      assert.deepEqual(await cgroup.pids("C2"), []);
+    });
+    test("depth and relative path for nftables", () => {
+      assert.equal(cgroup.depth("/sys/fs/cgroup/a/b c/d"), 3);
+      assert.equal(cgroup.relative("/sys/fs/cgroup/a/b c"), "a/b c");
+    });
+    test("spawnSandboxed: stdout lines, stderr to console.log, cleanup; kill()", async () => {
+      const lines: string[] = [];
+      const t = {
+        id: "T",
+        kind: "unattended",
+        scope: { credentials: ["github"], repos: [] },
+        paths: { dof: join(H, "dof"), work: join(H, "tasks/T/out/work"), clone: join(H, "clones/T") },
+      } as unknown as TaskJson;
+      const env = sandboxEnv(t);
+      assert.equal(env.GH_TOKEN, "hortus-secret-github");
+      assert.equal(env.TERM, "dumb");
+      const c = await spawnSandboxed({
+        task: t,
+        kind: "unattended",
+        cmd: ["sh", "-c", "echo one; echo two; echo oops >&2; cat $HORTUS_HOME/vault.json"],
+        cwd: join(H, "clones/T"),
+        env: { HORTUS_HOME: H },
+        config,
+        onStdout: (l) => lines.push(l),
+      });
+      const exit = await c.wait();
+      assert.deepEqual(lines, ["one", "two"]);
+      assert.equal(exit.code, 1);
+      assert.match(readFileSync(join(paths.out("T"), "console.log"), "utf8"), /oops\n.*Permission denied/s);
+      assert.ok(!existsSync(cgroup.path("T")));
+
+      const k = await spawnSandboxed({
+        task: t,
+        kind: "unattended",
+        cmd: ["sleep", "1000"],
+        cwd: "/",
+        config,
+        onStdout() {},
+      });
+      await k.kill();
+      assert.equal((await k.wait()).signal, "SIGKILL");
+      assert.ok(!existsSync(cgroup.path("T")));
+    });
+    test("no Landlock: spawnSandboxed throws with the shim's reason", async () => {
+      const fake = join(root, "fake-shim");
+      writeFileSync(
+        fake,
+        "#!/bin/sh\necho 'hortus-landlock: no Landlock in this kernel (Function not implemented)' >&2\nexit 66\n",
+        {
+          mode: 0o755,
+        },
+      );
+      const real = shim.path;
+      shim.path = fake;
+      try {
+        const t = {
+          id: "N",
+          kind: "unattended",
+          scope: { credentials: [], repos: [] },
+          paths: {},
+        } as unknown as TaskJson;
+        await assert.rejects(
+          spawnSandboxed({ task: t, kind: "unattended", cmd: ["true"], cwd: "/", config, onStdout() {} }),
+          /Landlock unavailable: hortus-landlock: no Landlock/,
+        );
+        assert.ok(!existsSync(cgroup.path("N")));
+      } finally {
+        shim.path = real;
+      }
+    });
+  });
+}
