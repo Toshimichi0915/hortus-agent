@@ -1,0 +1,10 @@
+{
+  "name": "anthropic",
+  "credentials": {
+    "anthropic": {
+      "type": "token",
+      "hosts": ["api.anthropic.com"],
+      "locations": ["header:x-api-key"]
+    }
+  }
+}

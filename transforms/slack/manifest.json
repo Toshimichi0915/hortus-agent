@@ -1,0 +1,8 @@
+{
+  "name": "slack",
+  "credentials": {
+    "slack": { "type": "token", "hosts": ["slack.com", "files.slack.com"], "locations": ["header:Authorization"] },
+    "slack-app": { "type": "token", "hosts": ["slack.com"], "locations": ["header:Authorization"] }
+  },
+  "consequential": ["POST slack.com/api/chat.delete", "POST slack.com/api/files.delete"]
+}
