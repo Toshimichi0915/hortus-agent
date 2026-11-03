@@ -71,6 +71,8 @@ export function sandboxEnv(task: TaskJson): Record<string, string> {
     ["user.email", "hortus@localhost"],
     ["credential.helper", ""],
     ["safe.directory", "*"],
+    // the owner's ~/.gitconfig may sign commits; the sandbox has no gpg agent (3b)
+    ["commit.gpgsign", "false"],
   ];
   env.GIT_CONFIG_COUNT = String(git.length);
   git.forEach(([k, v], i) => {

@@ -259,7 +259,6 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       dof: join(paths.home(), "dof"),
       repos: join(paths.home(), "repos"),
       work: join(out, "work"),
-      // ponytail: the clone is 3b (projects.sync + clone); until then a project task works in out/work
       ...(unattendedProject ? { clone: paths.clone(row.id) } : {}),
     },
     ...(unattendedProject ? { clone_url: `https://hortusd.internal/git/${project}` } : {}),
@@ -272,7 +271,7 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
         }
       : {}),
     rpc: "https://hortusd.internal",
-    features: [],
+    features: unattendedProject ? ["merge"] : [],
   };
 }
 

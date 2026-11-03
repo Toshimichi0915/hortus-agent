@@ -14,6 +14,7 @@ import { bus } from "../console/events.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { now } from "../db.ts";
 import { publishLog } from "../mirror/index.ts";
+import { prepareClone } from "../projects/origin.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { OutboxMsg, StdoutLine, TaskKind } from "../types.ts";
@@ -182,6 +183,8 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       }
       const env = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
       env.PATH = `${join(paths.ctl(row.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
+      // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
+      await prepareClone(task, env.HORTUS_RPC_LOCAL);
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
       const child = await spawnSandboxed({
         task,

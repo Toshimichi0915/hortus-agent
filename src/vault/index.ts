@@ -1,6 +1,7 @@
 /** The vault module: CA, transforms, the gate's expiry timer, and the owner's approval and credential RPCs. */
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
+import { onApproved as landMerge } from "../projects/merge.ts";
 import { define } from "../rpc.ts";
 import { RpcError, type VaultEntry } from "../types.ts";
 import * as ca from "./ca.ts";
@@ -81,6 +82,8 @@ define("approval.decide", {
   run: async ({ id, decision, credentials, reason }) => {
     if (decision === "approve") await approveTransform(id, credentials);
     gate.decide(id, decision, "owner", { reason });
+    // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
+    if (decision === "approve") await landMerge(id);
     return { ok: true };
   },
 });
