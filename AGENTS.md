@@ -23,4 +23,4 @@ Same as hortus: source imports use `.ts` extensions (`rewriteRelativeImportExten
 
 ## Layout
 
-`src/types.ts` holds every cross-module contract (events, changes, connectors, task.json, transforms, RPC caller). `src/<area>/` per design doc: `mirror/`, `connectors/`, `vault/`, `proxy/`, `runtime/`, `agent/`, `console/`, `planner/`, `schedules/`, `projects/`, `browser/`. `transforms/<name>/` are the shipped transforms (copied to `dist/transforms`). `test/fakes/` are fake upstream services (Slack first). `native/landlock.c` builds to `dist/hortus-landlock`.
+`src/types.ts` holds every cross-module contract (events, changes, connectors, task.json, transforms, RPC caller). `src/<area>/` per design doc: `mirror/`, `connectors/`, `vault/`, `proxy/`, `runtime/`, `agent/`, `console/`, `planner/`, `schedules/`, `projects/`, `browser/`. `transforms/<name>/` are the shipped transforms (copied to `dist/transforms`). `src/test/fakes/` are fake upstream services (Slack first; compiled with the rest, so tests can import them). `native/landlock.c` builds to `dist/hortus-landlock`.
