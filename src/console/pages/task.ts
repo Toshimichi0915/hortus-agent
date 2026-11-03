@@ -1,4 +1,4 @@
-import { budget, button, h, isOpen, layout, type Page, parse, time } from "../html.ts";
+import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
 import { type TaskRow, taskActions } from "./tasks.ts";
@@ -33,6 +33,7 @@ export const task: Page = (ctx, { m }) => {
     "tasks",
     t.title || id,
     h`<div data-refresh id="card">
+${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${details("show console.log", t.error)}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 <table class="kv">
 <tr><th>Status</th><td>${t.status ?? ""}${t.outcome ? ` (${t.outcome})` : ""}</td></tr>

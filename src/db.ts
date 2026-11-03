@@ -44,6 +44,8 @@ const migrations: string[] = [
   CREATE INDEX schedules_fire ON schedules(fire_at);
   CREATE INDEX inbox_task_seq ON inbox(task_id, seq);
   `,
+  // step 3: the card's error line (a Worker that exited non-zero without an outbox message)
+  "ALTER TABLE tasks ADD COLUMN error TEXT;",
 ];
 
 export function openDb(path: string): DatabaseSync {

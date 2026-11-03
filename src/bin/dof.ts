@@ -4,6 +4,7 @@
  * in the owner's shell over the abstract socket. One line per hit: `<dof>/<path>\t<ts>\t<author>\t<title or snippet>`.
  */
 import { readFileSync } from "node:fs";
+import { request } from "node:http";
 import { parseArgs } from "node:util";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
@@ -22,11 +23,14 @@ async function rpc(input: SearchQuery): Promise<SearchHit[]> {
     }
   }
   const task = JSON.parse(readFileSync(taskFile, "utf8")) as TaskJson;
-  const res = await fetch(`${task.rpc}/rpc/dof.search`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const local = process.env.HORTUS_RPC_LOCAL;
+  const res = local
+    ? await loopback(`${process.env.HORTUS_RPC}/rpc/dof.search`, local, JSON.stringify(input))
+    : await fetch(`${task.rpc}/rpc/dof.search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
   const text = await res.text();
   let body: unknown;
   try {
@@ -38,7 +42,37 @@ async function rpc(input: SearchQuery): Promise<SearchHit[]> {
     const e = body as { error?: { message?: string }; message?: string } | undefined;
     throw new Error(e?.error?.message ?? e?.message ?? `${res.status} ${text}`);
   }
-  return body as SearchHit[];
+  return (body as { result: SearchHit[] }).result;
+}
+
+/**
+ * HORTUS_NO_NET=1 (tests): no DNS or DNAT for hortusd.internal, so the request goes to the proxy's plain listener on
+ * 127.0.0.1 from the session's loopback alias, which is how the proxy knows the task (v7 › Security › HORTUS_NO_NET).
+ */
+function loopback(
+  url: string,
+  localAddress: string,
+  body: string,
+): Promise<{ ok: boolean; status: number; text(): Promise<string> }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      url,
+      { method: "POST", localAddress, headers: { host: "hortusd.internal", "content-type": "application/json" } },
+      (res) => {
+        let t = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => {
+          t += c;
+        });
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          resolve({ ok: status >= 200 && status < 300, status, text: async () => t });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 
 async function main(): Promise<number> {

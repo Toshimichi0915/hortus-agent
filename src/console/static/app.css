@@ -78,6 +78,10 @@ pre,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* text arrives as deltas, one row each: they flow together; every other line is a block */
+.r.text {
+  display: inline;
+}
 pre,
 code,
 .tool {

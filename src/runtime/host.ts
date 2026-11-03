@@ -43,11 +43,12 @@ export interface Child {
 
 const log = logger("runtime");
 
-/** `hortus-agent <ctl/task.json>`, run by the current node. */
+/** `hortus-agent --task tasks/<id>`, run by the current node. */
 export const agentCmd = (id: string): string[] => [
   process.execPath,
   fileURLToPath(new URL("../bin/hortus-agent.js", import.meta.url)),
-  join(paths.ctl(id), "task.json"),
+  "--task",
+  paths.task(id),
 ];
 
 /** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */

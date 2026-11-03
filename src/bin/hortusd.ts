@@ -13,13 +13,21 @@ import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
 import { coreFetch, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
-import { cgroup, runtimeModule, sessionNet } from "../runtime/index.ts";
+import { cgroup, dispatcherModule, runtimeModule, sessionNet, tasks } from "../runtime/index.ts";
 import { gateDeps, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, transforms) before
- * the proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the console last. Later steps add the
- * dispatcher and scheduler. */
-const modules: Module[] = [mirrorModule, vaultModule, runtimeModule, proxyModule, gatewayModule, consoleModule];
+ * the proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
+ * sessions) once the proxy and links are up; the console last. 3c adds the scheduler. */
+const modules: Module[] = [
+  mirrorModule,
+  vaultModule,
+  runtimeModule,
+  proxyModule,
+  gatewayModule,
+  dispatcherModule,
+  consoleModule,
+];
 
 const log = logger("hortusd");
 
@@ -66,6 +74,8 @@ async function main(): Promise<void> {
     links,
   });
   devLink();
+  // approval decisions (and later merge/rebase notes) reach the task's inbox, which re-queues a waiting task
+  gateDeps.inboxWrite = (id, msg) => void tasks.inboxWrite(id, msg);
 
   const started: Module[] = [];
   let stopping = false;

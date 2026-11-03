@@ -361,6 +361,8 @@ export interface Prepared {
   secrets: Map<string, Secret>;
   body: Readable | null;
   scrub: Scrubber;
+  /** the session's own model call: its body is conversation, sent as is (handles in it are text, not handles) */
+  llmCall?: boolean;
 }
 
 export async function prepare(client: Client, req: IncomingRequest): Promise<Prepared | Out> {
@@ -423,15 +425,23 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       return refuse(502, "transform changed the host", { transform: tf.name });
   }
 
+  // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
+  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault)
+  const cfg = ctx().config;
+  const llm =
+    client.role === "planner" ? cfg.planner.provider : client.role === "worker" ? cfg.worker.provider : undefined;
+  const llmCall = llm !== undefined && tf !== undefined && readVault()[llm]?.transform === tf.name;
+
   // 7. placeholders the transform did not map
-  if (everything(template).some((s) => s.includes(PREFIX))) return refuse(403, "unmapped placeholder", { host });
+  if (everything(llmCall ? { ...template, body: null } : template).some((s) => s.includes(PREFIX)))
+    return refuse(403, "unmapped placeholder", { host });
 
   // 8. handles: name, destination, location, task scope, project scope, consequential
   const vault = readVault();
   const tfLocations = tf ? Object.values(tf.manifest.credentials).flatMap((c) => c.locations) : [];
   let found: Found[];
   try {
-    found = locate(template, tfLocations);
+    found = locate(llmCall ? { ...template, body: null } : template, tfLocations);
   } catch (e) {
     return refuse(403, `bad handle: ${(e as Error).message}`, { host });
   }
@@ -476,7 +486,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       secret = { entry };
       category ??= `credential:${name}`;
       const creds = task?.scope?.credentials;
-      if (client.task && creds && !creds.includes(name)) {
+      if (client.task && creds && !creds.includes(name) && name !== llm) {
         const g = gate.check({
           caller: client,
           category: `credential:${name}`,
@@ -508,7 +518,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
 
   // 9. gate (only requests that carry a credential)
   let approved = false;
-  if (found.length && category) {
+  if (found.length && category && !found.every((f) => f.h.name === llm)) {
     const hash = hashTemplate(template);
     if (client.role !== "core") {
       const g = gate.check({
@@ -522,7 +532,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       approved = true;
     }
   }
-  return { client, host, raw, template, tf, target, consequential, approved, secrets, body, scrub };
+  return { client, host, raw, template, tf, target, consequential, approved, secrets, body, scrub, llmCall };
 }
 
 const pendingOut = (id: number, category: string): Out =>
@@ -592,12 +602,14 @@ export function upstream(
   if (t.body !== null && !t.stream) {
     const form = /^application\/x-www-form-urlencoded/i.test(headers["content-type"] ?? "");
     body = Buffer.from(
-      form
+      p.llmCall
         ? t.body
-            .split("&")
-            .map((kv) => resolveIn(kv, p, true))
-            .join("&")
-        : resolveIn(t.body, p, false),
+        : form
+          ? t.body
+              .split("&")
+              .map((kv) => resolveIn(kv, p, true))
+              .join("&")
+          : resolveIn(t.body, p, false),
     );
     headers["content-length"] = String(body.length);
   } else if (p.body) {

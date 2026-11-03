@@ -557,3 +557,37 @@ test("credential.list never returns values; credential.set validates hosts", asy
   );
   assert.equal(transforms.byHost("ollama.com")?.credential, "ollama-cloud");
 });
+
+test("the session's own model credential: no gate, placeholders in its body (the conversation) pass", async () => {
+  const prev = ctx.config.worker.provider;
+  ctx.config.worker.provider = "gh";
+  try {
+    const n = approvals();
+    const body = JSON.stringify({
+      messages: [{ role: "user", content: "curl -H 'Bearer hortus-secret-slack' → Bearer {secret:slack}" }],
+    });
+    const r = await send({
+      host: "api.github.com",
+      method: "POST",
+      path: "/llm",
+      headers: { authorization: "Bearer hortus-secret-gh" },
+      body,
+    });
+    assert.equal(r.status, 200, r.body);
+    assert.equal(seen.at(-1)?.auth, "Bearer ghp-fake-0123");
+    assert.equal(seen.at(-1)?.body, body, "sent as is");
+    assert.equal(approvals(), n);
+    // any other credential still passes the gate
+    const s = await send({
+      host: "slack.com",
+      method: "POST",
+      path: "/api/chat.postMessage",
+      headers: slackAuth,
+      body: "{}",
+    });
+    assert.equal(s.status, 403);
+    assert.match(s.body, /approval/);
+  } finally {
+    ctx.config.worker.provider = prev;
+  }
+});

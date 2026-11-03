@@ -313,7 +313,11 @@ test("dof CLI inside a task posts to <rpc>/rpc/dof.search", async () => {
     req.on("end", () => {
       seen = { url: req.url, auth: req.headers.authorization, body: JSON.parse(body) };
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify([{ dof: "logs", path: "t/summary.md", ts: "t", author: "", title: "T", snippet: "s" }]));
+      res.end(
+        JSON.stringify({
+          result: [{ dof: "logs", path: "t/summary.md", ts: "t", author: "", title: "T", snippet: "s" }],
+        }),
+      );
     });
   });
   await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));

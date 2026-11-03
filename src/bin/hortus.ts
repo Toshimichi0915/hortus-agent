@@ -64,6 +64,12 @@ function line(ev: unknown): string | null {
   }
 }
 
+function isText(ev: unknown): boolean {
+  const r = ev as Row | null;
+  if (typeof r?.body === "string") return r.body.startsWith('{"type":"text"');
+  return (r?.type ?? (r?.body as Row | undefined)?.type) === "text";
+}
+
 function errorText(e: unknown): string {
   const code = (e as NodeJS.ErrnoException).code;
   if (code === "ECONNREFUSED" || code === "ENOENT")
@@ -85,9 +91,18 @@ async function chat(args: string[], rpc: RpcClient): Promise<void> {
   let interrupts = 0;
   const follow = async (task: string) => {
     try {
+      // text arrives as deltas: written as is; any other line starts on a fresh one
+      let mid = false;
       for await (const ev of rpc.stream("task.stream", { id: task })) {
         const out = line(ev);
-        if (out !== null) console.log(out);
+        if (out === null) continue;
+        if (isText(ev)) {
+          process.stdout.write(out);
+          mid = !out.endsWith("\n");
+        } else {
+          console.log(mid ? `\n${out}` : out);
+          mid = false;
+        }
       }
     } catch (e) {
       if (!closing) console.error(red(errorText(e)));

@@ -15,6 +15,7 @@ export interface TaskRow {
   updated: string | null;
   closed: string | null;
   cwd: string | null;
+  error?: string | null;
 }
 
 export const OPEN_SQL = "SELECT * FROM tasks WHERE status NOT IN ('done', 'failed') ORDER BY updated DESC";
