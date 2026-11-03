@@ -70,7 +70,7 @@ export function frameOut(p: Prepared, text: string): { text: string } | { refuse
   const template: Template = { method: "WS", url: p.template.url, headers: {}, body, stream: false };
   const hash = hashTemplate(template);
   for (const h of found) {
-    const entry = vault[h.name];
+    const entry = Object.hasOwn(vault, h.name) ? vault[h.name] : undefined;
     // ponytail: captured (`c-`) credentials never ride in frames; a cookie-session WebSocket service would add them
     if (!entry) return { refuse: `unknown credential ${h.name}` };
     const manifest = transforms.credentialManifest(h.name, entry, p.tf?.manifest);

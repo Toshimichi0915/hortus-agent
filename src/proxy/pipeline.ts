@@ -591,7 +591,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
         if (g !== "pass") return pendingOut(g.pending, origin);
       }
     } else {
-      const entry = vault[name];
+      const entry = Object.hasOwn(vault, name) ? vault[name] : undefined;
       if (!entry) return refuse(403, `unknown credential ${name}`, { host });
       const manifest = transforms.credentialManifest(name, entry, tf?.manifest);
       if (!effectiveHosts(name, entry, manifest).includes(host))

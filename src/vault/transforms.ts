@@ -248,5 +248,8 @@ export function runTests(name: string): { file: string; ok: boolean; diff?: stri
  * credential; an entry bound to a transform that is not loaded (disabled, tampered) follows none.
  */
 export function credentialManifest(name: string, entry: { transform?: string }, host?: Manifest): Manifest | undefined {
-  return get(entry.transform ?? name)?.manifest ?? (!entry.transform && host?.credentials[name] ? host : undefined);
+  return (
+    get(entry.transform ?? name)?.manifest ??
+    (!entry.transform && host && Object.hasOwn(host.credentials, name) ? host : undefined)
+  );
 }

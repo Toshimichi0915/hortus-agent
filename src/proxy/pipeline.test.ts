@@ -338,6 +338,14 @@ test("a credential name missing from vault.json → 403 even when a transform ma
   });
   assert.equal(r.status, 403);
   assert.match(r.body, /unknown credential nope/);
+  // an Object.prototype name is no entry either
+  const proto = await send({
+    host: "slack.com",
+    path: "/api/auth.test",
+    headers: { authorization: "Bearer hortus-secret-constructor" },
+  });
+  assert.equal(proto.status, 403);
+  assert.match(proto.body, /unknown credential constructor/);
 });
 
 test("no placeholder: proxied without approval, response scrubbed", async () => {
