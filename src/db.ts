@@ -46,6 +46,8 @@ const migrations: string[] = [
   `,
   // step 3: the card's error line (a Worker that exited non-zero without an outbox message)
   "ALTER TABLE tasks ADD COLUMN error TEXT;",
+  // 3h: a capture's metadata (cookie name, Domain/Path/Expires, the request host, the capturing task and role)
+  "ALTER TABLE captured ADD COLUMN meta TEXT;",
 ];
 
 export function openDb(path: string): DatabaseSync {

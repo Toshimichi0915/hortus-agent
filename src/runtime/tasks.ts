@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { jar } from "../browser/jar.ts";
 import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
@@ -232,6 +233,8 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
   const project = scope.project ?? row.project ?? undefined;
   const out = paths.out(row.id);
   const unattendedProject = project !== undefined && row.kind !== "chat";
+  // 3h: the placeholder jar (own captures, and logins of the origins the task holds a grant on)
+  const cookies = bound ? jar(bound.db, row.id) : [];
   return {
     id: row.id,
     kind: row.kind,
@@ -262,8 +265,9 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
           ...(row.cwd ? { cwd: row.cwd } : {}),
         }
       : {}),
+    ...(cookies.length ? { cookies } : {}),
     rpc: "https://hortusd.internal",
-    features: [],
+    features: row.kind === "planner" ? [] : ["browser"],
   };
 }
 

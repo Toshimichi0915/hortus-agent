@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.example.co.uk/login",
+    "headers": {},
+    "body": null,
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "set-cookie": "session=secret123abc; Path=/; HttpOnly\nlang=en; Path=/\nevil=0123456789; Domain=other.com\nsid=hortus-secret-c-4; Path=/\nwide=wide-value-1; Domain=.example.co.uk; Max-Age=60"
+    },
+    "body": "ok"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": {
+        "set-cookie": "session=secret123abc; Path=/; HttpOnly\nlang=en; Path=/\nevil=0123456789; Domain=other.com\nsid=hortus-secret-c-4; Path=/\nwide=wide-value-1; Domain=.example.co.uk; Max-Age=60"
+      },
+      "body": "ok"
+    },
+    "capture": [
+      {
+        "name": "session",
+        "value": "secret123abc",
+        "origin": "example.co.uk",
+        "kind": "cookie",
+        "meta": { "cookieName": "session", "path": "/", "httpOnly": true }
+      },
+      {
+        "name": "wide",
+        "value": "wide-value-1",
+        "origin": "example.co.uk",
+        "kind": "cookie",
+        "meta": { "cookieName": "wide", "domain": "example.co.uk", "maxAge": 60 }
+      }
+    ]
+  }
+}

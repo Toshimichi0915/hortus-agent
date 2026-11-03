@@ -10,7 +10,7 @@ import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { PassThrough, pipeline, Readable } from "node:stream";
 import { logger } from "../log.ts";
-import type { Manifest, Req, Template } from "../types.ts";
+import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { type Handle, handles, late, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
 import type { Signing } from "../vault/sigv4.ts";
@@ -78,7 +78,7 @@ export interface TaskRow {
   origins: "*" | string[] | null;
 }
 
-function taskRow(id: string): TaskRow | undefined {
+export function taskRow(id: string): TaskRow | undefined {
   const r = ctx().db.prepare("SELECT scope, origins FROM tasks WHERE id = ?").get(id) as
     | { scope: string | null; origins: string | null }
     | undefined;
@@ -87,7 +87,7 @@ function taskRow(id: string): TaskRow | undefined {
 }
 
 /** Global `origins` merged with the task row's (already narrowed by its projects when the dispatcher wrote it). */
-function originsFor(task: TaskRow | undefined): "*" | string[] {
+export function originsFor(task: TaskRow | undefined): "*" | string[] {
   const g = ctx().config.origins;
   const t = task?.origins;
   if (!t || t === "*") return g;
@@ -355,6 +355,8 @@ export interface Prepared {
   raw: Req;
   template: Template;
   tf?: { name: string; manifest: Manifest };
+  /** the `cookie` layer runs (no credential transform for the host, or a site manifest: one with `captures`) (3h) */
+  cookie: boolean;
   target: Target;
   consequential: boolean;
   /** passed the gate through an owner's approval (not role core, not handle-free) */
@@ -382,6 +384,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // 4. transform and raw request
   const tfHit = transforms.byHost(host);
   const tf = tfHit && { name: tfHit.name, manifest: tfHit.manifest };
+  const cookie = (!tf || tf.manifest.captures !== undefined) && transforms.get(COOKIE) !== undefined;
   const ct = req.headers["content-type"] ?? "";
   let stream = STREAM_REQUEST.test(ct) || Number(req.headers["content-length"] ?? 0) > REQUEST_BUFFER;
   let text: string | null = null;
@@ -414,16 +417,16 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
 
   // 6. template
   let template: Template = raw;
-  if (tf) {
+  for (const name of [...(cookie ? [COOKIE] : []), ...(tf ? [tf.name] : [])]) {
     try {
-      template = transforms.request(tf.name, raw, { now: Date.now(), nonce: randomUUID() });
+      template = transforms.request(name, template, { now: Date.now(), nonce: randomUUID() });
     } catch (e) {
-      log.error("transform failed", e, { transform: tf.name, host });
-      return refuse(502, "transform failed", { transform: tf.name });
+      log.error("transform failed", e, { transform: name, host });
+      return refuse(502, "transform failed", { transform: name });
     }
     const m = template.url.match(URL_PARTS);
     if (!m || m[1]?.toLowerCase() !== url.match(URL_PARTS)?.[1]?.toLowerCase())
-      return refuse(502, "transform changed the host", { transform: tf.name });
+      return refuse(502, "transform changed the host", { transform: name });
   }
 
   // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
@@ -470,11 +473,26 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       if (!row) return refuse(403, `unknown credential ${name}`, { host });
       if (host !== row.origin && !host.endsWith(`.${row.origin}`))
         return refuse(403, `destination: ${name} does not go to ${host}`, { host });
-      // ponytail: captured locations = anything the host's transform declares, plus Cookie (3h refines per kind)
-      if (!declares([...tfLocations, "header:cookie"], loc))
+      // a cookie rides in Cookie, a bearer token in Authorization, or where the site manifest says
+      const own = row.kind === "bearer" ? "header:authorization" : "header:cookie";
+      if (!declares([...tfLocations, own], loc))
         return refuse(403, `location: ${name} may not ride in ${loc}`, { host });
       secret = { captured: row };
-      category ??= `origin:${row.origin}`;
+      const origin = `origin:${row.origin}`;
+      category ??= origin;
+      // the task's own captures ride freely; anyone else's need a grant on the origin (a login, or the owner's
+      // approval of a task-scoped grant entry); the login view is the owner at the keyboard
+      if (client.task && client.role !== "login" && capturedBy(row.id) !== client.task) {
+        const g = gate.check({
+          caller: client,
+          category: origin,
+          hash: `grant:${origin}`,
+          kind: "grant",
+          consequential: false,
+          summary: { grant: origin, task: client.task, method: template.method, host, path: requestPath },
+        });
+        if (g !== "pass") return pendingOut(g.pending, origin);
+      }
     } else {
       const entry = vault[name];
       if (!entry) return refuse(403, `unknown credential ${name}`, { host });
@@ -504,7 +522,11 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     secrets.set(name, secret);
   }
   const line = `${template.method} ${host}${requestPath}`;
-  const consequential = [...manifests].some((m) => (m.consequential ?? []).some((p) => glob(p).test(line)));
+  // captured credentials: every method but GET/HEAD is consequential, plus the site manifest's patterns (3h)
+  const capturedOnly = found.length > 0 && found.every((f) => f.h.name.startsWith("c-"));
+  const consequential =
+    [...manifests].some((m) => (m.consequential ?? []).some((p) => glob(p).test(line))) ||
+    (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
   if (found.length && client.task) {
     for (const m of manifests) {
       if (!m.scope?.length || consequential) continue;
@@ -521,7 +543,9 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   let approved = false;
   if (found.length && category && !found.every((f) => f.h.name === llm)) {
     const hash = hashTemplate(template);
-    if (client.role !== "core") {
+    // a grant on the origin (checked above) passes captured-only requests that are not consequential
+    const granted = capturedOnly && (client.role === "login" || !consequential);
+    if (client.role !== "core" && !granted) {
       const g = gate.check({
         caller: client,
         category,
@@ -533,7 +557,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       approved = true;
     }
   }
-  return { client, host, raw, template, tf, target, consequential, approved, secrets, body, scrub, llmCall };
+  return { client, host, raw, template, tf, cookie, target, consequential, approved, secrets, body, scrub, llmCall };
 }
 
 const pendingOut = (id: number, category: string): Out =>
@@ -673,17 +697,36 @@ function addRefs(p: Prepared, refs: string[] | undefined, repos: string[] | unde
   }
 }
 
+const joined = (h: Record<string, string | string[]>): Record<string, string> =>
+  Object.fromEntries(Object.entries(h).map(([k, v]) => [k, Array.isArray(v) ? v.join("\n") : v]));
+
 async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   const status = res.statusCode ?? 502;
-  let headers = p.scrub.headers(flatHeaders(res.headers));
+  let scrub = p.scrub;
+  let headers = scrub.headers(flatHeaders(res.headers));
   const ct = String(res.headers["content-type"] ?? "");
+  // Set-Cookie is captured first, whatever the body (HEAD, 204, a stream, binary): the browser never gets a real value
+  if (p.cookie && headers["set-cookie"] !== undefined) {
+    try {
+      const r = transforms.response(COOKIE, { status, headers: joined(headers), body: null }, p.raw);
+      if (r.capture?.length) {
+        store(p, r.capture);
+        scrub = scrubber();
+        headers = scrub.headers(flatHeaders(res.headers));
+      }
+    } catch (e) {
+      res.resume();
+      log.error("transform failed", e, { transform: COOKIE, host: p.host });
+      return refuse(502, "transform failed", { transform: COOKIE });
+    }
+  }
   if (p.raw.method === "HEAD" || status === 204 || status === 304) {
     res.resume();
     return { status, headers, body: "" };
   }
   const streamed = (r: Readable): Out => {
     const { "content-length": _, ...h } = headers;
-    const s = p.scrub.stream();
+    const s = scrub.stream();
     pipeline(r, s, () => {});
     return { status, headers: h, body: s };
   };
@@ -692,28 +735,31 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   // ponytail: over 16 MB skips response() and is scrubbed as a stream (downloads), not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
-  if (text === undefined || !p.tf) {
-    const body = text === undefined ? p.scrub.bytes(r.buf) : Buffer.from(p.scrub.text(text));
+  if (text === undefined || (!p.tf && !p.cookie)) {
+    const body = text === undefined ? scrub.bytes(r.buf) : Buffer.from(scrub.text(text));
     return { status, headers: { ...headers, "content-length": String(body.length) }, body };
   }
-  const flat: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) flat[k] = Array.isArray(v) ? v.join("\n") : v;
-  let result: ReturnType<typeof transforms.response>;
-  try {
-    result = transforms.response(p.tf.name, { status, headers: flat, body: p.scrub.text(text) }, p.raw);
-  } catch (e) {
-    log.error("transform failed", e, { transform: p.tf.name, host: p.host });
-    return refuse(502, "transform failed", { transform: p.tf.name });
+  let result: ReturnType<typeof transforms.response> = {
+    res: { status, headers: joined(headers), body: scrub.text(text) },
+  };
+  const capture: Capture[] = [];
+  // the host's transform first, then the cookie layer over its result (with the site manifest, for body captures)
+  for (const name of [...(p.tf ? [p.tf.name] : []), ...(p.cookie ? [COOKIE] : [])]) {
+    const site = name === COOKIE && p.tf ? { captures: p.tf.manifest.captures ?? [] } : undefined;
+    try {
+      const r = transforms.response(name, result.res, p.raw, undefined, site);
+      capture.push(...(r.capture ?? []));
+      result = { ...result, ...r };
+    } catch (e) {
+      log.error("transform failed", e, { transform: name, host: p.host });
+      return refuse(502, "transform failed", { transform: name });
+    }
   }
-  if (result.capture?.length) {
-    const db = ctx().db;
-    for (const c of result.capture)
-      db.prepare(
-        "INSERT INTO captured(name, value, origin, kind, created) VALUES (?, ?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value, origin = excluded.origin, kind = excluded.kind",
-      ).run(c.name, c.value, c.origin, c.kind ?? null, new Date().toISOString());
+  if (capture.length) {
+    store(p, capture);
+    scrub = scrubber();
   }
   addRefs(p, result.refs, result.repos);
-  const scrub = result.capture?.length ? scrubber() : p.scrub;
   headers = {};
   for (const [k, v] of Object.entries(result.res.headers)) {
     if (k.toLowerCase() === "content-length") continue;
@@ -721,6 +767,46 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   }
   const body = Buffer.from(scrub.text(result.res.body ?? ""));
   return { status: result.res.status, headers: { ...headers, "content-length": String(body.length) }, body };
+}
+
+const COOKIE = "cookie";
+type Capture = NonNullable<ResponseResult["capture"]>[number];
+
+const capturedBy = (id: number): string | null =>
+  (
+    ctx().db.prepare("SELECT json_extract(meta, '$.task') AS task FROM captured WHERE id = ?").get(id) as
+      | { task: string | null }
+      | undefined
+  )?.task ?? null;
+
+/**
+ * Captures → `captured` rows named `c-<id>`, keyed by (origin, kind, cookie or token name, capturing task): a cookie the
+ * site sets again replaces the value under the same name, so jars keep working. Replaced as delete + insert, so the row
+ * id moves and the scrubber (keyed on count and max id) rebuilds. A capture for another site than the request's is
+ * dropped.
+ */
+function store(p: Prepared, list: Capture[]): void {
+  const db = ctx().db;
+  const task = p.client.task ?? null;
+  const t = new Date().toISOString();
+  for (const c of list) {
+    if (p.host !== c.origin && !p.host.endsWith(`.${c.origin}`)) {
+      log.error("capture for another origin dropped", undefined, { host: p.host, origin: c.origin });
+      continue;
+    }
+    const key = String(c.meta?.cookieName ?? c.meta?.key ?? c.name);
+    const meta = JSON.stringify({ ...c.meta, key, host: p.host, task, via: p.client.role });
+    const old = db
+      .prepare(
+        "SELECT id, name, created FROM captured WHERE origin = ? AND kind IS ? AND json_extract(meta, '$.key') = ? AND json_extract(meta, '$.task') IS ?",
+      )
+      .get(c.origin, c.kind ?? null, key, task) as { id: number; name: string; created: string } | undefined;
+    if (old) db.prepare("DELETE FROM captured WHERE id = ?").run(old.id);
+    const r = db
+      .prepare("INSERT INTO captured(name, value, origin, kind, created, last_use, meta) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(old?.name ?? `c-new-${randomUUID()}`, c.value, c.origin, c.kind ?? null, old?.created ?? t, t, meta);
+    if (!old) db.prepare("UPDATE captured SET name = 'c-' || id WHERE id = ?").run(r.lastInsertRowid);
+  }
 }
 
 /** The whole pipeline for one request. */

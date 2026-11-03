@@ -51,6 +51,9 @@ New messages arrive as user messages starting with \`[inbox <n>] from=<origin> .
 - When you stop without \`done\`, the task waits for its next inbox message.`,
     `# Budget
 ${task.budget.tokens} tokens and ${task.budget.hours} hours for the whole task; when either runs out you are stopped, so finish what matters first. The owner's timezone is ${task.tz}; turn relative times into absolute ones in it.`,
+    task.features.includes("browser") &&
+      `# Browser
+\`browser_*\` drive a headless Chromium. It holds placeholder cookies only; logins you were given are already in it. A response or page "hortus: host not in origins" is final: there is no approval for a host, so tell the owner with \`send\` and go on with what you can reach. On a site you are signed in to, every request but GET/HEAD waits for the owner's approval (the \`403 {"approval"}\` rule above). Plain login forms: type \`hortus-secret-<credential>\` as the password when one is configured for the site. Otherwise call \`browser_login(url, why)\` and end your turn; the cookies arrive in your inbox (from=cookies), then navigate again.`,
     task.features.length > 0 &&
       `# Extra tools\nEnabled: ${task.features.join(", ")}. Their descriptions say how to use them.`,
   ]

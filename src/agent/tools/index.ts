@@ -5,8 +5,9 @@
 import type { Tool } from "@hortus/core";
 import type { TaskJson } from "../../types.ts";
 import { out } from "../stdout.ts";
+import { browserTools } from "./browser.ts";
 
-export const features: Record<string, (task: TaskJson) => Tool[]> = {};
+export const features: Record<string, (task: TaskJson) => Tool[]> = { browser: (task) => browserTools(task) };
 
 /** Tools of every enabled feature; a name without a tool set yet is reported and skipped, not fatal. */
 export function featureTools(task: TaskJson): Tool[] {

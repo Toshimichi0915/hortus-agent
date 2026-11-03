@@ -12,9 +12,11 @@ import { call, isStream } from "../rpc.ts";
 import { type Caller, RpcError } from "../types.ts";
 import { bus } from "./events.ts";
 import { h, layout, type Page, tryCall } from "./html.ts";
+import { watch as watchLogin } from "../browser/login-view.ts";
 import { approvals } from "./pages/approvals.ts";
 import { chat, lastReplies, replyLine } from "./pages/chat.ts";
 import { credentials } from "./pages/credentials.ts";
+import { loginView } from "./pages/login-view.ts";
 import { projects } from "./pages/projects.ts";
 import { schedules } from "./pages/schedules.ts";
 import { search } from "./pages/search.ts";
@@ -34,6 +36,7 @@ export const routes: [RegExp, Page][] = [
   [/^\/tasks\/([^/]+)$/, task],
   [/^\/chat(?:\/([^/]+))?$/, chat],
   [/^\/approvals(?:\/(\d+))?$/, approvals],
+  [/^\/approvals\/(\d+)\/login$/, loginView],
   [/^\/credentials$/, credentials],
   [/^\/projects$/, projects],
   [/^\/settings$/, settings],
@@ -112,6 +115,10 @@ async function api(method: string, req: IncomingMessage, res: ServerResponse, ca
 
 /** `chat` replays `replies` after `Last-Event-ID` (or `?after=`; default: the last 1000), then follows the bus. */
 function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage, res: ServerResponse): void {
+  if (name === "login") {
+    loginEvents(Number(q.get("id")), res);
+    return;
+  }
   const taskId = q.get("task");
   if (!["approvals", "tasks", "chat"].includes(name) || (name === "chat" && !taskId)) {
     send(res, 404, "text/plain", "no such stream");
@@ -139,6 +146,22 @@ function events(ctx: Ctx, name: string, q: URLSearchParams, req: IncomingMessage
   res.on("close", () => {
     clearInterval(keepalive);
     bus.off(topic, onEvent);
+  });
+}
+
+/** `/events/login?id=<entry>`: the login view's frames (and `until`, `closed`, `error`) as JSON; opening starts it. */
+function loginEvents(id: number, res: ServerResponse): void {
+  if (!Number.isInteger(id)) {
+    send(res, 404, "text/plain", "no such stream");
+    return;
+  }
+  res.writeHead(200, { ...HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive" });
+  res.write(": hello\n\n");
+  const keepalive = setInterval(() => res.write(": keepalive\n\n"), sse.keepaliveMs);
+  const off = watchLogin(id, (e) => res.write(`data: ${JSON.stringify(e)}\n\n`));
+  res.on("close", () => {
+    clearInterval(keepalive);
+    off();
   });
 }
 
