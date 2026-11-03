@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { appendText, readCapped, readDir, replaceFile } from "./hostile.ts";
+import { appendText, lines, readCapped, readDir, replaceFile } from "./hostile.ts";
 import { tempDir } from "./test/until.ts";
 
 test("hostile files: links and FIFOs are never followed, read or blocked on", () => {
@@ -59,4 +60,16 @@ test("readDir: never through a linked directory or entry; sorted, capped, the re
   assert.equal(all(join(d, "link"), 10), null, "a linked directory is not listed");
   assert.equal(all(join(d, "secret"), 10), null, "a file is not a directory");
   assert.equal(all(join(d, "gone"), 10), null);
+});
+
+test("lines: a line without an end is cut at the cap, the next one is whole", async () => {
+  const s = new PassThrough();
+  const got: string[] = [];
+  lines(s, 8, (l) => got.push(l));
+  s.write("ab\r\n\n");
+  for (let i = 0; i < 100; i++) s.write("x".repeat(1000));
+  s.write("yy\nnext");
+  s.end("!");
+  await new Promise((r) => s.on("end", r));
+  assert.deepEqual(got, ["ab", "", "xxxxxxxx", "next!"]);
 });

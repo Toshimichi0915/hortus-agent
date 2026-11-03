@@ -123,6 +123,14 @@ fixture("lh", ["localhost"], bearer);
 fixture("loop", ["loop.test"], "export function request() { for (;;) {} }");
 fixture("oom", ["oom.test"], "export function request() { return { s: 'x'.repeat(100 * 1024 * 1024) }; }");
 fixture("str", ["str.test"], "export function request() { return 'x'; }");
+fixture(
+  "badres",
+  ["badres.test", "badhdr.test"],
+  `export function request(req) { return req; }
+export function response(res, req) {
+  return req.url.includes("badres") ? { res: { ...res, status: 0 } } : { res: { ...res, headers: { "a b": "x" } } };
+}`,
+);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // setup
@@ -138,6 +146,8 @@ const HOSTS = [
   "loop.test",
   "oom.test",
   "str.test",
+  "badres.test",
+  "badhdr.test",
 ];
 let ports: { https: number; http: number; dns: number };
 let ca: Buffer;
@@ -450,6 +460,9 @@ test("transform failures → 502: infinite loop (interrupted fast), 100 MB, non-
   assert.ok(Date.now() - t0 < 1000, `loop took ${Date.now() - t0} ms`);
   assert.equal((await send({ host: "oom.test" })).status, 502);
   assert.equal((await send({ host: "str.test" })).status, 502);
+  // a response() hortusd cannot write (status 0, a header name with a space) is a 502, not an unhandled rejection
+  assert.equal((await send({ host: "badres.test" })).status, 502);
+  assert.equal((await send({ host: "badhdr.test" })).status, 502);
   assert.equal((await send({ host: "registry.npmjs.org", path: "/zod" })).status, 200);
   assert.equal((await coreFetch("https://slack.com/api/auth.test", { headers: slackAuth })).status, 200);
 });

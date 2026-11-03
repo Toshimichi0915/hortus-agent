@@ -3,12 +3,11 @@ import { spawn } from "node:child_process";
 import { closeSync, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
 import { logger } from "../log.ts";
-import { openAppend } from "../hostile.ts";
+import { lines, MAX_LINE, openAppend } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
@@ -187,8 +186,8 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
   fd3.on("error", () => {}).end(text); // EPIPE when the shim dies first: its exit code says why
   const logFile = createWriteStream("", { fd: logFd });
   stderr.pipe(logFile);
-  createInterface({ input: stdout }).on("line", (l) => o.onStdout(l));
-  if (o.onStderr) createInterface({ input: stderr }).on("line", (l) => o.onStderr?.(l));
+  lines(stdout, MAX_LINE, o.onStdout);
+  if (o.onStderr) lines(stderr, MAX_LINE, o.onStderr);
 
   const done = new Promise<Exit>((resolve, reject) => {
     let exit: Exit = { code: null, signal: null };

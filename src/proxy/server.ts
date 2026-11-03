@@ -67,14 +67,14 @@ function serve(tls: boolean, proxyAddress: string) {
         body: "hortus: unknown client\n",
       });
     }
-    handle(client, toIncoming(req, tls)).then(
-      (out) => writeOut(res, out),
-      (e) => {
+    // a writeOut that throws (a transform's status 0 or header name with a space) lands in catch, not unhandled
+    handle(client, toIncoming(req, tls))
+      .then((out) => writeOut(res, out))
+      .catch((e) => {
         log.error("pipeline failed", e);
         if (!res.headersSent) writeOut(res, { status: 502, headers: {}, body: "hortus: proxy error\n" });
         else res.destroy();
-      },
-    );
+      });
   };
   const onUpgrade = (req: http.IncomingMessage, socket: Socket, head: Buffer) => {
     const client = clientOf(socket);

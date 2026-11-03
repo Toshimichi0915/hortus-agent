@@ -4,6 +4,7 @@
  * (which would block the daemon), never more than asked.
  */
 import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, rmSync, writeSync } from "node:fs";
+import type { Readable } from "node:stream";
 
 /** `out/summary.md` (as the card stores it) */
 export const MAX_SUMMARY = 64 * 1024;
@@ -88,6 +89,38 @@ export function appendText(path: string, text: string): void {
       closeSync(fd);
     }
   } catch {}
+}
+
+/** one line of a session's stdout (`lines`) */
+export const MAX_LINE = 4 * 1024 * 1024;
+
+/**
+ * `fn` for every line of `input` (a session's stdout), like readline but bounded: a line over `max` bytes is cut at
+ * `max` and the rest of it dropped, so a Worker printing without newlines cannot grow hortusd's memory.
+ */
+export function lines(input: Readable, max: number, fn: (line: string) => void): void {
+  let parts: Buffer[] = [];
+  let n = 0;
+  const flush = () => {
+    const line = Buffer.concat(parts).toString("utf8");
+    parts = [];
+    n = 0;
+    fn(line.endsWith("\r") ? line.slice(0, -1) : line);
+  };
+  input.on("data", (c: Buffer) => {
+    for (let i = 0; i < c.length; ) {
+      const nl = c.indexOf(10, i);
+      const end = Math.min(nl < 0 ? c.length : nl, i + max - n);
+      if (end > i) {
+        parts.push(c.subarray(i, end));
+        n += end - i;
+      }
+      if (nl < 0) break;
+      flush();
+      i = nl + 1;
+    }
+  });
+  input.on("end", () => n > 0 && flush());
 }
 
 /** Replaces whatever `path` is (a link, say) with a new file holding `text`. */

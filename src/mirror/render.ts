@@ -70,17 +70,18 @@ function flowValue(src: string): unknown {
     }
     if (c === "{") {
       i++;
-      const out: Record<string, unknown> = {};
+      // entries, not assignment: an upstream key `__proto__` (a reaction's emoji name) is a key, not a prototype
+      const out: [string, unknown][] = [];
       for (ws(); src[i] !== "}" && i < src.length; ws()) {
         const k = String(src[i] === '"' ? quoted() : value(":,}"));
         ws();
         if (src[i] === ":") i++;
-        out[k] = value(",}");
+        out.push([k, value(",}")]);
         ws();
         if (src[i] === ",") i++;
       }
       i++;
-      return out;
+      return Object.fromEntries(out);
     }
     const start = i;
     while (i < src.length && !stops.includes(src[i] as string)) i++;
@@ -91,16 +92,16 @@ function flowValue(src: string): unknown {
 
 /** Inverse of `render`. No header → empty frontmatter, the whole text is the body. */
 export function parse(text: string): { frontmatter: Record<string, unknown>; body: string } {
-  const frontmatter: Record<string, unknown> = {};
-  if (!text.startsWith("---\n")) return { frontmatter, body: text };
+  if (!text.startsWith("---\n")) return { frontmatter: {}, body: text };
   const end = text.indexOf("\n---\n", 3);
   const header = end < 0 ? null : text.slice(4, end + 1);
-  if (header === null) return { frontmatter, body: text };
+  if (header === null) return { frontmatter: {}, body: text };
+  const entries: [string, unknown][] = [];
   for (const line of header.split("\n")) {
     if (!line.trim()) continue;
     const key = line.startsWith('"') ? (flowValue(line) as string) : line.slice(0, line.indexOf(":"));
     const rest = line.startsWith('"') ? line.slice(JSON.stringify(key).length) : line.slice(key.length);
-    frontmatter[key] = flowValue(rest.replace(/^:\s?/, ""));
+    entries.push([key, flowValue(rest.replace(/^:\s?/, ""))]);
   }
-  return { frontmatter, body: text.slice(end + 5) };
+  return { frontmatter: Object.fromEntries(entries), body: text.slice(end + 5) };
 }

@@ -289,3 +289,12 @@ test("scan: the cursor ignores a brief that starts like an inbox marker", () => 
   );
   assert.equal(scan(dir).cursor, 2);
 });
+
+test("scan: planted null lines and bogus usage neither throw nor bend the token count", () => {
+  const dir = join(setup(), "out", "sessions");
+  const asst = (usage: unknown) => JSON.stringify({ type: "message", message: { role: "assistant", usage } });
+  mkdirSync(dir, { recursive: true });
+  const lines = ["null", "7", '"x"', asst({ input: -1e12, output: "5" }), asst({ input: 10, output: 2 })];
+  writeFileSync(join(dir, "1_a.jsonl"), `${lines.join("\n")}\n`);
+  assert.deepEqual(scan(dir), { tokens: 12, cursor: 0 });
+});

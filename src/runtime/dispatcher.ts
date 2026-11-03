@@ -14,7 +14,7 @@ import type { Ctx, Module } from "../ctx.ts";
 import { now } from "../db.ts";
 import { publishLog } from "../mirror/index.ts";
 import { prepareClone } from "../projects/origin.ts";
-import { appendText, MAX_ENTRIES, readCapped, readDir } from "../hostile.ts";
+import { appendText, MAX_ENTRIES, MAX_LINE, readCapped, readDir } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { Config } from "../config.ts";
@@ -210,10 +210,12 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
           try {
             line = JSON.parse(l) as StdoutLine;
           } catch {}
-          if (line?.type === "error") lastError = line.message;
-          // thinking deltas become one row (the page folds it), flushed by the next other line or the exit
+          // the Worker's stdout: a `message` or `text` of any type, and no end to the thinking deltas
+          if (line?.type === "error") lastError = String(line.message);
+          // thinking deltas become one row (the page folds it), flushed by the next other line, the exit or the cap
           if (line?.type === "thinking") {
-            thinking += line.text;
+            thinking += String(line.text);
+            if (thinking.length > MAX_LINE) flushThinking();
             return;
           }
           flushThinking();

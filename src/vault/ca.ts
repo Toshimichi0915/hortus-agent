@@ -71,6 +71,9 @@ async function mint(host: string, key: string, crt: string): Promise<void> {
 }
 
 const contexts = new Map<string, Promise<SecureContext>>();
+export const MAX_CONTEXTS = 512;
+/** in-memory SecureContexts (tests) */
+export const contextCount = (): number => contexts.size;
 
 export function hostContext(host: string): Promise<SecureContext> {
   let h: string;
@@ -81,6 +84,9 @@ export function hostContext(host: string): Promise<SecureContext> {
   }
   let p = contexts.get(h);
   if (!p) {
+    // the SNI is the session's to pick: the oldest context goes, so a Worker cycling names cannot grow the map
+    // ponytail: the leaves on disk (ca/hosts/) still grow per name; mint only for origins once SNI knows the client
+    if (contexts.size >= MAX_CONTEXTS) contexts.delete(contexts.keys().next().value as string);
     p = (async () => {
       await ensure();
       const key = join(hostsDir(), `${h}.key`);

@@ -82,6 +82,12 @@ test("render/parse round-trip v6's examples byte for byte", () => {
   assert.deepEqual(fm.reactions, { "+1": ["alice"], eyes: ["hortus"] });
   const odd = { a: "1e5", b: "true", c: "x: y", d: "", e: 3, f: null, g: ["a,b", "[c]"], h: "line\nbreak", i: "-" };
   assert.deepEqual(parse(render(odd, "b")).frontmatter, odd);
+  // an emoji named __proto__ (Slack and Discord allow it) stays a key through a patch's parse + render
+  const proto = Object.fromEntries([["reactions", Object.fromEntries([["__proto__", ["mallory"]]])]]);
+  const back = parse(render(proto, "")).frontmatter;
+  assert.deepEqual(Object.keys(back.reactions as object), ["__proto__"]);
+  assert.equal(Object.getPrototypeOf(back.reactions), Object.prototype);
+  assert.equal(render(back, ""), render(proto, ""));
 });
 
 test("commit: A, no-op, M keeps history, D prunes the thread directory", async () => {
@@ -98,6 +104,16 @@ test("commit: A, no-op, M keeps history, D prunes the thread directory", async (
   assert.equal(existsSync(join(paths.dof("slack"), "C1/T1")), false);
   assert.equal(git("slack", "config", "user.name").trim(), "hortus");
   assert.equal(git("slack", "rev-parse", "--abbrev-ref", "HEAD").trim(), "main");
+});
+
+test("a name the filesystem refuses drops that change, not the batch", async () => {
+  const long = `C9/T/files/F1-${"x".repeat(300)}`;
+  const r = await commit(
+    "slack",
+    [{ op: "put", path: long, bytes: Buffer.from("a") }, msg("C9/T/M.md", "kept")],
+    "long name",
+  );
+  assert.deepEqual(r?.diff, [{ status: "A", path: "C9/T/M.md" }]);
 });
 
 test("patch merges frontmatter, null removes, missing file is skipped", async () => {
@@ -270,6 +286,22 @@ test("logs: a planted name without a time renders `?`, a linked sessions dir ren
   symlinkSync(elsewhere, sessions("t3"));
   await publishLog("t3", "Linked", "done");
   assert.equal(readFileSync(join(paths.logs(), "t3", "session.md"), "utf8"), "");
+});
+
+test("logs: a parentId cycle, a self-parent and wrong shapes neither hang nor lose the log", async () => {
+  const dir = sessions("t4");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "1730000000_a.jsonl"),
+    `null\n5\n"x"\n${line("a", "b", { role: "user", content: "one" })}${line("b", "a", { role: "user", content: "two" })}`,
+  );
+  writeFileSync(join(dir, "1730000001_b.jsonl"), line("s", "s", { role: "assistant", text: "self", toolCalls: 7 }));
+  writeFileSync(join(dir, "1730000002_c.jsonl"), line("m", null, null));
+  await publishLog("t4", "Cycle", "done");
+  const md = readFileSync(join(paths.logs(), "t4", "session.md"), "utf8");
+  assert.match(md, /## 1 user .*\n\none\n\n## 2 user .*\n\ntwo/);
+  assert.match(md, /## 3 assistant .*\n\n\(not a message\)/);
+  assert.match(md, /## 4 undefined .*\n\n\(not a message\)/);
 });
 
 test("a reader polling during 100 commits never sees an empty or truncated file", async () => {

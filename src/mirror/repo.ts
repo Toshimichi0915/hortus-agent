@@ -59,6 +59,9 @@ export function unsafe(path: string): string | null {
   return null;
 }
 
+/** errors a path's name causes (too long, a file where a directory is or the reverse) */
+const NAME_ERRORS = new Set(["ENAMETOOLONG", "EISDIR", "ENOTDIR", "EEXIST", "EINVAL", "EILSEQ"]);
+
 let tmpSeq = 0;
 /** Temp name in the same directory, then rename: readers see the old file or the new one, never a part. */
 export function writeAtomic(file: string, data: string | Buffer): void {
@@ -112,8 +115,18 @@ async function commitNow(db: DatabaseSync | null, name: string, changes: Change[
   const root = paths.dof(name);
   for (const c of changes) {
     const why = unsafe(c.path);
-    if (why) log.error("change dropped: unsafe path", undefined, { dof: name, path: c.path, why });
-    else apply(root, c);
+    if (why) {
+      log.error("change dropped: unsafe path", undefined, { dof: name, path: c.path, why });
+      continue;
+    }
+    try {
+      apply(root, c);
+    } catch (e) {
+      // one upstream name the filesystem refuses (an attachment named past NAME_MAX) must not fail the whole batch:
+      // a reconcile would retry it forever and its channel's cursor never move. Anything else (ENOSPC) still throws.
+      if (!NAME_ERRORS.has((e as NodeJS.ErrnoException).code ?? "")) throw e;
+      log.error("change dropped: the filesystem refuses its name", e, { dof: name, path: c.path });
+    }
   }
   await git(root, "add", "-A");
   try {

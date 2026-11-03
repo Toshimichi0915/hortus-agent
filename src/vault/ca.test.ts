@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
+import { copyFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import * as paths from "../paths.ts";
 import { tempDir } from "../test/until.ts";
-import { caCert, ensure, hostContext, validHost } from "./ca.ts";
+import { caCert, contextCount, ensure, hostContext, MAX_CONTEXTS, validHost } from "./ca.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-ca-");
 const run = promisify(execFile);
@@ -39,4 +39,13 @@ test("hosts with .. or / are refused before touching the filesystem", async () =
     await assert.rejects(hostContext(h));
   }
   assert.equal(validHost("API.Slack.com"), "api.slack.com");
+});
+
+test("a session cycling SNI names cannot grow the in-memory contexts past the cap", async () => {
+  const hosts = join(paths.ca(), "hosts");
+  // leaves already on disk (no openssl): only the map is under test
+  for (let i = 0; i < MAX_CONTEXTS + 20; i++)
+    for (const ext of ["key", "crt"]) copyFileSync(join(hosts, `slack.com.${ext}`), join(hosts, `h${i}.test.${ext}`));
+  for (let i = 0; i < MAX_CONTEXTS + 20; i++) await hostContext(`h${i}.test`);
+  assert.equal(contextCount(), MAX_CONTEXTS);
 });

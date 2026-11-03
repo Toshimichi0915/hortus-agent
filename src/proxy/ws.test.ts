@@ -5,6 +5,8 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { WebSocket } from "ws";
 import { Config } from "../config.ts";
@@ -32,6 +34,8 @@ let tg: FakeTelegram;
 let ports: { https: number };
 let ca: Buffer;
 let ctx: Ctx;
+/** answers every request, upgrades included, with an endless body */
+let flood: Server;
 const CORE = "127.0.0.5";
 const WORKER = "127.0.0.6";
 
@@ -59,11 +63,35 @@ before(async () => {
   dc = await FakeDiscord.start();
   tg = await FakeTelegram.start();
   dc.gatewayUrl = "wss://gateway.discord.gg";
+  flood = createServer((_req, res) => {
+    res.writeHead(400);
+    const chunk = Buffer.alloc(64 * 1024, 120);
+    const more = () => {
+      while (res.write(chunk));
+    };
+    res.on("drain", more);
+    more();
+  }).on("upgrade", (_req, s) => {
+    s.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    const chunk = Buffer.alloc(64 * 1024, 120);
+    const more = () => {
+      while (!s.destroyed && s.write(chunk));
+    };
+    s.on("drain", more);
+    s.on("error", () => {});
+    more();
+  });
+  await new Promise<void>((r) => flood.listen(0, "127.0.0.1", r));
   ctx = {
     config: Config.parse({
       proxy: { https: 0, http: 0, dns: 0 },
       dev: {
-        upstreams: { "discord.com": dc.url, "gateway.discord.gg": dc.url, "api.telegram.org": tg.url },
+        upstreams: {
+          "discord.com": dc.url,
+          "gateway.discord.gg": dc.url,
+          "api.telegram.org": tg.url,
+          "flood.example": `http://127.0.0.1:${(flood.address() as AddressInfo).port}`,
+        },
       },
     }),
     db: openDb(paths.db()),
@@ -93,6 +121,8 @@ after(async () => {
   await vaultModule.stop();
   await dc.close();
   await tg.close();
+  flood.closeAllConnections();
+  flood.close();
 });
 
 async function first(conn: Connector, ac: AbortController): Promise<Incoming> {
@@ -166,6 +196,15 @@ test("a client frame writing handle syntax itself is refused (1008)", async () =
   assert.equal(r.code, 1008);
   assert.match(r.reason, /handle syntax/);
   assert.equal(dc.identifies.length, n);
+});
+
+test("an upgrade answered with an endless body is cut at 1 MB (502), not buffered", async () => {
+  const ws = socket("wss://flood.example/", WORKER);
+  const status = await new Promise<number>((resolve) => {
+    ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+    ws.on("error", () => resolve(-1));
+  });
+  assert.equal(status, 502);
 });
 
 test("binary frames and heartbeats pass through the relay", async () => {
