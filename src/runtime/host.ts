@@ -23,6 +23,8 @@ export interface SpawnOpts {
   env?: Record<string, string>;
   /** policy.deny / policy.cache / chat.allow are read from it */
   config: Config;
+  /** HORTUS_NO_NET=1: the session's loopback alias and its TLS listener (forge git goes there; sandboxEnv) */
+  loopback?: Loopback;
   onStdout(line: string): void;
   /** stderr always goes to out/console.log; this also gets it line by line */
   onStderr?(line: string): void;
@@ -51,8 +53,13 @@ export const agentCmd = (id: string): string[] => [
   paths.task(id),
 ];
 
+export interface Loopback {
+  address: string;
+  https: number;
+}
+
 /** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */
-export function sandboxEnv(task: TaskJson, config?: Config): Record<string, string> {
+export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback): Record<string, string> {
   const ctl = paths.ctl(task.id);
   const env: Record<string, string> = {
     HOME: homedir(),
@@ -77,7 +84,10 @@ export function sandboxEnv(task: TaskJson, config?: Config): Record<string, stri
   for (const [name, d] of Object.entries(config?.dofs ?? {})) {
     if (d.type !== "github") continue;
     const host = d.host ?? "github.com";
-    git.push([`url.https://x-access-token:hortus-secret-${name}@${host}/.insteadOf`, `https://${host}/`]);
+    // HORTUS_NO_NET=1 has no DNS/DNAT: the forge host resolves to the session's alias, on its listener's port
+    const at = loopback ? `${host}:${loopback.https}` : host;
+    git.push([`url.https://x-access-token:hortus-secret-${name}@${at}/.insteadOf`, `https://${host}/`]);
+    if (loopback) git.push(["http.curloptResolve", `${at}:${loopback.address}`]);
   }
   env.GIT_CONFIG_COUNT = String(git.length);
   git.forEach(([k, v], i) => {
@@ -118,7 +128,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
 
   const child = spawn(shim.path, ["--", ...o.cmd], {
     cwd: o.cwd,
-    env: { ...sandboxEnv(o.task, o.config), ...o.env },
+    env: { ...sandboxEnv(o.task, o.config, o.loopback), ...o.env },
     stdio: ["ignore", "pipe", "pipe", "pipe"],
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];

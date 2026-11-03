@@ -1,3 +1,5 @@
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
@@ -14,6 +16,24 @@ const msg = (r: MsgRow) => {
   const b = parse<{ from?: string; type?: string; text?: string }>(r.body);
   return h`<li>${time(r.created)} <b>${b?.from ?? b?.type ?? ""}</b> <span class="pre">${b?.text ?? r.body}</span></li>`;
 };
+
+/** The last 64 KB of `out/console.log` (a VM's serial output, an unattended session's stdout and stderr). */
+function tail(f: string): string | null {
+  try {
+    const size = statSync(f).size;
+    const n = Math.min(size, 64 * 1024);
+    const buf = Buffer.alloc(n);
+    const fd = openSync(f, "r");
+    try {
+      readSync(fd, buf, 0, n, size - n);
+    } finally {
+      closeSync(fd);
+    }
+    return buf.toString("utf8");
+  } catch {
+    return null;
+  }
+}
 
 export const task: Page = (ctx, { m }) => {
   const id = m[1] as string;
@@ -37,6 +57,11 @@ export const task: Page = (ctx, { m }) => {
     .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
   const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
   const open = isOpen(t.status);
+  const up =
+    t.runtime === "vm" && t.status === "running" && t.started
+      ? ` · up ${Math.round((Date.now() - Date.parse(t.started)) / 60_000)} min`
+      : "";
+  const log = t.kind === "chat" ? null : tail(join(ctx.paths.out(id), "console.log"));
   return layout(
     ctx,
     "tasks",
@@ -46,12 +71,13 @@ ${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${details(
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 <table class="kv">
 <tr><th>Status</th><td>${t.status ?? ""}${t.outcome ? ` (${t.outcome})` : ""}</td></tr>
-<tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Project</th><td>${t.project ?? "—"}</td></tr>
+<tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Runtime</th><td>${t.runtime ?? "host"}${up}</td></tr>
+<tr><th>Project</th><td>${t.project ?? "—"}</td></tr>
 ${origin ? h`<tr><th>Origin</th><td>${origin.dof} · channel ${channel} · author ${origin.author ?? "—"}<br><span class="pre">${origin.summary ?? ""}</span></td></tr>` : ""}
 <tr><th>Budget</th><td>${budget(t)}</td></tr><tr><th>Created</th><td>${time(t.created)}</td></tr>
 <tr><th>Updated</th><td>${time(t.updated)}</td></tr>${t.closed ? h`<tr><th>Closed</th><td>${time(t.closed)}</td></tr>` : ""}
 </table>
-<p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>
+<p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>${log ? details("console.log", log) : ""}
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
 ${pendingFor(ctx, id).map(approvalEntry)}
 ${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}

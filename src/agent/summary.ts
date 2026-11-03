@@ -2,9 +2,8 @@
  * The two tool-less calls (v7 Process): the summary after the loop and the handoff note when the context fills.
  * Direct `provider.complete` with `tools: []`, because core's `run` always passes every tool.
  */
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import type { Agent, Message } from "@hortus/core";
+import { writeAtomic } from "../mirror/repo.ts";
 import type { TaskJson } from "../types.ts";
 
 export const SUMMARY_PROMPT = `You write the record of an agent's task for its owner. From the conversation, write about 200 words of Markdown with exactly these sections:
@@ -40,12 +39,6 @@ async function complete(agent: Agent, task: TaskJson, system: string, messages: 
     () => {},
   );
   return reply.text.trim();
-}
-
-export function writeAtomic(path: string, text: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(`${path}.tmp`, text);
-  renameSync(`${path}.tmp`, path);
 }
 
 export async function summarize(agent: Agent, task: TaskJson, messages: Message[], path: string): Promise<void> {

@@ -2,7 +2,8 @@
 import { join } from "node:path";
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";
-import { BrowserSession, taskRpc } from "../../browser/tools.ts";
+import { BrowserSession } from "../../browser/tools.ts";
+import { taskRpc } from "../rpc.ts";
 import type { TaskJson } from "../../types.ts";
 
 /** `paths.work` is `<task dir>/out/work` on the host and in the VM. */
@@ -62,7 +63,7 @@ export function browserTools(
         "Ask the owner to sign in to a site for you (JS-hashed passwords, OTPs, CAPTCHAs). `why` is shown to them. Then end your turn: the cookies arrive in your inbox as from=cookies and the browser has them; navigate again.",
       inputSchema: z.object({ url: z.string().url(), why: z.string().min(1) }),
       execute: async ({ url, why }) => {
-        const r = (await taskRpc(task, "browser.login", { url, why })) as {
+        const r = (await taskRpc(task.rpc, "browser.login", { url, why })) as {
           approval?: number;
           kind?: string;
           status?: string;

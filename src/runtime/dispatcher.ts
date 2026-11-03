@@ -19,7 +19,7 @@ import * as paths from "../paths.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { Config } from "../config.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
-import { type Child, type Exit, agentCmd, spawnSandboxed } from "./host.ts";
+import { type Child, type Exit, agentCmd, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
@@ -125,20 +125,26 @@ export function reply(id: string, line: StdoutLine | string): void {
 
 /**
  * HORTUS_NO_NET=1 has no session address and no transparent interception: a loopback alias registered as the
- * session's link lets `dof` reach hortusd.internal through the proxy's plain listener on 127.0.0.1 (env below);
- * curl to upstreams still needs the real network mode.
+ * session's link lets `dof` reach hortusd.internal through the proxy's plain listener on 127.0.0.1 (env below), and
+ * the alias's own listeners take its git (sandboxEnv's NO_NET insteadOf); nothing is intercepted transparently.
  */
-async function loopbackLink(id: string, role: "worker" | "planner"): Promise<Record<string, string>> {
-  if (process.env.HORTUS_NO_NET !== "1" || !ctx) return {};
+async function loopbackLink(
+  id: string,
+  role: "worker" | "planner",
+): Promise<{ env: Record<string, string>; loopback?: Loopback }> {
+  if (process.env.HORTUS_NO_NET !== "1" || !ctx) return { env: {} };
   const taken = new Set(
     (db().prepare("SELECT address FROM links").all() as { address: string }[]).map((r) => r.address),
   );
   let address: string | undefined;
   for (let n = 2; n <= 254 && !address; n++) if (!taken.has(`127.0.0.${n}`)) address = `127.0.0.${n}`;
-  if (!address) return {};
+  if (!address) return { env: {} };
   links.register(address, role, id, "session");
   const { http } = await listen("127.0.0.1", listenOpts(ctx));
-  return { HORTUS_RPC: `http://127.0.0.1:${http}`, HORTUS_RPC_LOCAL: address };
+  // a listener on the alias itself, for git (forge clones; prepareClone reuses it for the project origin)
+  // ponytail: the alias keeps its listener after the session (reused by the next task on it); test mode only
+  const { https } = await listen(address, { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
+  return { env: { HORTUS_RPC: `http://127.0.0.1:${http}`, HORTUS_RPC_LOCAL: address }, loopback: { address, https } };
 }
 
 function releaseLinks(id: string): void {
@@ -185,7 +191,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         );
         return;
       }
-      const env = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
+      const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
       env.PATH = `${join(paths.ctl(row.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
       // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
       await prepareClone(task, env.HORTUS_RPC_LOCAL);
@@ -197,6 +203,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         cwd: task.paths.work,
         env,
         config: c,
+        ...(loopback ? { loopback } : {}),
         onStdout(l) {
           let line: StdoutLine | undefined;
           try {
@@ -371,7 +378,7 @@ async function finish(
 /** Where a Planner batch runs (`planner.runtime`, 15-planner.md); a Worker VM (3g) is the same `vm` row. */
 const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => void) => Promise<Child>> = {
   host: async (task, onStdout) => {
-    const env = await loopbackLink(task.id, "planner");
+    const { env } = await loopbackLink(task.id, "planner");
     env.PATH = `${join(paths.ctl(task.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
     const c = ctx?.config as Config;
     return spawnSandboxed({

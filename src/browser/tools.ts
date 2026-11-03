@@ -4,7 +4,6 @@
  * `task.json.cookies` at launch, and each inbox `cookies` message (a finished login) before the next action.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { request } from "node:http";
 import { join } from "node:path";
 import { type Browser, type Cdp, connect, launch, page } from "./cdp.ts";
 import type { Cookie, TaskJson } from "../types.ts";
@@ -13,44 +12,6 @@ export const LOAD_MS = 10_000;
 export const EVAL_MS = 5_000;
 export const TREE_MAX = 20 * 1024;
 const CONSOLE_MAX = 50;
-
-/** `browser.login` and friends: through the proxy at `task.rpc`, or the loopback alias under HORTUS_NO_NET (dof.ts). */
-export async function taskRpc(task: TaskJson, method: string, input: unknown): Promise<unknown> {
-  const body = JSON.stringify(input);
-  const local = process.env.HORTUS_RPC_LOCAL;
-  const { status, text } = local
-    ? await new Promise<{ status: number; text: string }>((resolve, reject) => {
-        const req = request(
-          `${process.env.HORTUS_RPC}/rpc/${method}`,
-          {
-            method: "POST",
-            localAddress: local,
-            headers: { host: "hortusd.internal", "content-type": "application/json" },
-          },
-          (res) => {
-            let t = "";
-            res.setEncoding("utf8");
-            res.on("data", (c: string) => {
-              t += c;
-            });
-            res.on("end", () => resolve({ status: res.statusCode ?? 0, text: t }));
-          },
-        );
-        req.on("error", reject);
-        req.end(body);
-      })
-    : await fetch(`${task.rpc}/rpc/${method}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-      }).then(async (r) => ({ status: r.status, text: await r.text() }));
-  let v: { result?: unknown; error?: { message?: string } } | undefined;
-  try {
-    v = JSON.parse(text);
-  } catch {}
-  if (status < 200 || status >= 300) throw new Error(v?.error?.message ?? `${status} ${text.slice(0, 200)}`);
-  return v?.result;
-}
 
 interface Remote {
   type: string;

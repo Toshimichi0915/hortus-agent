@@ -26,7 +26,9 @@ export const ports = { https: 8443, http: 8080, dns: 8053 };
 
 export const PROXY = "10.77.0.1";
 export const SESSIONS = "10.77.1.0/24";
-const CONSOLE_PORT = 7700;
+/** The loopback console's bound port (console/index.ts sets it before the dispatcher starts sessions; it follows
+ * HORTUS_CONSOLE_PORT): dropped on 127.0.0.1 and ::1 for sessions. */
+export const localConsole = { port: 7700 };
 /** The remote console listener's port while it runs (console/remote.ts): dropped on every address for sessions. */
 export const remoteConsole = { port: 0 };
 
@@ -176,9 +178,9 @@ export async function sessionRules(
       s(`ip daddr ${address} tcp dport { ${p.http}, ${p.https} } accept`) +
       s(`ip daddr ${address} udp dport ${p.dns} accept`) +
       (remoteConsole.port ? s(`tcp dport ${remoteConsole.port} drop`) : "") +
-      s(`ip daddr 127.0.0.1 tcp dport ${CONSOLE_PORT} drop`) +
+      s(`ip daddr 127.0.0.1 tcp dport ${localConsole.port} drop`) +
       s("ip daddr 127.0.0.0/8 accept") +
-      s(`ip6 daddr ::1 tcp dport ${CONSOLE_PORT} drop`) +
+      s(`ip6 daddr ::1 tcp dport ${localConsole.port} drop`) +
       s("ip6 daddr ::1 accept") +
       (v4.length ? s(`ip daddr { ${v4.join(", ")} } accept`) : "") +
       (v6.length ? s(`ip6 daddr { ${v6.join(", ")} } accept`) : "") +

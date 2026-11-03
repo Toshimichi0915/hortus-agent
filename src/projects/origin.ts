@@ -165,7 +165,7 @@ export async function prepareClone(task: TaskJson, loopback?: string): Promise<v
     await git(["-C", dir, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);
   }
   if (loopback) {
-    // ponytail: the alias keeps its listener after the session (reused by the next task on it); test mode only
+    // the dispatcher's loopbackLink opened it already (listen returns the existing ports)
     const { http } = await listen(loopback, { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
     await git(["-C", dir, "remote", "set-url", "origin", `http://${loopback}:${http}/git/${name}`]);
     await git(["-C", dir, "config", "--replace-all", "http.extraHeader", "Host: hortusd.internal"]);

@@ -117,21 +117,21 @@ if (!enabled) {
 
   let local: Server;
   let lan: Server; // stands in for a LAN host: reachable unless a rule drops it
-  let console_: Server | undefined;
+  let console_: Server;
   before(async () => {
     await net.flushStale();
     await net.ensureDummy();
     local = createServer((_, res) => res.end("local"));
     await new Promise<void>((r) => local.listen(0, "127.0.0.1", r));
     console_ = createServer((_, res) => res.end("console"));
-    await new Promise<void>((r, j) => console_?.once("error", j).listen(7700, "127.0.0.1", r)).catch(() => {
-      console_ = undefined;
-    });
+    // the console on an ephemeral port (as HORTUS_CONSOLE_PORT): the dropped port must follow it
+    await new Promise<void>((r) => console_?.listen(0, "127.0.0.1", r));
+    net.localConsole.port = (console_.address() as { port: number }).port;
   });
   after(async () => {
     local.close();
     lan.close();
-    console_?.close();
+    console_.close();
     for (const id of ["S1", "S2"]) await sessionNet.close(id).catch(() => {});
     for (const id of ["S1", "S2", "X"]) await cgroup.kill(id);
     spawnSync("nft", ["delete", "table", "inet", NAMES.table]);
@@ -166,7 +166,8 @@ if (!enabled) {
     assert.equal((await curl(s1, `http://${a}/`)).out, `proxy ${a}`, ":80 DNAT'd to the http port");
     const port = (local.address() as { port: number }).port;
     assert.equal((await curl(s1, `http://127.0.0.1:${port}/`)).out, "local");
-    if (console_) assert.equal((await curl(s1, "http://127.0.0.1:7700/")).code, 28, "console: dropped, timed out");
+    const cp = net.localConsole.port;
+    assert.equal((await curl(s1, `http://127.0.0.1:${cp}/`)).code, 28, "console: dropped, timed out");
     assert.equal((await curl(s1, `http://${b}/`)).code, 28, "another session's address");
     assert.equal((await curl(s1, lanUrl)).out, "lan", "in S1's chat.allow");
     assert.equal((await curl(s2, lanUrl)).code, 28, "not in S2's chat.allow");

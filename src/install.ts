@@ -77,13 +77,19 @@ export function install(opts: InstallOpts = {}): boolean {
         run("sudo", c);
       }
   }
+  const hint = () => {
+    if (!existsSync(join(paths.images(), "agent.ext4")))
+      print("no Worker VM image yet: hortus image build (sudo; until then VM tasks run on the host, vm.fallback_host)");
+  };
   if (old === text) {
     print(`${path} is up to date`);
+    hint();
     return false;
   }
   if (old !== undefined && !opts.force) throw new Error(`${path} exists and differs; rerun with --force to overwrite`);
   run("sudo", ["tee", path], text);
   run("sudo", ["systemctl", "daemon-reload"]);
   print(`wrote ${path}\n  sudo systemctl enable hortusd\n  sudo systemctl start hortusd`);
+  hint();
   return true;
 }

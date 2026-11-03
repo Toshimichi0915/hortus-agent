@@ -1,8 +1,8 @@
 /** Feature `merge` (3b): `merge()` asks hortusd to merge `hortus/<task>` into the project's `main` (an approval). */
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";
-import { taskRpc } from "../../rpc.ts";
 import type { TaskJson } from "../../types.ts";
+import { taskRpc } from "../rpc.ts";
 
 export const merge = (task: TaskJson): Tool[] => [
   tool({
@@ -11,7 +11,7 @@ export const merge = (task: TaskJson): Tool[] => [
     inputSchema: z.object({}),
     execute: async () => {
       try {
-        const r = await taskRpc<{ approval: number }>("merge", {});
+        const r = await taskRpc<{ approval: number }>(task.rpc, "merge", {});
         return `merge requested: approval ${r.approval} pending; end your turn and wait for the decision in your inbox`;
       } catch (e) {
         return `merge refused: ${(e as Error).message}`;

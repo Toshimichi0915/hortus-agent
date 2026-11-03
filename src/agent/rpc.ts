@@ -18,8 +18,10 @@ export async function taskRpc<T>(base: string, method: string, input: unknown): 
     body = undefined;
   }
   if (!res.ok) {
-    const e = body as { error?: { message?: string }; message?: string } | undefined;
-    throw new Error(e?.error?.message ?? e?.message ?? `${res.status} ${text}`);
+    const e = body as { error?: { code?: string; message?: string }; message?: string } | undefined;
+    throw Object.assign(new Error(e?.error?.message ?? e?.message ?? `${res.status} ${text}`), {
+      code: e?.error?.code,
+    });
   }
   // hortusd.internal wraps results as {result}; a bare value is taken as is
   return (body && typeof body === "object" && "result" in body ? body.result : body) as T;

@@ -57,6 +57,18 @@ cat >"$root/etc/gitconfig" <<'EOF'
 [safe]
 	directory = *
 EOF
+# plain `git clone https://<forge>/o/r.git` carries the forge's placeholder (as host.ts › sandboxEnv does on the host):
+# one insteadOf per github DOF in hortusd.json.
+# ponytail: baked at build time; a forge added later needs `hortus image build` again (or a task.json-driven entry)
+if [ -f "$home/hortusd.json" ]; then
+  node -e '
+const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).dofs ?? {};
+for (const [n, c] of Object.entries(d))
+  if (c.type === "github") {
+    const h = c.host ?? "github.com";
+    console.log(`[url "https://x-access-token:hortus-secret-${n}@${h}/"]\n\tinsteadOf = https://${h}/`);
+  }' "$home/hortusd.json" >>"$root/etc/gitconfig"
+fi
 # eth0's address comes from the kernel's ip= argument: systemd-network-generator writes the .network file for networkd.
 mkdir -p "$root/task/ctl" "$root/task/out" "$root/dof" "$root/repos" "$root/schedule"
 cat >>"$root/etc/fstab" <<'EOF'

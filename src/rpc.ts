@@ -5,14 +5,11 @@
  * A method may resolve to an AsyncIterable: the socket then sends `{id, event}` frames and ends with `{id, done: true}`
  * (or `{id, error}`). Events must not be null. Other transports decide how they carry it (the console as SSE).
  */
-import { readFileSync } from "node:fs";
-import { request } from "node:http";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import { logger } from "./log.ts";
-import * as paths from "./paths.ts";
-import { type Caller, type Role, RpcError, type TaskJson } from "./types.ts";
+import { type Caller, type Role, RpcError } from "./types.ts";
 
 export interface Method<I, O> {
   roles: Role[];
@@ -191,72 +188,4 @@ export function rpcClient(path: string): RpcClient {
       sock = undefined;
     },
   };
-}
-
-/**
- * An RPC from wherever this runs: inside a task (`HORTUS_TASK` = ctl/task.json) through the proxy at `<task.rpc>/rpc`,
- * in the owner's shell over the abstract socket. `dof` and the Worker's RPC tools (`merge`) use it.
- */
-export async function taskRpc<T>(method: string, input: unknown): Promise<T> {
-  const taskFile = process.env.HORTUS_TASK;
-  if (!taskFile) {
-    const client = rpcClient(paths.socket());
-    try {
-      return (await client.call(method, input)) as T;
-    } finally {
-      client.close();
-    }
-  }
-  const task = JSON.parse(readFileSync(taskFile, "utf8")) as TaskJson;
-  const local = process.env.HORTUS_RPC_LOCAL;
-  const res = local
-    ? await loopback(`${process.env.HORTUS_RPC}/rpc/${method}`, local, JSON.stringify(input))
-    : await fetch(`${task.rpc}/rpc/${method}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      });
-  const text = await res.text();
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = undefined;
-  }
-  if (!res.ok) {
-    const e = body as { error?: { message?: string }; message?: string } | undefined;
-    throw new Error(e?.error?.message ?? e?.message ?? `${res.status} ${text}`);
-  }
-  // hortusd.internal wraps results as {result}; a bare value is taken as is
-  return (body && typeof body === "object" && "result" in body ? body.result : body) as T;
-}
-
-/**
- * HORTUS_NO_NET=1 (tests): no DNS or DNAT for hortusd.internal, so the request goes to the proxy's plain listener on
- * 127.0.0.1 from the session's loopback alias, which is how the proxy knows the task (v7 › Security › HORTUS_NO_NET).
- */
-function loopback(
-  url: string,
-  localAddress: string,
-  body: string,
-): Promise<{ ok: boolean; status: number; text(): Promise<string> }> {
-  return new Promise((resolve, reject) => {
-    const req = request(
-      url,
-      { method: "POST", localAddress, headers: { host: "hortusd.internal", "content-type": "application/json" } },
-      (res) => {
-        let t = "";
-        res.setEncoding("utf8");
-        res.on("data", (c: string) => {
-          t += c;
-        });
-        res.on("end", () => {
-          const status = res.statusCode ?? 0;
-          resolve({ ok: status >= 200 && status < 300, status, text: async () => t });
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end(body);
-  });
 }

@@ -2,6 +2,7 @@
 /** hortus: the owner's console CLI, a line-oriented client of hortusd's abstract socket. One row per command. */
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
+import { tokens } from "../console/html.ts";
 import type { ScheduleListRow } from "../console/pages/schedules.ts";
 import * as paths from "../paths.ts";
 import { type RpcClient, rpcClient } from "../rpc.ts";
@@ -21,15 +22,10 @@ const red = (s: string) => (process.stderr.isTTY ? `\x1b[31m${s}\x1b[0m` : s);
 type Row = Record<string, unknown>;
 const s = (v: unknown): string => (v === undefined || v === null ? "" : typeof v === "string" ? v : JSON.stringify(v));
 
-function tokens(n: unknown): string {
-  const x = typeof n === "number" ? n : 0;
-  return x >= 1e6 ? `${(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${(x / 1e3).toFixed(1)}k` : String(x);
-}
-
 function budget(t: Row): string {
   const b = (t.budget ?? {}) as Row;
   const u = (t.usage ?? {}) as Row;
-  return `${tokens(u.tokens)}/${tokens(b.tokens)} tok, ${Math.round(Number(t.hours ?? 0) * 10) / 10}/${s(b.hours) || 0} h`;
+  return `${tokens(Number(u.tokens) || 0)}/${tokens(Number(b.tokens) || 0)} tok, ${Math.round(Number(t.hours ?? 0) * 10) / 10}/${s(b.hours) || 0} h`;
 }
 
 /** A stream event or a replies row (`{seq, body}`) as one printed line; null for lines the REPL does not show. */
@@ -298,16 +294,7 @@ const commands: Record<string, Command> = {
     usage: "install [--ca] [--force]            install the systemd unit (and the CA system-wide)",
     async run(args) {
       const { values } = parseArgs({ args, options: { ca: { type: "boolean" }, force: { type: "boolean" } } });
-      // ponytail: lazy, untyped import so this builds before src/install.ts exists; type it once it does
-      const file = "../install.js";
-      let mod: { install?: (o: { ca: boolean; force: boolean }) => Promise<void> | void };
-      try {
-        mod = await import(file);
-      } catch {
-        throw new Error("install is not available in this build");
-      }
-      if (!mod.install) throw new Error("install is not available in this build");
-      await mod.install({ ca: values.ca ?? false, force: values.force ?? false });
+      (await import("../install.ts")).install({ ca: values.ca ?? false, force: values.force ?? false });
     },
   },
 };

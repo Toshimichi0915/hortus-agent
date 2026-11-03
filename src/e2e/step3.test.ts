@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -361,8 +362,16 @@ test("recovery after SIGKILL: running chat → waiting, unattended → queued an
      VALUES (?, 'unattended', 'sleeper', '!bash sleep 30', 'queued', ?, ?, '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
   ).run(un, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1e6, hours: 1 }), t, t);
   db.close();
-  await until(() => reqs(chat).length > 0 && reqs(un).length > 0, 15_000, "both sessions in their tool");
-  await new Promise((r) => setTimeout(r, 500));
+  // in their tool = the assistant message with the call is in the session file (a fixed delay after the model request
+  // raced that write under load, and the resumed context then had no call to interrupt)
+  const inTool = (id: string) => {
+    const dir = join(paths.out(id), "sessions");
+    return (
+      existsSync(dir) &&
+      readdirSync(dir).some((f) => readFileSync(join(dir, f), "utf8").includes('"command":"sleep 30"'))
+    );
+  };
+  await until(() => inTool(chat) && inTool(un), 15_000, "both sessions in their tool");
   const exited = new Promise((r) => daemon?.once("exit", r));
   spawnSync("systemctl", ["--user", "kill", "-s", "KILL", `${unit}.scope`]);
   await exited;

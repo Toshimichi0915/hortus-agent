@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { install } from "./install.ts";
 
+process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-install-home-"));
+
 test("install writes the unit with sudo tee, refuses a different one without --force", () => {
   const unitPath = join(mkdtempSync(join(tmpdir(), "hortus-install-")), "hortusd.service");
   const calls: string[] = [];
@@ -38,6 +40,7 @@ test("install writes the unit with sudo tee, refuses a different one without --f
     assert.ok(text.split("\n").includes(line), line);
   }
   assert.match(out.join("\n"), /systemctl enable hortusd[\s\S]*systemctl start hortusd/);
+  assert.match(out.join("\n"), /hortus image build/, "no image in the test HORTUS_HOME: the hint");
 
   assert.equal(install(opts), false, "same unit: nothing to do");
   assert.throws(() => install({ ...opts, user: "bob" }), /--force/);

@@ -4,10 +4,10 @@
  * `write` are overridden by name with tools that refuse (core: later plugins override same-named tools), and the
  * task plugin's `send`/`done` are never loaded. The system prompt is fixed text, byte-identical across batches.
  */
-import { request } from "node:http";
 import { type Plugin, type Tool, tool } from "@hortus/core";
 import { z } from "zod";
 import type { TaskJson } from "../types.ts";
+import { taskRpc } from "./rpc.ts";
 
 export const PLANNER_PROMPT = `You are the hortus Planner. You run once per batch of new events from the owner's sources (chat messages, edits, forge events) and Worker results, with no memory of earlier batches. You decide what happens to each event, then stop. You never do the work yourself: Workers do, each in its own task.
 
@@ -35,43 +35,14 @@ Also: \`task_message(task_id, text)\` sends a task a note from you (a correction
 # Input
 One user message with three sections: "## Events" (\`[e<id>] <ref> (<author>, trusted|untrusted, matches task <id>…) at <time>\` then its text), "## Results" (\`[<task id>] result|budget_exceeded:\` then its text, quoted), "## Open tasks" (\`<id> "<title>" (<status>, <runtime>, project <name>, <tokens> tokens, refs: …) — <latest summary>\`). Handle every event and result, then reply with one short line saying what you decided.`;
 
-/** `<task.rpc>/rpc/<name>`; HORTUS_NO_NET=1 reaches the proxy's plain listener from the session's loopback alias. */
+/** An RPC through the proxy; errors carry the RpcError code (`forbidden: …`), which the Planner reads. */
 async function call(task: TaskJson, name: string, input: unknown): Promise<unknown> {
-  const body = JSON.stringify(input);
-  const local = process.env.HORTUS_RPC_LOCAL;
-  const { status, text } = local
-    ? await new Promise<{ status: number; text: string }>((resolve, reject) => {
-        const req = request(
-          `${process.env.HORTUS_RPC}/rpc/${name}`,
-          {
-            method: "POST",
-            localAddress: local,
-            headers: { host: "hortusd.internal", "content-type": "application/json" },
-          },
-          (res) => {
-            let t = "";
-            res.setEncoding("utf8");
-            res.on("data", (c: string) => {
-              t += c;
-            });
-            res.on("end", () => resolve({ status: res.statusCode ?? 0, text: t }));
-          },
-        );
-        req.on("error", reject);
-        req.end(body);
-      })
-    : await fetch(`${task.rpc}/rpc/${name}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-      }).then(async (r) => ({ status: r.status, text: await r.text() }));
-  let j: { result?: unknown; error?: { code?: string; message?: string } } | undefined;
   try {
-    j = JSON.parse(text);
-  } catch {}
-  if (status < 200 || status >= 300 || j?.error)
-    throw new Error(j?.error ? `${j.error.code}: ${j.error.message}` : `${status} ${text.slice(0, 500)}`);
-  return j?.result ?? null;
+    return (await taskRpc(task.rpc, name, input)) ?? null;
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    throw code ? new Error(`${code}: ${(e as Error).message}`) : e;
+  }
 }
 
 const Ids = z.array(z.string()).min(1).describe('event ids from the batch, e.g. ["e12"]');

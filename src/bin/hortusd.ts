@@ -25,7 +25,8 @@ import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
  * then the transforms DOF (ship, then load the enabled rows from its worktree: needs the mirror's commit) before the
  * proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
  * sessions) once the proxy and links are up; the schedules tick and the Planner after it (its batches are dispatcher
- * sessions); the browser (login views) and the console last. */
+ * sessions); the console before the dispatcher (its bound port is
+ * dropped in every session's rules, net.localConsole); the browser (login views) last. */
 const modules: Module[] = [
   mirrorModule,
   vaultModule,
@@ -34,11 +35,11 @@ const modules: Module[] = [
   proxyModule,
   gatewayModule,
   webhooksModule,
+  consoleModule,
   dispatcherModule,
   schedulesModule,
   plannerModule,
   browserModule,
-  consoleModule,
 ];
 
 const log = logger("hortusd");
