@@ -84,7 +84,11 @@ document.addEventListener("submit", (e) => {
           .map((s) => s.trim())
           .filter(Boolean);
       else if (el.type === "number") v = Number(v);
-      input[el.name] = v;
+      // a dotted name nests: credentials.notion.value → { credentials: { notion: { value } } }
+      const path = el.name.split(".");
+      let o = input;
+      for (const k of path.slice(0, -1)) o = o[k] ??= {};
+      o[path[path.length - 1]] = v;
     }
   } catch (err) {
     return say(err.message, true);

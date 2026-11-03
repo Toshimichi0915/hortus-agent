@@ -60,10 +60,12 @@ export const sources: Page = async (ctx) => {
       }</section>`;
     }),
   );
+  const tf = await tryCall<{ notes: string[] }>("transforms.status", {});
+  const tfNotes = tf.ok ? tf.value.notes.map((n) => h`<p class="error">${n}</p>`) : [];
   return layout(
     ctx,
     "sources",
     "Sources",
-    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${rows.length ? rows : h`<p class="empty">no sources</p>`}</div>`,
+    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${tfNotes}${rows.length ? rows : h`<p class="empty">no sources</p>`}</div>`,
   );
 };

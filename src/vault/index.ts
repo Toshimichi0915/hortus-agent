@@ -5,10 +5,12 @@ import { define } from "../rpc.ts";
 import { RpcError, type VaultEntry } from "../types.ts";
 import * as ca from "./ca.ts";
 import * as gate from "./gate.ts";
+import { approveTransform } from "./submit.ts";
 import * as transforms from "./transforms.ts";
 import { bind, ctx, NAME, read, write } from "./vault.ts";
 
 export { ca, gate, transforms };
+export { transformsDofModule } from "./dof.ts";
 export const gateDeps = gate.deps;
 
 let timer: NodeJS.Timeout | undefined;
@@ -76,7 +78,8 @@ define("approval.decide", {
     credentials: z.record(z.string(), z.unknown()).optional(),
     reason: z.string().optional(),
   }),
-  run: ({ id, decision, reason }) => {
+  run: async ({ id, decision, credentials, reason }) => {
+    if (decision === "approve") await approveTransform(id, credentials);
     gate.decide(id, decision, "owner", { reason });
     return { ok: true };
   },

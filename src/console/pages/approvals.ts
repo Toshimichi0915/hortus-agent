@@ -1,5 +1,6 @@
 import type { Ctx } from "../../ctx.ts";
 import { button, details, h, layout, type Page, parse, type Raw, raw, time } from "../html.ts";
+import { type TransformSummary, transformForm, transformView } from "./transform-entry.ts";
 
 export interface ApprovalRow {
   id: number;
@@ -31,6 +32,7 @@ ${body ? (body.length > 300 ? details(`body (${body.length} chars)`, body) : h`<
 /** One case per kind; merge (3b), transforms (3f) and login (3h) fall back to the JSON until their steps add a view. */
 export function summaryView(kind: string | null, category: string | null, summary: Summary | undefined): Raw {
   const s = summary ?? {};
+  if (category === "transforms") return transformView(s as TransformSummary);
   switch (kind) {
     case "request":
       return requestView(s);
@@ -66,14 +68,16 @@ export function approvalEntry(a: ApprovalRow): Raw {
   } · ${time(a.requested_at)}</header>
 ${summaryView(a.kind, a.category, parse<Summary>(a.summary))}
 ${
-  a.status === "pending"
-    ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${button(
-        "Reject",
-        "approval.decide",
-        { id: a.id, decision: "reject" },
-        { cls: "bad" },
-      )}</div>`
-    : decidedLine(a)
+  a.status === "pending" && a.category === "transforms"
+    ? transformForm(a.id, parse<TransformSummary>(a.summary) ?? {})
+    : a.status === "pending"
+      ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${button(
+          "Reject",
+          "approval.decide",
+          { id: a.id, decision: "reject" },
+          { cls: "bad" },
+        )}</div>`
+      : decidedLine(a)
 }</article>`;
 }
 

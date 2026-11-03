@@ -117,7 +117,9 @@ export function decide(
     deps.inboxWrite(row.task_id, {
       from: "approval",
       trusted: true,
-      text: `approval ${id} ${status} (${row.category})${status === "approved" ? ": retry the request" : ""}`,
+      text: `approval ${id} ${status} (${row.category})${status === "approved" ? ": retry the request" : ""}${
+        extra?.reason ? ` — ${extra.reason}` : ""
+      }`,
       data: { approval: id, decision: status, category: row.category, reason: extra?.reason },
     });
   } catch (e) {

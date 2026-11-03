@@ -12,7 +12,8 @@ import { PassThrough, pipeline, Readable } from "node:stream";
 import { logger } from "../log.ts";
 import type { Manifest, Req, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
-import { type Handle, handles, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
+import { type Handle, handles, late, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
+import type { Signing } from "../vault/sigv4.ts";
 import type { Scrubber } from "../vault/scrub.ts";
 import * as transforms from "../vault/transforms.ts";
 import {
@@ -555,11 +556,13 @@ const agents = {
   "https:": new https.Agent({ keepAlive: true }),
 };
 
-function resolveIn(s: string, p: Prepared, encode: boolean): string {
+/** `req` given: only the late handles (aws-sigv4), signed over the final request. */
+function resolveIn(s: string, p: Prepared, encode: boolean, req?: Signing): string {
   for (const h of handles(s)) {
+    if (req && !late.has(h.op ?? "")) continue;
     const secret = p.secrets.get(h.name);
     if (!secret) throw new Error(`unresolved handle ${h.name}`);
-    const v = resolveHandle(h, secret);
+    const v = resolveHandle(h, secret, req);
     s = s.split(h.text).join(encode ? encodeURIComponent(v) : v);
   }
   return s;
@@ -606,6 +609,16 @@ export function upstream(
     if (len) headers["content-length"] = len;
   }
   Object.assign(headers, extra);
+  const reqPath = resolveIn(path || "/", p, false);
+  const signing: Signing = {
+    method: t.method,
+    path: reqPath,
+    query: q.slice(1),
+    headers,
+    payload: body instanceof Readable ? "stream" : body,
+  };
+  for (const [k, v] of Object.entries(headers))
+    if (handles(v).some((h) => late.has(h.op ?? ""))) headers[k] = resolveIn(v, p, false, signing);
   for (const [name, s] of p.secrets) {
     if ("entry" in s) touch(name);
     else ctx().db.prepare("UPDATE captured SET last_use = ? WHERE id = ?").run(new Date().toISOString(), s.captured.id);
@@ -615,7 +628,7 @@ export function upstream(
     host: p.target.address,
     port: p.target.port,
     method: t.method,
-    path: resolveIn(path || "/", p, false) + q,
+    path: reqPath + q,
     headers,
     agent: Object.keys(extra).length ? false : agents[p.target.protocol],
     ...(p.target.protocol === "https:" && !isIP(p.host) ? { servername: p.host } : {}),

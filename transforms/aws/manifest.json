@@ -1,0 +1,10 @@
+{
+  "name": "aws",
+  "credentials": {
+    "aws": {
+      "type": "aws",
+      "hosts": ["sts.amazonaws.com", "iam.amazonaws.com", "s3.amazonaws.com", "s3.us-east-1.amazonaws.com"],
+      "locations": ["header:Authorization", "header:x-amz-date"]
+    }
+  }
+}

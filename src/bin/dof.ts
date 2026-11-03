@@ -3,26 +3,28 @@
  * dof: search the DOF mirrors. Inside a task (`HORTUS_TASK` = ctl/task.json) through the proxy at `<task.rpc>/rpc`,
  * in the owner's shell over the abstract socket. One line per hit: `<dof>/<path>\t<ts>\t<author>\t<title or snippet>`.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
-import type { SearchHit, SearchQuery, TaskJson } from "../types.ts";
+import type { SearchHit, TaskJson } from "../types.ts";
 
-const USAGE = "usage: dof search <query> [--in <dof>] [--author <id>] [--since <iso>] [--until <iso>] [-n <limit>]";
+const USAGE = `usage: dof search <query> [--in <dof>] [--author <id>] [--since <iso>] [--until <iso>] [-n <limit>]
+       dof transform submit <dir>`;
 
-async function rpc(input: SearchQuery): Promise<SearchHit[]> {
+async function rpc<T>(method: string, input: unknown): Promise<T> {
   const taskFile = process.env.HORTUS_TASK;
   if (!taskFile) {
     const client = rpcClient(paths.socket());
     try {
-      return (await client.call("dof.search", input)) as SearchHit[];
+      return (await client.call(method, input)) as T;
     } finally {
       client.close();
     }
   }
   const task = JSON.parse(readFileSync(taskFile, "utf8")) as TaskJson;
-  const res = await fetch(`${task.rpc}/rpc/dof.search`, {
+  const res = await fetch(`${task.rpc}/rpc/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -38,7 +40,30 @@ async function rpc(input: SearchQuery): Promise<SearchHit[]> {
     const e = body as { error?: { message?: string }; message?: string } | undefined;
     throw new Error(e?.error?.message ?? e?.message ?? `${res.status} ${text}`);
   }
-  return body as SearchHit[];
+  // hortusd.internal wraps results as {result}; a bare value is taken as is
+  return (body && typeof body === "object" && "result" in body ? body.result : body) as T;
+}
+
+/** `<dir>/{manifest.json,transform.js,README.md,tests/*.json}` → `transforms.submit`; the name is the dir's. */
+async function submit(dir: string): Promise<number> {
+  const root = resolve(dir);
+  const files: Record<string, string> = {};
+  for (const f of ["manifest.json", "transform.js", "README.md"])
+    if (existsSync(join(root, f))) files[f] = readFileSync(join(root, f), "utf8");
+  if (existsSync(join(root, "tests")))
+    for (const f of readdirSync(join(root, "tests")).filter((x) => x.endsWith(".json")))
+      files[`tests/${f}`] = readFileSync(join(root, "tests", f), "utf8");
+  try {
+    const r = await rpc<{ approval: number | null; url?: string }>("transforms.submit", {
+      name: basename(root),
+      files,
+    });
+    console.log(r.approval === null ? "already enabled" : `approval ${r.approval} pending: ${r.url}`);
+    return 0;
+  } catch (e) {
+    console.error(`dof: ${(e as Error).message}`);
+    return 1;
+  }
 }
 
 async function main(): Promise<number> {
@@ -57,6 +82,13 @@ async function main(): Promise<number> {
     return 64;
   }
   const [cmd, ...words] = parsed.positionals;
+  if (cmd === "transform") {
+    if (words[0] !== "submit" || !words[1]) {
+      console.error(USAGE);
+      return 64;
+    }
+    return submit(words[1]);
+  }
   const { n, ...filters } = parsed.values;
   const limit = n === undefined ? undefined : Number(n);
   if (cmd !== "search" || words.length === 0 || (limit !== undefined && !Number.isInteger(limit))) {
@@ -65,7 +97,11 @@ async function main(): Promise<number> {
   }
   let hits: SearchHit[];
   try {
-    hits = await rpc({ q: words.join(" "), ...filters, ...(limit === undefined ? {} : { limit }) });
+    hits = await rpc<SearchHit[]>("dof.search", {
+      q: words.join(" "),
+      ...filters,
+      ...(limit === undefined ? {} : { limit }),
+    });
   } catch (e) {
     console.error(`dof: ${(e as Error).message}`);
     return 1;
