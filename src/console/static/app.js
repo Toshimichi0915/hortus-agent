@@ -49,6 +49,11 @@ async function refreshNav() {
 /** Re-fetch this page and swap every [data-refresh] container (and the nav badge); textareas outside stay. */
 async function refresh() {
   const doc = new DOMParser().parseFromString(await (await fetch(location.href)).text(), "text/html");
+  // the focused control is about to be replaced: focus its twin after (keyboard users keep their place)
+  const active = document.activeElement;
+  const twin = active?.dataset?.call
+    ? `[data-call="${active.dataset.call}"][data-input="${CSS.escape(active.dataset.input ?? "")}"]`
+    : null;
   for (const el of document.querySelectorAll("[data-refresh]")) {
     const n = doc.getElementById(el.id);
     if (n) el.innerHTML = n.innerHTML;
@@ -56,12 +61,29 @@ async function refresh() {
   const nav = doc.querySelector("nav");
   if (nav) $("nav").innerHTML = nav.innerHTML;
   localTimes();
+  labelCells();
+  if (active && !active.isConnected) ((twin && document.querySelector(twin)) || $(".composer textarea"))?.focus();
 }
+
+/** Phones show a table row as a stacked card: each cell carries its column's name (app.css shows it). */
+function labelCells() {
+  for (const t of document.querySelectorAll("table")) {
+    const names = [...t.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    for (const tr of names.length ? t.querySelectorAll("tbody tr") : [])
+      for (const [i, td] of [...tr.children].entries()) if (names[i]) td.dataset.label = names[i];
+  }
+}
+labelCells();
 
 async function act(el, input) {
   say(""); // a stale result must not read as this action's
+  // busy while in flight: a second click or Enter must not send it twice (aria-disabled, not disabled: focus stays)
+  const controls = el.tagName === "FORM" ? [...el.querySelectorAll("button:not([data-call])")] : [el];
+  el.dataset.busy = "";
+  for (const c of controls) c.setAttribute("aria-disabled", "true");
+  const slow = setTimeout(() => say("working…"), 300);
   try {
-    const r = await post(el.dataset.call, input);
+    const r = await post(el.dataset.call, input).finally(() => clearTimeout(slow));
     say(typeof r?.message === "string" ? r.message : "done");
     if (el.dataset.go) {
       location.href = el.dataset.go.replace("{id}", encodeURIComponent(r?.id ?? r));
@@ -72,12 +94,15 @@ async function act(el, input) {
   } catch (e) {
     say(e.message, true);
     throw e;
+  } finally {
+    delete el.dataset.busy;
+    for (const c of controls) c.removeAttribute("aria-disabled");
   }
 }
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-call]");
-  if (!b) return;
+  if (!b || "busy" in b.dataset) return;
   if ("confirm" in b.dataset && !b.dataset.armed) {
     b.dataset.armed = b.textContent;
     b.textContent = `Confirm: ${b.textContent}`;
@@ -96,6 +121,7 @@ document.addEventListener("submit", (e) => {
   const f = e.target;
   if (!f.dataset.call) return;
   e.preventDefault();
+  if ("busy" in f.dataset) return;
   const input = JSON.parse(f.dataset.input || "{}");
   try {
     for (const el of f.elements) {
@@ -127,7 +153,14 @@ document.addEventListener("submit", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") say("");
+  if (e.key === "Escape") {
+    say("");
+    // Esc cancels an armed confirm
+    for (const b of document.querySelectorAll("button[data-armed]")) {
+      b.textContent = b.dataset.armed;
+      delete b.dataset.armed;
+    }
+  }
   const t = e.target;
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && t.closest?.(".composer") && t.tagName === "TEXTAREA") {
     e.preventDefault();
@@ -148,7 +181,10 @@ const st = $("#stream");
 if (st) {
   const atBottom = () => st.scrollHeight - st.scrollTop - st.clientHeight < 40;
   st.scrollTop = st.scrollHeight;
-  sse(
+  // the stream's connection state: EventSource retries by itself (Last-Event-ID), the owner sees that it does
+  const conn = $("#conn");
+  conn.textContent = "connecting…";
+  const es = sse(
     "chat",
     (d) => {
       const stick = atBottom();
@@ -157,10 +193,23 @@ if (st) {
     },
     `?task=${encodeURIComponent(st.dataset.task)}&after=${st.dataset.last}`,
   );
+  es.addEventListener("open", () => (conn.textContent = ""));
+  es.addEventListener("error", () => (conn.textContent = "reconnecting…"));
+}
+/** A stream that dropped missed its events: once it is back, re-render as if one came. */
+function resyncing(name, handler) {
+  let lost = false;
+  const es = sse(name, handler);
+  es.addEventListener("error", () => (lost = true));
+  es.addEventListener("open", () => {
+    if (!lost) return;
+    lost = false;
+    handler();
+  });
 }
 // every page: the nav badge follows; pages showing approvals re-render
-sse("approvals", ["approvals", "chat", "tasks", "task"].includes(page) ? refresh : refreshNav);
-if (["tasks", "chat", "task"].includes(page)) sse("tasks", refresh);
+resyncing("approvals", ["approvals", "chat", "tasks", "task"].includes(page) ? refresh : refreshNav);
+if (["tasks", "chat", "task"].includes(page)) resyncing("tasks", refresh);
 
 // Settings › Remote: the enrolment code's countdown
 setInterval(() => {

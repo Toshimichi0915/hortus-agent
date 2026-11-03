@@ -187,6 +187,8 @@ test("search: CJK, LIKE fallback, filters, ordering, quoting, limit", async () =
   );
   assert.equal(search({ q: "検索テ" })[0]?.path, "C6/T/1.md");
   assert.match(search({ q: "検索テ" })[0]?.snippet ?? "", /\[検索テ\]/);
+  // the snippet window is in trigrams: wide enough for the whole hit and some words around it
+  assert.match(search({ q: "ok go lark again" })[0]?.snippet ?? "", /\[ok go lark again\]/);
   const short = search({ q: "ok", in: "slack" });
   assert.deepEqual(
     short.map((h) => h.path),

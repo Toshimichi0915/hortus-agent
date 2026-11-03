@@ -56,6 +56,16 @@ main {
   max-width: 72ch;
   margin: 0 auto;
   padding: 1rem;
+  /* a long path or id wraps instead of widening the page (break-word leaves table column sizing alone) */
+  overflow-wrap: break-word;
+}
+input,
+select {
+  font: inherit;
+}
+[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
 }
 table {
   border-collapse: collapse;
@@ -170,8 +180,15 @@ button {
   td:empty {
     display: none;
   }
+  /* the header row is hidden: each cell says its column (app.js sets data-label) */
+  td[data-label]:not(.actions)::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+  }
   button,
-  a.button {
+  a.button,
+  input,
+  select {
     min-height: 44px;
   }
 }

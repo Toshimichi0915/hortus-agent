@@ -83,7 +83,7 @@ export function search(db: DatabaseSync, query: SearchQuery): SearchHit[] {
   if (query.since !== undefined) and("ts >= ?", query.since);
   // inclusive at the given precision: --until 2026-10-27 keeps the whole day
   if (query.until !== undefined) and("substr(ts, 1, ?) <= ?", query.until.length, query.until);
-  const snippet = match ? "snippet(search, 5, '[', ']', '…', 12)" : "substr(body, 1, 120)";
+  const snippet = match ? "snippet(search, 5, '[', ']', '…', 64)" : "substr(body, 1, 120)";
   const order = match ? "bm25(search), ts DESC" : "ts DESC";
   const rows = db
     .prepare(
