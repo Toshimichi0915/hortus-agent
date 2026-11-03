@@ -68,6 +68,8 @@ export const Config = z.looseObject({
       cpus: z.number().int().positive().default(2),
       mem_mb: z.number().int().positive().default(4096),
       max_concurrent: z.number().int().positive().default(4),
+      /** image missing: run VM-destined tasks as unattended host sessions (true) or keep them queued (v7) */
+      fallback_host: z.boolean().default(true),
     })
     .prefault({}),
   chat: z.looseObject({ allow: Strings.default([]) }).prefault({}),

@@ -151,6 +151,8 @@ export interface ConnectorDeps {
   config: Record<string, unknown> & { type: string; owner?: string; trust?: unknown; api?: string; host?: string };
   log: Log;
   fetch(url: string, init?: RequestInit): Promise<Response>;
+  /** a WebSocket through the proxy as role core (Discord's gateway: the `ws:text` relay swaps IDENTIFY's placeholder) */
+  ws?(url: string): Pick<WebSocket, "send" | "close" | "readyState" | "onmessage" | "onclose" | "onerror">;
   /** a ref is in task_refs (CI routing) */
   hasRef(ref: string): boolean;
 }

@@ -30,6 +30,8 @@ export interface GatewayDeps {
   connectors: Record<string, ConnectorFactory>;
   /** the placeholder-aware fetch for DOF `name` */
   fetch(name: string): ConnectorDeps["fetch"];
+  /** the WebSocket opener (the proxy's `coreSocket`); unset: the connector's own */
+  ws?: ConnectorDeps["ws"];
   /** the mirror writer (01-mirror-search.md) */
   commit(dof: string, changes: Change[], message: string): Promise<unknown>;
   /** wake the Planner */
@@ -164,7 +166,14 @@ export function createGateway(deps: GatewayDeps): Gateway {
     const { signal } = r.ac;
     for (let i = 0; !r.conn && !signal.aborted; i++) {
       try {
-        r.conn = await factory({ name, config: r.cfg, log, fetch: deps.fetch(name), hasRef: deps.hasRef });
+        r.conn = await factory({
+          name,
+          config: r.cfg,
+          log,
+          fetch: deps.fetch(name),
+          hasRef: deps.hasRef,
+          ...(deps.ws && { ws: deps.ws }),
+        });
         r.error = undefined;
       } catch (e) {
         r.error = message(e);
@@ -263,7 +272,7 @@ define("source.resync", {
  * What the integration step injects before hortusd starts the module: the mirror writer, the Planner, task_refs, and
  * the placeholder-aware fetch (the proxy's `coreFetch`).
  */
-const wiring: Pick<GatewayDeps, "commit" | "wake" | "hasRef" | "fetch"> = {
+const wiring: Pick<GatewayDeps, "commit" | "wake" | "hasRef" | "fetch" | "ws"> = {
   fetch: () => async () => {
     throw new Error("gateway: fetch is not wired");
   },
@@ -292,6 +301,7 @@ export const gatewayModule: Module = {
       commit: (dof, changes, msg) => wiring.commit(dof, changes, msg),
       wake: () => wiring.wake(),
       hasRef: (ref) => wiring.hasRef(ref),
+      ws: (url) => (wiring.ws ?? ((u: string) => new WebSocket(u)))(url),
     });
     module.start();
   },

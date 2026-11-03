@@ -167,7 +167,7 @@ if (!enabled) {
     const t0 = Date.now();
     const vm = await startVm({
       task,
-      config: { vm: { cpus: 2, mem_mb: 1024, max_concurrent: 1 } },
+      config: { vm: { cpus: 2, mem_mb: 1024, max_concurrent: 1, fallback_host: true } },
       deadlineMs: 70_000,
     });
     const exit = await vm.wait();

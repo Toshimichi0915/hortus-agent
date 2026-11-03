@@ -30,7 +30,10 @@ export async function recover(c: Ctx): Promise<void> {
   for (const { address } of stale) links.release(address);
   let dirs: string[] = [];
   try {
-    dirs = readdirSync(join(cgroup.base(), "tasks"));
+    // the cgroup's own control files sit beside the task cgroups
+    dirs = readdirSync(join(cgroup.base(), "tasks"), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
   } catch {}
   for (const id of dirs) await cgroup.kill(id).catch((e) => log.error("stale cgroup", e, { task: id }));
 }

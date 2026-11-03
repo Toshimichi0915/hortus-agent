@@ -17,7 +17,7 @@ import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, until } from "../test/until.ts";
 import type { Change, ConnectorFactory } from "../types.ts";
-import { directFetch } from "../vault/direct.ts";
+import { directFetch } from "../test/direct.ts";
 import { createGateway } from "./gateway.ts";
 
 const home = mkdtempSync(join(tmpdir(), "hortus-messengers-"));

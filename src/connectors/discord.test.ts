@@ -6,7 +6,7 @@ import { after, before, test } from "node:test";
 import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { memLog, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
-import { directFetch } from "../vault/direct.ts";
+import { directFetch } from "../test/direct.ts";
 import { create } from "./discord.ts";
 
 process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-discord-"));

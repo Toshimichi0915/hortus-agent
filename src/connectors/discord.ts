@@ -91,8 +91,7 @@ const emojiKey = (e: { id: string | null; name: string | null }) => (e.id ? `${e
 export async function create(deps: ConnectorDeps): Promise<Connector> {
   const { name, log, config: cfg } = deps;
   const base = (cfg.api ?? "https://discord.com/api/v10").replace(/\/$/, "");
-  // ponytail: ConnectorDeps has no WebSocket opener yet; the wiring adds `ws` (through the proxy) without touching this
-  const open = (deps as ConnectorDeps & { ws?: (url: string) => Socket }).ws ?? ((u: string) => new WebSocket(u));
+  const open: (url: string) => Socket = deps.ws ?? ((u) => new WebSocket(u));
   const st: ConnectorStatus = { connected: false };
   const chans = new Map<string, DChannel>();
   const names = new Map<string, string>();

@@ -1,7 +1,9 @@
 /**
  * The dispatcher (07-step3-runtime.md): every second and on `wake()`, start each `queued` host task unless `PAUSED`;
  * relay a session's stdout into `replies`; on exit read `out/` as hostile input and move the status on. A new kind is a
- * row in KINDS; a new runtime (3g's VM) is a `start` beside `host.spawnSandboxed`, picked by `runtime`.
+ * row in KINDS; a runtime is a `start` (`host.spawnSandboxed`, `vm.startVm`), picked by the task's `runtime` column.
+ * VM tasks start below `vm.max_concurrent`; with the image missing they run on the host (`vm.fallback_host`, v7) or
+ * stay queued with the reason in `error`.
  */
 import { closeSync, constants, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
@@ -19,6 +21,7 @@ import { type Child, type Exit, agentCmd, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
+import { missingImage, startVm } from "./vm.ts";
 
 /** Per kind: the Landlock profile and whether every stdout line is a chat reply. */
 const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
@@ -45,6 +48,7 @@ const Outbox = z.object({
 });
 
 interface Running {
+  vm: boolean;
   child?: Child;
   done: Promise<void>;
   stopTimer?: NodeJS.Timeout;
@@ -72,9 +76,30 @@ function tick(): void {
   try {
     if (existsSync(paths.paused())) return;
     const rows = db()
-      .prepare("SELECT * FROM tasks WHERE status = 'queued' AND COALESCE(runtime, 'host') = 'host' ORDER BY updated")
+      .prepare("SELECT * FROM tasks WHERE status = 'queued' ORDER BY updated")
       .all() as unknown as tasks.TaskRow[];
-    for (const row of rows) if (!running.has(row.id) && !tasks.closing.has(row.id)) start(row);
+    let vms = [...running.values()].filter((r) => r.vm).length;
+    for (const row of rows) {
+      if (running.has(row.id) || tasks.closing.has(row.id)) continue;
+      if (row.runtime !== "vm") {
+        start(row, false);
+        continue;
+      }
+      const missing = missingImage();
+      if (missing && !ctx.config.vm.fallback_host) {
+        // not startable until `hortus image build`: the card shows why, the tick retries
+        if (row.error !== missing) db().prepare("UPDATE tasks SET error = ? WHERE id = ?").run(missing, row.id);
+        continue;
+      }
+      if (missing) {
+        log().info("VM image missing: running on the host (vm.fallback_host)", { task: row.id });
+        start(row, false, `${missing}; running as an unattended host session (vm.fallback_host)`);
+        continue;
+      }
+      if (vms >= ctx.config.vm.max_concurrent) continue;
+      vms++;
+      start(row, true);
+    }
   } catch (e) {
     log().error("tick failed", e);
   } finally {
@@ -119,13 +144,14 @@ function releaseLinks(id: string): void {
   for (const r of rows) links.release(r.address);
 }
 
-function start(row: tasks.TaskRow): void {
+/** `vm`: boot it with startVm; `note`: a status line on the card (the host fallback for a VM task). */
+function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
   if (!ctx) return;
   const c = ctx.config;
   const kind = KINDS[row.kind] ?? KINDS.unattended;
   const startedAt = Date.now();
   tasks.setStatus(row.id, "running", { started: now(), error: null });
-  const entry: Running = { done: Promise.resolve() };
+  const entry: Running = { vm, done: Promise.resolve() };
   running.set(row.id, entry);
   let lastError: string | undefined;
   let thinking = "";
@@ -138,6 +164,22 @@ function start(row: tasks.TaskRow): void {
     try {
       const task = tasks.taskJson(c, row);
       tasks.prepare(c, task);
+      if (note) reply(row.id, { type: "status", text: note });
+      if (vm) {
+        const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
+        const child = await startVm({ task, config: c, deadlineMs });
+        entry.child = child;
+        const exit = await child.wait();
+        // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
+        await finish(
+          row,
+          exit,
+          startedAt,
+          undefined,
+          exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs,
+        );
+        return;
+      }
       const env = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
       env.PATH = `${join(paths.ctl(row.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
@@ -254,7 +296,13 @@ function tail(path: string, bytes = 2000): string {
   }
 }
 
-async function finish(row: tasks.TaskRow, exit: Exit, startedAt: number, lastError?: string): Promise<void> {
+async function finish(
+  row: tasks.TaskRow,
+  exit: Exit,
+  startedAt: number,
+  lastError?: string,
+  overBudget = false,
+): Promise<void> {
   const id = row.id;
   const d = db();
   const out = paths.out(id);
@@ -272,9 +320,11 @@ async function finish(row: tasks.TaskRow, exit: Exit, startedAt: number, lastErr
     );
   const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? null;
   const failed = exit.code !== 0 && msgs.length === 0;
-  const error = failed
-    ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
-    : null;
+  const error = overBudget
+    ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
+    : failed
+      ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
+      : null;
   const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
     n: number;
   };
@@ -292,7 +342,7 @@ async function finish(row: tasks.TaskRow, exit: Exit, startedAt: number, lastErr
   } else {
     // an owner message the Worker never drained re-queues it; a crash waits for the next message (no restart loop)
     // ponytail: a `run` with an empty result is closed by 3c; budget_exceeded waits like any other exit until step 4
-    tasks.setStatus(id, exit.code === 0 && inbox > cursor ? "queued" : "waiting", extra);
+    tasks.setStatus(id, exit.code === 0 && inbox > cursor && !overBudget ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
   log().info("session ended", { task: id, code: exit.code, signal: exit.signal, outbox: msgs.length });

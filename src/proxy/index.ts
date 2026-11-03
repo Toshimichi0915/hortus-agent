@@ -1,10 +1,13 @@
 /** The proxy module: the client registry, the listeners, and `coreFetch` for hortusd's own upstream calls. */
-import { Readable } from "node:stream";
+import { createServer } from "node:http";
+import { duplexPair, Readable } from "node:stream";
+import { WebSocket } from "ws";
 import type { Ctx, Module } from "../ctx.ts";
 import { bind } from "../vault/vault.ts";
 import * as links from "./links.ts";
 import { handle } from "./pipeline.ts";
 import { type ListenOptions, listen, listening, unlisten } from "./server.ts";
+import { relay } from "./ws.ts";
 
 export { routes as internalRoutes } from "./internal.ts";
 export type { Client } from "./links.ts";
@@ -71,4 +74,30 @@ export async function coreFetch(input: string | URL, init: RequestInit = {}): Pr
         ? out.body
         : new Uint8Array(out.body);
   return new Response(b, { status: out.status, headers: h });
+}
+
+/** Parses the in-process upgrade requests of `coreSocket` and hands them to the relay as role core over TLS. */
+const coreUpgrades = createServer().on("upgrade", (req, socket, head) => {
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = [v].flat().join(", ");
+  const sni = (headers.host ?? "").replace(/:\d+$/, "");
+  relay(links.CORE, { method: "GET", path: req.url ?? "/", headers, body: null, tls: true, sni }, socket, head).catch(
+    () => socket.destroy(),
+  );
+});
+
+/**
+ * `coreFetch` for WebSockets: a `wss://` client whose connection is an in-process stream pair into the relay (no
+ * address, so no other local process can pose as core). The relay applies the transform (`ws:text` frames too).
+ */
+export function coreSocket(url: string): globalThis.WebSocket {
+  const u = new URL(url);
+  return new WebSocket(`ws://${u.host}${u.pathname}${u.search}`, {
+    createConnection: () => {
+      const [mine, theirs] = duplexPair();
+      coreUpgrades.emit("connection", theirs);
+      // ws calls these on its socket after the handshake; a stream pair has no Nagle or idle timer
+      return Object.assign(mine, { setNoDelay: () => mine, setTimeout: () => mine, setKeepAlive: () => mine });
+    },
+  } as unknown as WebSocket.ClientOptions) as unknown as globalThis.WebSocket;
 }

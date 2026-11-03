@@ -18,14 +18,15 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { FakeDiscord } from "../test/fakes/discord.ts";
 import { FakeTelegram } from "../test/fakes/telegram.ts";
-import { memLog } from "../test/until.ts";
+import { memLog, until } from "../test/until.ts";
 import type { Connector, Incoming } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { coreFetch, links, listen, proxyModule } from "./index.ts";
+import { coreFetch, coreSocket, links, listen, proxyModule } from "./index.ts";
 
 process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-ws-"));
+process.env.HORTUS_NO_NET = "1";
 tgTiming.pollS = 1;
 
 let dc: FakeDiscord;
@@ -62,6 +63,7 @@ before(async () => {
   dc.gatewayUrl = "wss://gateway.discord.gg";
   ctx = {
     config: Config.parse({
+      proxy: { https: 0, http: 0, dns: 0 },
       dev: {
         upstreams: { "discord.com": dc.url, "gateway.discord.gg": dc.url, "api.telegram.org": tg.url },
       },
@@ -121,6 +123,23 @@ test("discord through the proxy: REST and IDENTIFY get the real token; upstream 
   assert.deepEqual(dc.identifies, [{ op: 2, token: dc.token }]);
   const m = await conn.mirror(event);
   assert.equal(m.changes[0]?.body, "leak hortus-secret-discord here");
+});
+
+test("coreSocket (hortusd's wiring): the in-process route is role core and IDENTIFY gets the real token", async () => {
+  const n = dc.identifies.length;
+  const conn = await discord({
+    name: "discord",
+    config: { type: "discord", owner: "200" },
+    log: memLog(),
+    fetch: coreFetch,
+    ws: coreSocket,
+    hasRef: () => false,
+  });
+  const got = first(conn, new AbortController());
+  await until(() => dc.identifies.length > n, 5000, "IDENTIFY");
+  dc.post("300", { user: "200", text: "via coreSocket" });
+  await got;
+  assert.deepEqual(dc.identifies.slice(n), [{ op: 2, token: dc.token }]);
 });
 
 test("a client frame with the raw token is refused (1008) and never reaches the gateway", async () => {

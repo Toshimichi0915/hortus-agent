@@ -11,17 +11,19 @@ import * as paths from "../paths.ts";
 import { consoleModule } from "../console/index.ts";
 import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
-import { coreFetch, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
+import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
-import { cgroup, dispatcherModule, runtimeModule, sessionNet, tasks } from "../runtime/index.ts";
-import { gateDeps, vaultModule } from "../vault/index.ts";
+import { cgroup, dispatcherModule, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
+import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
-/** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, transforms) before
- * the proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
+/** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
+ * then the transforms DOF (ship, then load the enabled rows from its worktree: needs the mirror's commit) before the
+ * proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the dispatcher (recovery, then
  * sessions) once the proxy and links are up; the console last. 3c adds the scheduler. */
 const modules: Module[] = [
   mirrorModule,
   vaultModule,
+  transformsDofModule,
   runtimeModule,
   proxyModule,
   gatewayModule,
@@ -66,6 +68,7 @@ async function main(): Promise<void> {
     commit,
     hasRef: (ref) => ctx.db.prepare("SELECT 1 FROM task_refs WHERE ref = ?").get(ref) !== undefined,
     fetch: () => coreFetch,
+    ws: coreSocket,
   });
   // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
   sessionNet.init({
@@ -73,6 +76,8 @@ async function main(): Promise<void> {
     proxy: { listen: async (a) => void (await listen(a, listenOpts(ctx))), unlisten },
     links,
   });
+  // VM tasks (3g): the VM's link address is registered as a worker/planner client of the proxy
+  vm.init({ links });
   devLink();
   // approval decisions (and later merge/rebase notes) reach the task's inbox, which re-queues a waiting task
   gateDeps.inboxWrite = (id, msg) => void tasks.inboxWrite(id, msg);

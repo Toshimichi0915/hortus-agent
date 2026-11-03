@@ -57,6 +57,15 @@ export interface CreateInput {
   budget?: { tokens: number; hours: number };
 }
 
+/** v6 › Worker › Runtimes: chat on the host, a project task by its project's `runtime`, the Planner by
+ * `planner.runtime`, everything else in a VM (the dispatcher falls back to the host while the image is missing). */
+export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project">): "host" | "vm" {
+  if (i.kind === "chat") return "host";
+  if (i.kind === "planner") return c.planner.runtime;
+  if (i.project) return c.projects[i.project]?.runtime ?? "host";
+  return "vm";
+}
+
 /** What the dispatcher registers: wake (a task became queued), stop (kill after 30 s), kill (close: end it now). */
 export const hooks = {
   wake(): void {},
@@ -119,7 +128,7 @@ export function create(i: CreateInput): TaskRow {
       json({ tokens, hours }),
       json({ tokens: 0 }),
       i.project ?? null,
-      i.runtime ?? "host",
+      i.runtime ?? defaultRuntime(c.config, i),
       i.parent ?? null,
       json(keys),
       t,
