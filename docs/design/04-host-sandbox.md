@@ -39,9 +39,11 @@ profile(kind: "unattended" | "chat", task: { id: string; clone?: string; schedul
 `open(task, cgroupPath)`: allocate `n` (2–254, first free), `net.addAddress(10.77.1.n)`, `proxy.listen(10.77.1.n)`, `links.register(10.77.1.n, role, task, "session")`, nftables rules in `inet hortus` for `socket cgroupv2 level <depth> "<path relative to /sys/fs/cgroup>"`:
 
 ```
-nat:  udp dport 53 dnat ip to 10.77.1.n:53
-out:  ip daddr 10.77.1.n tcp dport { 80, 443 } accept
-      ip daddr 10.77.1.n udp dport 53 accept
+nat:  udp dport 53 dnat ip to 10.77.1.n:8053          (ports: config `proxy`, v7 › Security › Network)
+      ip daddr 10.77.1.n tcp dport 80 dnat ip to 10.77.1.n:8080
+      ip daddr 10.77.1.n tcp dport 443 dnat ip to 10.77.1.n:8443
+out:  ip daddr 10.77.1.n tcp dport { 8080, 8443 } accept
+      ip daddr 10.77.1.n udp dport 8053 accept
       ip daddr 127.0.0.1 tcp dport 7700 drop
       ip daddr 127.0.0.0/8 accept
       ip6 daddr ::1 accept        # minus the console's and the remote listener's ports (3d adds them)

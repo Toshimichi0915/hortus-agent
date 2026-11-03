@@ -13,7 +13,7 @@ const bin = (name: string) => fileURLToPath(new URL(`${name}.js`, import.meta.ur
 
 function daemon(home: string): ChildProcess {
   return spawn(process.execPath, ["--no-warnings", bin("hortusd")], {
-    env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: "0" },
+    env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: "0", HORTUS_NO_NET: "1" },
     stdio: ["ignore", "ignore", "pipe"],
   });
 }

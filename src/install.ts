@@ -1,14 +1,19 @@
 /** `hortus install [--force] [--ca]`: the hortusd system unit (v6 › Process), written with `sudo tee`. */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as paths from "./paths.ts";
+
+export const CA_ANCHOR = "/etc/ca-certificates/trust-source/anchors/hortus.crt";
 
 export interface InstallOpts {
   force?: boolean;
-  /** install the hortus CA into the system trust store: a no-op until the CA exists (F3) */
+  /** install the hortus CA into the system trust store (Arch: trust-source anchors); skipped until hortusd made it */
   ca?: boolean;
+  /** the CA certificate (default `<HORTUS_HOME>/ca/ca.crt`) */
+  caCert?: string;
   user?: string;
   home?: string;
   node?: string;
@@ -62,7 +67,16 @@ export function install(opts: InstallOpts = {}): boolean {
   try {
     old = readFileSync(path, "utf8");
   } catch {}
-  if (opts.ca) print("--ca: no CA yet (step 2 installs it); skipped");
+  if (opts.ca) {
+    const crt = opts.caCert ?? join(paths.ca(), "ca.crt");
+    // ponytail: Arch's p11-kit layout only; Debian (/usr/local/share/ca-certificates + update-ca-certificates) when needed
+    if (!existsSync(crt)) print(`--ca: ${crt} does not exist yet (start hortusd once); skipped`);
+    else
+      for (const c of [["install", "-m", "644", crt, CA_ANCHOR], ["update-ca-trust"]]) {
+        print(`sudo ${c.join(" ")}`);
+        run("sudo", c);
+      }
+  }
   if (old === text) {
     print(`${path} is up to date`);
     return false;

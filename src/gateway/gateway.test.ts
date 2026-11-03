@@ -11,7 +11,6 @@ import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { memLog, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
-import { directFetch } from "../vault/direct.ts";
 import { createGateway, type GatewayDeps } from "./gateway.ts";
 
 const home = mkdtempSync(join(tmpdir(), "hortus-gateway-"));
@@ -35,7 +34,7 @@ function harness(config: () => Config, factories: Record<string, ConnectorFactor
     config,
     log,
     connectors: factories,
-    fetch: (name) => directFetch([name, `${name}-app`]),
+    fetch: () => fake.fetch,
     commit: async (dof, changes, message) => {
       order.push(`commit ${changes[0]?.path}`);
       commits.push({ dof, changes, message });

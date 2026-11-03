@@ -20,7 +20,6 @@ import {
   type Log,
   RpcError,
 } from "../types.ts";
-import { directFetch } from "../vault/direct.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
 
@@ -260,8 +259,14 @@ define("source.resync", {
   },
 });
 
-/** What the integration step injects before hortusd starts the module: the mirror writer, the Planner, task_refs. */
-const wiring: Pick<GatewayDeps, "commit" | "wake" | "hasRef"> = {
+/**
+ * What the integration step injects before hortusd starts the module: the mirror writer, the Planner, task_refs, and
+ * the placeholder-aware fetch (the proxy's `coreFetch`).
+ */
+const wiring: Pick<GatewayDeps, "commit" | "wake" | "hasRef" | "fetch"> = {
+  fetch: () => async () => {
+    throw new Error("gateway: fetch is not wired");
+  },
   commit: async () => {
     throw new Error("gateway: commit is not wired");
   },
@@ -283,7 +288,7 @@ export const gatewayModule: Module = {
       config: () => ctx.config,
       log: ctx.log("gateway"),
       connectors,
-      fetch: (name) => directFetch([name, `${name}-app`]),
+      fetch: (name) => wiring.fetch(name),
       commit: (dof, changes, msg) => wiring.commit(dof, changes, msg),
       wake: () => wiring.wake(),
       hasRef: (ref) => wiring.hasRef(ref),

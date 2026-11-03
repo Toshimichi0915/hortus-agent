@@ -1,11 +1,12 @@
 import { button, error, h, layout, type Page, time, tryCall } from "../html.ts";
 
+/** `credential.list` rows (vault/index.ts) */
 interface Cred {
   name: string;
-  type?: string;
-  transform?: string;
-  hosts?: string[];
-  last_use?: string;
+  type: string;
+  transform: string | null;
+  hosts: string[] | null;
+  last_use: string | null;
 }
 
 const pw = (name: string, label: string) =>
@@ -23,12 +24,8 @@ const form = h`<form class="cred" data-call="credential.set" data-reset>
 <button>Save</button></form>`;
 
 export const credentials: Page = async (ctx) => {
-  const r = await tryCall<Cred[] | Record<string, Omit<Cred, "name">>>("credential.list", {});
-  const list: Cred[] = !r.ok
-    ? []
-    : Array.isArray(r.value)
-      ? r.value
-      : Object.entries(r.value ?? {}).map(([name, c]) => ({ ...c, name }));
+  const r = await tryCall<Cred[]>("credential.list", {});
+  const list = r.ok ? r.value : [];
   return layout(
     ctx,
     "credentials",
@@ -38,7 +35,7 @@ export const credentials: Page = async (ctx) => {
         ? list.length
           ? h`<table><thead><tr><th>Name</th><th>Type</th><th>Transform</th><th>Hosts</th><th>Last use</th><th></th></tr></thead><tbody>${list.map(
               (c) =>
-                h`<tr><td>${c.name}</td><td>${c.type ?? ""}</td><td>${c.transform ?? ""}</td><td>${(c.hosts ?? []).join(", ")}</td><td>${time(
+                h`<tr><td>${c.name}</td><td>${c.type}</td><td>${c.transform ?? ""}</td><td>${(c.hosts ?? []).join(", ")}</td><td>${time(
                   c.last_use,
                 )}</td><td>${button("Delete", "credential.delete", { name: c.name }, { confirm: true })}</td></tr>`,
             )}</tbody></table>`

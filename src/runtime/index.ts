@@ -9,11 +9,13 @@ export { abi, denySet, type Kind, type ProfileTask, profile, shim } from "./land
 export * as sessionNet from "./session-net.ts";
 export { net };
 
-/** Logs the Landlock ABI once; outside HORTUS_NO_NET flushes stale rules, taps and addresses and sets up hortus0. */
+/** Logs the Landlock ABI once, takes the proxy ports from config; outside HORTUS_NO_NET flushes stale rules, taps and addresses and sets up hortus0. */
 export const runtimeModule: Module = {
   name: "runtime",
   async start(ctx) {
     const log = ctx.log("runtime");
+    // ponytail: ports are read at start; a changed `proxy` needs a restart
+    Object.assign(net.ports, ctx.config.proxy);
     try {
       log.info("landlock", { abi: await abi() });
     } catch (e) {

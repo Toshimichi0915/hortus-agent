@@ -74,6 +74,8 @@ export class FakeSlack {
   acks: string[] = [];
   /** every API call, in order */
   calls: { method: string; params: Params }[] = [];
+  /** every request's Authorization header (or ""), in order */
+  auths: string[] = [];
   /** envelopes sent, by id (for replay) */
   sent = new Map<string, Envelope>();
   /** WebSocket connections accepted so far */
@@ -129,6 +131,15 @@ export class FakeSlack {
   get api(): string {
     return `${this.url}/api`;
   }
+
+  /** In-process tests without the proxy: `fetch` with `hortus-secret-<x>` (`-app` → app token) swapped in. */
+  fetch = (url: string, init: RequestInit = {}): Promise<Response> => {
+    const headers = new Headers(init.headers);
+    const a = headers.get("authorization");
+    const swap = (m: string) => (m.endsWith("-app") ? this.appToken : this.botToken);
+    if (a) headers.set("authorization", a.replace(/hortus-secret-[\w.-]+/g, swap));
+    return fetch(url, { ...init, headers });
+  };
 
   /** vault.json entries for DOF `name` */
   vault(name: string): Record<string, { type: "token"; value: string; transform: string }> {
@@ -316,6 +327,7 @@ export class FakeSlack {
   ): Promise<{ status: number; body: string | Buffer; headers?: Record<string, string> }> {
     const u = new URL(req.url ?? "/", this.url);
     const authz = req.headers.authorization;
+    this.auths.push(authz ?? "");
     const file = u.pathname.match(/^\/files\/(\w+)$/);
     if (file?.[1]) {
       const bytes = this.files.get(file[1]);

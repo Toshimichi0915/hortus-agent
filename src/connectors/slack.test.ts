@@ -6,7 +6,6 @@ import { after, before, test } from "node:test";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { memLog, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
-import { directFetch } from "../vault/direct.ts";
 import { backoff } from "./retry.ts";
 import { create, timing } from "./slack.ts";
 
@@ -22,7 +21,7 @@ const deps = (): ConnectorDeps => ({
   name: "slack",
   config: { type: "slack", owner: "U_OWNER", api: fake.api },
   log,
-  fetch: directFetch(["slack", "slack-app"]),
+  fetch: fake.fetch,
   hasRef: () => false,
 });
 

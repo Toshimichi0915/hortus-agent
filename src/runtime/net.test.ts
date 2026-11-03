@@ -69,25 +69,23 @@ if (!enabled) {
 } else {
   Object.assign(net.names, NAMES);
   const db = openDb(":memory:");
-  const listeners = new Map<string, { http?: Server; dns: ReturnType<typeof createSocket> }>();
+  const listeners = new Map<string, { http: Server; dns: ReturnType<typeof createSocket> }>();
   sessionNet.init({
     db,
     proxy: {
-      // A stand-in proxy: HTTP "proxy <address>" on :80, a DNS socket on :53 answering "dns <address>". When another
-      // program holds *:80 the HTTP part is left to it: reaching it still proves the accept rule.
+      // A stand-in proxy: HTTP "proxy <address>" on the http port, a DNS socket on the dns port answering
+      // "dns <address>"; the session reaches them on :80 and :53 through the DNAT rules.
       async listen(a) {
-        let http: Server | undefined = createServer((_, res) => res.end(`proxy ${a}`));
-        await new Promise<void>((r, j) => http?.once("error", j).listen(80, a, r)).catch(() => {
-          http = undefined;
-        });
+        const http = createServer((_, res) => res.end(`proxy ${a}`));
+        await new Promise<void>((r, j) => http.once("error", j).listen(net.ports.http, a, r));
         const dns = createSocket("udp4");
         dns.on("message", (_, from) => dns.send(`dns ${a}`, from.port, from.address));
-        await new Promise<void>((r, j) => dns.once("error", j).bind(53, a, r));
+        await new Promise<void>((r, j) => dns.once("error", j).bind(net.ports.dns, a, r));
         listeners.set(a, { http, dns });
       },
       async unlisten(a) {
         const l = listeners.get(a);
-        l?.http?.close();
+        l?.http.close();
         l?.dns.close();
         listeners.delete(a);
       },
@@ -165,9 +163,7 @@ if (!enabled) {
     const b = await sessionNet.open("S2", "worker", s2, []);
     assert.equal(b, "10.77.1.3");
 
-    const viaProxy = await curl(s1, `http://${a}/`);
-    if (listeners.get(a)?.http) assert.equal(viaProxy.out, `proxy ${a}`);
-    else assert.notEqual(viaProxy.code, 28, `reached *:80 on ${a}: ${viaProxy.out}`);
+    assert.equal((await curl(s1, `http://${a}/`)).out, `proxy ${a}`, ":80 DNAT'd to the http port");
     const port = (local.address() as { port: number }).port;
     assert.equal((await curl(s1, `http://127.0.0.1:${port}/`)).out, "local");
     if (console_) assert.equal((await curl(s1, "http://127.0.0.1:7700/")).code, 28, "console: dropped, timed out");
@@ -209,7 +205,8 @@ if (!enabled) {
     await net.addTap(200, userInfo().username);
     await net.vmLinkRules(t.tap, t.vmAddr);
     await net.vmLinkRules(t.tap, t.vmAddr);
-    assert.equal(ruleset().match(/hortus:hortustt200/g)?.length, 3);
+    assert.equal(ruleset().match(/hortus:hortustt200/g)?.length, 6);
+    assert.match(ruleset(), /tcp dport 443 dnat ip to 10\.77\.0\.1:8443/);
     await net.removeVmLink(t.tap);
     assert.ok(!ruleset().includes("hortus:hortustt200"));
     assert.equal(spawnSync("ip", ["link", "show", "dev", t.tap]).status, 1);

@@ -94,7 +94,7 @@ handle(client, req: IncomingRequest): Response
 
 ### Step 2 wiring
 
-- `bin/hortusd.ts` starts `ca`, `net`, `proxy` (on `10.77.0.1`), and gives the gateway `coreFetch` as `deps.fetch` (the step-1 shim is deleted). The connector now sends placeholders and the pipeline inserts the token.
+- `bin/hortusd.ts` starts `ca`, `net`, `proxy` (on `10.77.0.1`, ports from config `proxy`, DNAT'd from 443/80/53: v7 › Security › Network), and gives the gateway `coreFetch` as `deps.fetch` (the step-1 shim is deleted). The connector now sends placeholders and the pipeline inserts the token. `sessionNet.init` is wired in `hortusd.ts` (the proxy's `listen`/`unlisten`, `links`). The end-to-end test is `src/e2e/step2.test.ts` (loopback by default, `HORTUS_TEST_NET=1` for hortus0).
 - Console pages Approvals and Credentials (06-console.md): pending entries with summary, approve/reject; credentials add/replace/delete with `transform` and `hosts`.
 - `hortus install --ca` is the optional system-store install; host children get the CA by environment (F4).
 

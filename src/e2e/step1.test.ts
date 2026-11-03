@@ -1,6 +1,6 @@
 /**
  * Step 1 done-when (docs/build-order.md): a Slack message is a file on `main` within seconds and `dof search` finds it.
- * Runs the real daemon and the fake Slack; no capabilities needed (no proxy yet).
+ * Runs the real daemon (HORTUS_NO_NET=1) and the fake Slack through the pipeline (`dev.upstreams`).
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -34,11 +34,16 @@ before(async () => {
   fake.channel("C1", { name: "general", members: ["U1", fake.botUser] });
   writeFileSync(
     join(home, "hortusd.json"),
-    JSON.stringify({ owner: { tz: "UTC" }, dofs: { slack: { type: "slack", owner: "U1", api: fake.api } } }),
+    JSON.stringify({
+      owner: { tz: "UTC" },
+      dofs: { slack: { type: "slack", owner: "U1" } },
+      dev: { upstreams: { "slack.com": fake.url } },
+      proxy: { https: 0, http: 0, dns: 0 },
+    }),
   );
   writeFileSync(join(home, "vault.json"), JSON.stringify(fake.vault("slack")), { mode: 0o600 });
   daemon = spawn(process.execPath, [bin("hortusd")], {
-    env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: "0" },
+    env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: "0", HORTUS_NO_NET: "1" },
     stdio: ["ignore", "ignore", "inherit"],
   });
 });
@@ -71,7 +76,10 @@ test("a Slack message is a file on main within seconds and dof search finds it",
   const log = execFileSync("git", ["-C", paths.dofRepo("slack"), "log", "--format=%s", "main"], { encoding: "utf8" });
   assert.match(log, /^sync\(slack\)/m);
   const hits = (await rpc.call("dof.search", { q: "deploy" })) as { path: string }[];
-  assert.ok(hits.some((h) => h.path.endsWith(`${msg.ts}.md`)), JSON.stringify(hits));
+  assert.ok(
+    hits.some((h) => h.path.endsWith(`${msg.ts}.md`)),
+    JSON.stringify(hits),
+  );
   const cli = execFileSync(process.execPath, [bin("dof"), "search", "deploy"], {
     env: { ...process.env, HORTUS_HOME: home },
     encoding: "utf8",

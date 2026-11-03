@@ -6,7 +6,8 @@
  * Table `inet hortus`:
  *   out      filter/output: jump sessions; ct established,related accept; ip daddr 10.77.1.0/24 drop
  *   sessions per-session rules, each matching the session's cgroup and ending in drop
- *   nat      nat/output: per-session DNS DNAT
+ *   nat      nat/output: per-session DNAT of 443/80/53 to the proxy's ports (`ports`)
+ *   pre      nat/prerouting: per-tap DNAT of 10.77.0.1:443/80/53 to the proxy's ports
  *   input    filter/input: per-tap accept to the proxy, then drop
  *   forward  filter/forward: nothing is forwarded from or to a tap
  * Rules carry `comment "hortus:<task or tap>"` and are deleted by it.
@@ -18,6 +19,10 @@ import { depth, relative } from "./cgroup.ts";
 
 /** Names; tests point them at their own table, dummy interface and tap prefix so a running daemon is never touched. */
 export const names = { table: "hortus", iface: "hortus0", tap: "hortus-t" };
+
+/** The proxy's listener ports (config `proxy`; the runtime module copies them in at start). Root-held *:80/*:443
+ * elsewhere on the host is why the proxy binds high ports and nftables DNATs the standard ones (v7 › Network). */
+export const ports = { https: 8443, http: 8080, dns: 8053 };
 
 export const PROXY = "10.77.0.1";
 export const SESSIONS = "10.77.1.0/24";
@@ -102,6 +107,9 @@ export async function ensureTable(): Promise<void> {
   chain nat {
     type nat hook output priority -100; policy accept;
   }
+  chain pre {
+    type nat hook prerouting priority -100; policy accept;
+  }
   chain input {
     type filter hook input priority 0; policy accept;
   }
@@ -140,8 +148,9 @@ const quote = (s: string): string => {
 };
 
 /**
- * Rules for one host session: its cgroup reaches its own address (80/443, DNS), loopback except the console, and
- * `chatAllow`; DNS to anywhere is DNAT'd to its address; everything else is dropped. Replaces earlier rules of the task.
+ * Rules for one host session: its cgroup reaches its own address (80/443 DNAT'd to the proxy's ports), loopback except
+ * the console, and `chatAllow`; DNS to anywhere is DNAT'd to its address's DNS port; everything else is dropped.
+ * Replaces earlier rules of the task.
  */
 export async function sessionRules(
   task: string,
@@ -156,10 +165,14 @@ export async function sessionRules(
   const v4 = chatAllow.filter((a) => !a.includes(":"));
   const v6 = chatAllow.filter((a) => a.includes(":"));
   const s = (r: string) => `add rule ${T()} sessions ${m} ${r} ${c}\n`;
+  const nat = (r: string) => `add rule ${T()} nat ${m} ${r} ${c}\n`;
+  const p = ports;
   await nft(
-    `add rule ${T()} nat ${m} meta nfproto ipv4 udp dport 53 dnat ip to ${address}:53 ${c}\n` +
-      s(`ip daddr ${address} tcp dport { 80, 443 } accept`) +
-      s(`ip daddr ${address} udp dport 53 accept`) +
+    nat(`meta nfproto ipv4 udp dport 53 dnat ip to ${address}:${p.dns}`) +
+      nat(`ip daddr ${address} tcp dport 80 dnat ip to ${address}:${p.http}`) +
+      nat(`ip daddr ${address} tcp dport 443 dnat ip to ${address}:${p.https}`) +
+      s(`ip daddr ${address} tcp dport { ${p.http}, ${p.https} } accept`) +
+      s(`ip daddr ${address} udp dport ${p.dns} accept`) +
       s(`ip daddr 127.0.0.1 tcp dport ${CONSOLE_PORT} drop`) +
       s("ip daddr 127.0.0.0/8 accept") +
       s(`ip6 daddr ::1 tcp dport ${CONSOLE_PORT} drop`) +
@@ -194,15 +207,20 @@ export async function addTap(n: number, user: string): Promise<{ tap: string; ho
   return t;
 }
 
-/** The VM on `tap` (source `vmAddr`) reaches the proxy's 80/443/53 and nothing else on the host. */
+/** The VM on `tap` (source `vmAddr`) reaches the proxy's 80/443/53 (DNAT'd to `ports`) and nothing else on the host. */
 export async function vmLinkRules(tap: string, vmAddr: string): Promise<void> {
   if (off(`vmLinkRules ${tap}`)) return;
   await deleteByComment(`hortus:${tap}`);
   const c = `comment ${quote(`hortus:${tap}`)}`;
   const r = (x: string) => `add rule ${T()} input iifname ${quote(tap)} ${x} ${c}\n`;
+  const d = (x: string) => `add rule ${T()} pre iifname ${quote(tap)} ip saddr ${vmAddr} ip daddr ${PROXY} ${x} ${c}\n`;
+  const p = ports;
   await nft(
-    r(`ip saddr ${vmAddr} ip daddr ${PROXY} tcp dport { 80, 443 } accept`) +
-      r(`ip saddr ${vmAddr} ip daddr ${PROXY} udp dport 53 accept`) +
+    d(`tcp dport 80 dnat ip to ${PROXY}:${p.http}`) +
+      d(`tcp dport 443 dnat ip to ${PROXY}:${p.https}`) +
+      d(`udp dport 53 dnat ip to ${PROXY}:${p.dns}`) +
+      r(`ip saddr ${vmAddr} ip daddr ${PROXY} tcp dport { ${p.http}, ${p.https} } accept`) +
+      r(`ip saddr ${vmAddr} ip daddr ${PROXY} udp dport ${p.dns} accept`) +
       r("drop"),
   );
 }

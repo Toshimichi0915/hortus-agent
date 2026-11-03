@@ -4,7 +4,7 @@ import type { Ctx, Module } from "../ctx.ts";
 import { bind } from "../vault/vault.ts";
 import * as links from "./links.ts";
 import { handle } from "./pipeline.ts";
-import { listen, listening, unlisten } from "./server.ts";
+import { type ListenOptions, listen, listening, unlisten } from "./server.ts";
 
 export { routes as internalRoutes } from "./internal.ts";
 export type { Client } from "./links.ts";
@@ -13,11 +13,21 @@ export type { ListenOptions, Ports } from "./server.ts";
 export { hooks as wsHooks } from "./ws.ts";
 export { links, listen, unlisten };
 
+/** The shared address: 10.77.0.1 on hortus0, or 127.0.0.1 under HORTUS_NO_NET=1 (no capabilities: clients are
+ * loopback aliases told apart by peer address, as VMs on the shared address are). */
+export const proxyAddress = (): string => (process.env.HORTUS_NO_NET === "1" ? "127.0.0.1" : "10.77.0.1");
+
+/** The ports from config `proxy` and the shared address, for every `listen` (shared and per session). */
+export const listenOpts = (c: Ctx): ListenOptions => ({ ...c.config.proxy, proxyAddress: proxyAddress() });
+
 export const proxyModule: Module = {
   name: "proxy",
   async start(c: Ctx) {
     bind(c);
     links.load();
+    if (process.env.HORTUS_NO_NET !== "1") return void (await listen(proxyAddress(), listenOpts(c)));
+    // ponytail: without capabilities a busy loopback port is logged, not fatal (parallel test daemons on defaults)
+    await listen(proxyAddress(), listenOpts(c)).catch((e) => c.log("proxy").error("loopback listen failed", e));
   },
   async stop() {
     await Promise.all(listening().map(unlisten));

@@ -71,6 +71,14 @@ export const Config = z.looseObject({
     })
     .prefault({}),
   chat: z.looseObject({ allow: Strings.default([]) }).prefault({}),
+  /** the proxy's listener ports on every address; nftables DNATs 443/80/53 to them (v7 › Security › Network) */
+  proxy: z
+    .looseObject({
+      https: z.number().int().min(0).max(65535).default(8443),
+      http: z.number().int().min(0).max(65535).default(8080),
+      dns: z.number().int().min(0).max(65535).default(8053),
+    })
+    .prefault({}),
   console: z
     .looseObject({
       listen: z.string(),

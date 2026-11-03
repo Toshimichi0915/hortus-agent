@@ -6,15 +6,20 @@ import { type Config, load } from "../config.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
+import { RpcError } from "../types.ts";
 import * as paths from "../paths.ts";
 import { consoleModule } from "../console/index.ts";
 import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
+import { coreFetch, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
+import { cgroup, runtimeModule, sessionNet } from "../runtime/index.ts";
+import { gateDeps, vaultModule } from "../vault/index.ts";
 
-/** Start order: the mirror (commit, dof.search) before the gateway that writes it; the console last. Later steps add
- * the proxy, dispatcher and scheduler. */
-const modules: Module[] = [mirrorModule, gatewayModule, consoleModule];
+/** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, transforms) before
+ * the proxy; the runtime (hortus0, the table) before the proxy binds 10.77.0.1; the console last. Later steps add the
+ * dispatcher and scheduler. */
+const modules: Module[] = [mirrorModule, vaultModule, runtimeModule, proxyModule, gatewayModule, consoleModule];
 
 const log = logger("hortusd");
 
@@ -48,10 +53,19 @@ async function main(): Promise<void> {
     },
   };
 
+  // The connector's requests go through the pipeline as role core: placeholders in, tokens inserted by transforms.
   wireGateway({
     commit,
     hasRef: (ref) => ctx.db.prepare("SELECT 1 FROM task_refs WHERE ref = ?").get(ref) !== undefined,
+    fetch: () => coreFetch,
   });
+  // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
+  sessionNet.init({
+    db: ctx.db,
+    proxy: { listen: async (a) => void (await listen(a, listenOpts(ctx))), unlisten },
+    links,
+  });
+  devLink();
 
   const started: Module[] = [];
   let stopping = false;
@@ -77,7 +91,34 @@ async function main(): Promise<void> {
     await m.start(ctx);
     started.push(m);
   }
+  gateDeps.consoleUrl = `http://127.0.0.1:${consoleModule.port()}`;
   log.info("started", { home: paths.home(), modules: started.map((m) => m.name) });
+}
+
+/**
+ * Dev-only (refused unless HORTUS_HOME is set): register `address` as a client of `role` for `task`. Under
+ * HORTUS_NO_NET=1 only the `links` row (a loopback alias reaching 127.0.0.1); otherwise a full session address
+ * (address, listeners, links, cgroup `tasks/<task>` with its rules), returning the cgroup a test moves its curl into.
+ */
+function devLink(): void {
+  define("dev.link", {
+    roles: ["owner"],
+    input: z.object({
+      address: z.ipv4(),
+      role: z.enum(["worker", "planner", "login"]),
+      task: z.string().regex(/^[\w-]+$/),
+    }),
+    run: async ({ address, role, task }) => {
+      if (process.env.HORTUS_HOME === undefined) throw new RpcError("forbidden", "dev.link needs HORTUS_HOME");
+      if (process.env.HORTUS_NO_NET === "1") {
+        links.register(address, role, task, "dev");
+        return { address, cgroup: null };
+      }
+      const cg = await cgroup.create(task);
+      await sessionNet.open(task, role, cg, [], address);
+      return { address, cgroup: cg };
+    },
+  });
 }
 
 main().catch((e) => {

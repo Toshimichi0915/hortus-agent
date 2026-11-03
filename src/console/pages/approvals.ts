@@ -35,7 +35,7 @@ export function summaryView(kind: string | null, category: string | null, summar
     case "request":
       return requestView(s);
     case "grant":
-      return h`<p>grant <b>${str(s.credential ?? category?.replace(/^credential:/, ""))}</b> to this task${
+      return h`<p>grant <b>${str(s.grant ?? category?.replace(/^credential:/, ""))}</b> to this task${
         s.host ? h` for ${str(s.host)}` : ""
       }</p>${s.method ? requestView(s) : details("details", s)}`;
     default:

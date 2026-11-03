@@ -141,10 +141,14 @@ const inbox: [string, Omit<InboxMsg, "seq" | "ts">][] = [];
 define("t.whoami", { roles: ["worker", "core"], input: z.unknown(), run: (_i, caller) => caller });
 
 before(async () => {
+  process.env.HORTUS_NO_NET = "1"; // proxyModule.start listens on 127.0.0.1 (ephemeral ports), as below
   await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
   const fakeUrl = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
   ctx = {
-    config: Config.parse({ dev: { upstreams: Object.fromEntries(HOSTS.map((h) => [h, fakeUrl])) } }),
+    config: Config.parse({
+      dev: { upstreams: Object.fromEntries(HOSTS.map((h) => [h, fakeUrl])) },
+      proxy: { https: 0, http: 0, dns: 0 },
+    }),
     db: openDb(paths.db()),
     paths,
     log: logger,

@@ -27,8 +27,17 @@ export function init(d: SessionNetDeps): void {
   deps = d;
 }
 
-/** Allocate and wire a session address; null under HORTUS_NO_NET=1 (no listener, no rules: tests only). */
-export async function open(task: string, role: Role, cgroupPath: string, chatAllow: string[]): Promise<string | null> {
+/**
+ * Allocate and wire a session address (or wire `fixed`: the dev-only `dev.link`); null under HORTUS_NO_NET=1 (no
+ * listener, no rules: tests only).
+ */
+export async function open(
+  task: string,
+  role: Role,
+  cgroupPath: string,
+  chatAllow: string[],
+  fixed?: string,
+): Promise<string | null> {
   if (process.env.HORTUS_NO_NET === "1") {
     log.info("HORTUS_NO_NET=1: no session address", { task });
     return null;
@@ -36,7 +45,7 @@ export async function open(task: string, role: Role, cgroupPath: string, chatAll
   if (!deps) throw new Error("session-net: init() was not called");
   const rows = deps.db.prepare("SELECT address FROM links").all() as { address: string }[];
   const taken = new Set([...rows.map((r) => r.address), ...open_.values()]);
-  let address: string | undefined;
+  let address = fixed;
   for (let n = 2; n <= 254 && !address; n++) if (!taken.has(`10.77.1.${n}`)) address = `10.77.1.${n}`;
   if (!address) throw new Error("no session address free");
   open_.set(task, address);

@@ -41,6 +41,15 @@ test("install writes the unit with sudo tee, refuses a different one without --f
 
   assert.equal(install(opts), false, "same unit: nothing to do");
   assert.throws(() => install({ ...opts, user: "bob" }), /--force/);
-  assert.equal(install({ ...opts, user: "bob", force: true, ca: true }), true);
+  calls.length = 0;
+  const caCert = join(unitPath, "..", "ca.crt");
+  install({ ...opts, ca: true, caCert });
+  assert.deepEqual(calls, [], "no CA yet: nothing run");
+  writeFileSync(caCert, "pem");
+  assert.equal(install({ ...opts, user: "bob", force: true, ca: true, caCert }), true);
   assert.match(readFileSync(unitPath, "utf8"), /User=bob/);
+  assert.deepEqual(calls.slice(0, 2), [
+    `sudo install -m 644 ${caCert} /etc/ca-certificates/trust-source/anchors/hortus.crt`,
+    "sudo update-ca-trust",
+  ]);
 });
