@@ -2,7 +2,7 @@
  * What every forge connector shares (17-github.md): the in-process event queue the webhook listener fills, the
  * project → directory rule, and the `repos` glob filter.
  */
-import type { Event, Incoming } from "../types.ts";
+import type { ConnectorDeps, Event, Incoming } from "../types.ts";
 
 /**
  * The webhook listener's hand-off to the gateway loop. `push` queues one event and resolves when the gateway acks it
@@ -58,3 +58,72 @@ export function worst(suites: { status: string; conclusion: string | null }[]): 
   const ok = new Set(["success", "neutral", "skipped"]);
   return suites.every((s) => ok.has(s.conclusion ?? "")) ? "success" : "failure";
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// shared by the static-token forges (18-gitlab-bitbucket.md)
+
+/** An HTTP error with its status (a member lookup's 404 is an answer, not a failure). */
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * GETs against `api` through `deps.fetch` (role core): redirects followed (Bitbucket's `/diff`), `all` pages by
+ * `Link: rel="next"` (GitLab) or the body's `next` (Bitbucket), `key` picking the list out of an object body.
+ */
+export function rest(deps: Pick<ConnectorDeps, "name" | "fetch">, api: string, headers: Record<string, string>) {
+  async function get(url: string, hops = 3): Promise<Response> {
+    const abs = url.startsWith("http") ? url : `${api}${url}`;
+    const res = await deps.fetch(abs, { headers, redirect: "manual" });
+    const to = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && to && hops > 0) {
+      await res.body?.cancel();
+      return get(new URL(to, abs).href, hops - 1);
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new HttpError(`${deps.name} GET ${url}: HTTP ${res.status}`, res.status);
+    }
+    return res;
+  }
+  const json = async <T>(url: string): Promise<T> => (await (await get(url)).json()) as T;
+  async function all<T>(url: string, key?: string): Promise<T[]> {
+    const out: T[] = [];
+    for (let next: string | undefined = url; next; ) {
+      const res = await get(next);
+      const b = (await res.json()) as Record<string, unknown> | T[];
+      out.push(...((key ? (b as Record<string, T[]>)[key] : b) as T[]));
+      next =
+        res.headers.get("link")?.match(/<([^>]+)>;\s*rel="next"/)?.[1] ??
+        (Array.isArray(b) ? undefined : (b.next as string | undefined));
+    }
+    return out;
+  }
+  return { get, json, all };
+}
+
+/** `f` memoized per key for `ms` (member checks: 1 h); a rejection is not cached. */
+export function cached<V>(ms: number, f: (key: string) => Promise<V>): (key: string) => Promise<V> {
+  const m = new Map<string, { at: number; v: V }>();
+  return async (key) => {
+    const hit = m.get(key);
+    if (hit && Date.now() - hit.at < ms) return hit.v;
+    const v = await f(key);
+    m.set(key, { at: Date.now(), v });
+    return v;
+  };
+}
+
+/** Webhook and API timestamps (`…+00:00`, GitLab's older `2026-11-04 10:00:00 UTC`) as `YYYY-MM-DDTHH:MM:SSZ`. */
+export function iso(s: string | null | undefined): string {
+  const d = s ? new Date(s) : new Date();
+  return (Number.isNaN(d.getTime()) ? new Date() : d).toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+/** One summary line of a text. */
+export const oneLine = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").slice(0, 80);

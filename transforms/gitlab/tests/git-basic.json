@@ -1,0 +1,20 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://gitlab.com/g/sub/p.git/info/refs?service=git-upload-pack",
+    "headers": {
+      "authorization": "Basic eC1hY2Nlc3MtdG9rZW46aG9ydHVzLXNlY3JldC1naXRsYWI="
+    },
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://gitlab.com/g/sub/p.git/info/refs?service=git-upload-pack",
+    "headers": {
+      "authorization": "Basic {basic:oauth2:gitlab}"
+    },
+    "body": null,
+    "stream": false
+  }
+}

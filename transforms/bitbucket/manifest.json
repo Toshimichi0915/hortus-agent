@@ -1,0 +1,21 @@
+{
+  "name": "bitbucket",
+  "credentials": {
+    "bitbucket": {
+      "type": "token",
+      "hosts": ["api.bitbucket.org", "bitbucket.org"],
+      "locations": ["header:Authorization", "basic:password"]
+    },
+    "bitbucket-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
+  },
+  "scope": [
+    "api.bitbucket.org/2.0/repositories/{project}",
+    "api.bitbucket.org/2.0/repositories/{project}/**",
+    "bitbucket.org/{project}.git/**"
+  ],
+  "consequential": [
+    "DELETE api.bitbucket.org/**",
+    "POST bitbucket.org/**/git-receive-pack",
+    "POST api.bitbucket.org/2.0/repositories/*/*"
+  ]
+}

@@ -635,7 +635,10 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       if (!m.scope?.length || consequential) continue;
       const ok = m.scope.some((p) =>
         p.includes("{project}")
-          ? projects.some((x) => glob(p.split("{project}").join(x)).test(`${host}${requestPath}`))
+          ? // GitLab's API names a project URL-encoded (`g%2Fsub%2Fp`), its git URLs plain
+            projects.some((x) =>
+              [x, encodeURIComponent(x)].some((v) => glob(p.split("{project}").join(v)).test(`${host}${requestPath}`)),
+            )
           : glob(p).test(`${host}${requestPath}`),
       );
       if (!ok) return refuse(403, `project scope: ${host}${requestPath} is outside the task's repos`, { host });

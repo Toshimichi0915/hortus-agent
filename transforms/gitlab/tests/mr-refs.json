@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://gitlab.com/api/v4/projects/g%2Fsub%2Fp/merge_requests",
+    "headers": {
+      "private-token": "hortus-secret-gitlab"
+    },
+    "body": "{\"title\":\"Fix\",\"source_branch\":\"hortus/t1\",\"target_branch\":\"main\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"iid\":7,\"web_url\":\"https://gitlab.com/g/sub/p/-/merge_requests/7\"}"
+  },
+  "expected": {
+    "res": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"iid\":7,\"web_url\":\"https://gitlab.com/g/sub/p/-/merge_requests/7\"}"
+    },
+    "refs": ["gitlab:g/sub/p:!7"]
+  }
+}

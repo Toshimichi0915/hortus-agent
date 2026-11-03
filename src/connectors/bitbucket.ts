@@ -1,0 +1,394 @@
+/**
+ * Bitbucket Cloud (18-gitlab-bitbucket.md): repository webhooks through the tunnel (`X-Hub-Signature` verified with
+ * `hmac-verify` against `<name>-webhook`), REST 2.0 history. A static repository access token: every request carries
+ * the placeholder `hortus-secret-<name>` as the bearer through `deps.fetch` (the pipeline as role core).
+ *
+ * Authors are `account_id`s (nicknames are not unique, so trust never keys on them); the mirror shows nicknames.
+ */
+import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
+import { hmacVerify } from "../vault/ops.ts";
+import { cached, dirOf, eventQueue, HttpError, iso, matches, oneLine, rest, worst } from "./forge.ts";
+
+const MAX_DIFF = 20 * 1024 * 1024;
+const HOUR = 3600_000;
+const KIND = /^(issue:|pullrequest:|repo:push$|repo:commit_status_)/;
+
+interface User {
+  account_id?: string;
+  uuid?: string;
+  nickname?: string;
+  display_name?: string;
+  type?: string;
+}
+interface Repo {
+  full_name: string;
+  mainbranch?: { name: string } | null;
+  description?: string | null;
+}
+interface Issue {
+  id: number;
+  title: string;
+  content?: { raw?: string | null };
+  state: string;
+  kind?: string;
+  reporter?: User | null;
+  assignee?: User | null;
+  created_on: string;
+  updated_on: string;
+}
+interface Pull {
+  id: number;
+  title: string;
+  description?: string | null;
+  state: string;
+  author?: User | null;
+  source: { branch: { name: string }; commit?: { hash: string } | null };
+  destination: { branch: { name: string } };
+  participants?: { user: User; approved?: boolean; state?: string | null; participated_on?: string | null }[];
+  created_on: string;
+  updated_on: string;
+}
+interface Comment {
+  id: number;
+  content?: { raw?: string | null };
+  user?: User | null;
+  deleted?: boolean;
+  inline?: { path: string; to?: number | null } | null;
+  created_on: string;
+  updated_on?: string | null;
+}
+interface Payload {
+  actor?: User;
+  repository?: Repo;
+  issue?: Issue;
+  pullrequest?: Pull;
+  comment?: Comment;
+  approval?: { date: string; user: User };
+  changes_request?: { date: string; user: User };
+  commit_status?: { state: string; commit?: { hash: string }; updated_on?: string };
+}
+/** events.payload: the event key and body, plus the PRs a commit status belongs to (looked up at receipt) */
+interface Wrapped {
+  type: string;
+  body: Payload;
+  prs?: number[];
+}
+
+const idOf = (u: User | null | undefined) => u?.account_id ?? u?.uuid ?? "";
+const nick = (u: User | null | undefined) => u?.nickname ?? u?.display_name ?? idOf(u);
+/** a file-name-safe id (`557058:abc…`, `{uuid}`) */
+const safe = (s: string) => s.replace(/[^\w-]/g, "_");
+/** commit status states as `worst` reads check suites */
+const suite = (s: string) =>
+  s === "INPROGRESS"
+    ? { status: "in_progress", conclusion: null }
+    : { status: "completed", conclusion: s === "SUCCESSFUL" ? "success" : "failure" };
+
+export async function create(deps: ConnectorDeps): Promise<Forge> {
+  const { name, config: cfg } = deps;
+  const api = (cfg.api ?? "https://api.bitbucket.org/2.0").replace(/\/$/, "");
+  const globs = cfg.repos as string[] | undefined;
+  const st: ConnectorStatus = { connected: false };
+  const queue = eventQueue();
+  let projectCount = 0;
+  const { get, json, all } = rest(deps, api, {
+    authorization: `Bearer hortus-secret-${name}`,
+    accept: "application/json",
+    "user-agent": "hortus",
+  });
+  const R = (p: string) => `/repositories/${p}`;
+
+  let self: Promise<User | undefined> | undefined;
+  /** the token's own account (a repository access token acts as its bot); retried after a failure */
+  const me = () =>
+    (self ??= json<User>("/user").catch((e) => {
+      deps.log.error(`${name}: GET /user failed`, e);
+      self = undefined;
+      return undefined;
+    }));
+  const memberOf = cached(HOUR, async (key: string) => {
+    const [w = "", uid = ""] = key.split("\0");
+    try {
+      await json(`/workspaces/${w}/members/${encodeURIComponent(uid)}`);
+      return true;
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 404) return false;
+      throw e;
+    }
+  });
+  async function member(p: string, u: User | undefined): Promise<boolean> {
+    if (!idOf(u)) return false;
+    try {
+      return await memberOf(`${p.split("/")[0]}\0${idOf(u)}`);
+    } catch (e) {
+      deps.log.error(`${name}: member check failed`, e);
+      return false;
+    }
+  }
+
+  const ref = (p: string, thread: string) => `${name}:${p}:${thread}`;
+  const at = (p: string, thread: string, file = thread) => `${dirOf(p)}/${thread}/${file}.md`;
+
+  function threadOf(type: string, b: Payload): string | null {
+    if (type.startsWith("issue:") && b.issue) return `#${b.issue.id}`;
+    if (type.startsWith("pullrequest:") && b.pullrequest) return `!${b.pullrequest.id}`;
+    return null;
+  }
+
+  async function toEvent(type: string, key: string, b: Payload): Promise<Event> {
+    const p = b.repository?.full_name ?? "";
+    const thread = threadOf(type, b);
+    const ci = type.startsWith("repo:commit_status_");
+    let prs: number[] = [];
+    const hash = b.commit_status?.commit?.hash;
+    if (ci && hash) {
+      try {
+        const open = await all<Pull>(`${R(p)}/pullrequests?state=OPEN&pagelen=50`, "values");
+        // PR payloads carry the 12-character short hash
+        prs = open.filter((x) => x.source.commit?.hash && hash.startsWith(x.source.commit.hash)).map((x) => x.id);
+      } catch (e) {
+        deps.log.error(`${name}: PRs of ${p}@${hash} failed`, e);
+      }
+    }
+    const u = b.actor;
+    const own = !!u && !!idOf(u) && idOf(await me()) === idOf(u);
+    const obj = b.comment ?? b.pullrequest ?? b.issue;
+    const text = oneLine(b.comment?.content?.raw ?? b.pullrequest?.title ?? b.issue?.title ?? b.commit_status?.state);
+    return {
+      dof: name,
+      key,
+      ts: iso(
+        b.approval?.date ??
+          b.comment?.updated_on ??
+          b.comment?.created_on ??
+          b.commit_status?.updated_on ??
+          (obj as { updated_on?: string } | undefined)?.updated_on,
+      ),
+      payload: { type, body: b, ...(ci ? { prs } : {}) } satisfies Wrapped,
+      // CI results carry no author (they never start work) and are not bot traffic: they must reach their task
+      author: u && !ci ? { user: idOf(u), member: await member(p, u) } : null,
+      bot: !ci && !!u && (own || u.type === "app_user"),
+      summary: `${type} ${p}${thread ?? ""} by ${nick(u)}: ${text}`,
+      refs: thread ? [ref(p, thread)] : prs.map((n) => ref(p, `!${n}`)),
+    };
+  }
+
+  function issueTop(p: string, i: Issue): Change {
+    const t = `#${i.id}`;
+    const fm = { id: t, thread: t, ts: iso(i.created_on), user: nick(i.reporter), title: i.title, state: i.state };
+    return {
+      op: "put",
+      path: at(p, t),
+      frontmatter: { ...fm, kind: i.kind ?? "", assignees: i.assignee ? [nick(i.assignee)] : [] },
+      body: i.content?.raw ?? "",
+    };
+  }
+
+  async function checksOf(p: string, sha: string | undefined): Promise<string | null> {
+    if (!sha) return null;
+    try {
+      const sts = await all<{ state: string }>(`${R(p)}/commit/${sha}/statuses?pagelen=100`, "values");
+      return worst(sts.map((s) => suite(s.state)));
+    } catch (e) {
+      deps.log.error(`${name}: statuses of ${p}@${sha} failed`, e);
+      return null;
+    }
+  }
+
+  async function diffOf(p: string, n: number): Promise<Change[]> {
+    try {
+      const bytes = Buffer.from(await (await get(`${R(p)}/pullrequests/${n}/diff`)).arrayBuffer());
+      if (bytes.length > MAX_DIFF) return [];
+      return [{ op: "put", path: `${dirOf(p)}/!${n}/files/diff.patch`, bytes }];
+    } catch (e) {
+      deps.log.error(`${name}: diff of ${p}!${n} failed`, e);
+      return [];
+    }
+  }
+
+  async function prTop(p: string, pr: Pull, diff: boolean): Promise<Change[]> {
+    const t = `!${pr.id}`;
+    const sha = pr.source.commit?.hash;
+    const checks = await checksOf(p, sha);
+    const files = diff ? await diffOf(p, pr.id) : [];
+    const fm: Record<string, unknown> = {
+      id: t,
+      thread: t,
+      ts: iso(pr.created_on),
+      user: nick(pr.author),
+      title: pr.title,
+      state: pr.state.toLowerCase(),
+      head: pr.source.branch.name,
+      base: pr.destination.branch.name,
+      head_sha: sha ?? "",
+    };
+    if (checks) fm.checks = checks;
+    if (files.length) fm.files = ["files/diff.patch"];
+    return [{ op: "put", path: at(p, t), frontmatter: fm, body: pr.description ?? "" }, ...files];
+  }
+
+  function commentChange(p: string, thread: string, c: Comment): Change {
+    const id = String(c.id);
+    const fm: Record<string, unknown> = { id, thread, ts: iso(c.created_on), user: nick(c.user) };
+    if (c.updated_on && iso(c.updated_on) !== iso(c.created_on)) fm.edited = iso(c.updated_on);
+    if (c.inline) Object.assign(fm, { path: c.inline.path, line: c.inline.to ?? null });
+    return { op: "put", path: at(p, thread, id), frontmatter: fm, body: c.content?.raw ?? "" };
+  }
+
+  function reviewChange(p: string, thread: string, u: User, ts: string, review: string): Change {
+    const id = `review-${safe(idOf(u))}`;
+    const fm = { id, thread, ts: iso(ts), user: nick(u), review };
+    return { op: "put", path: at(p, thread, id), frontmatter: fm, body: "" };
+  }
+
+  function channelChange(r: Repo): Change {
+    const fm = {
+      id: r.full_name,
+      name: r.full_name,
+      default_branch: r.mainbranch?.name ?? "",
+      topic: r.description ?? "",
+    };
+    return { op: "put", path: `${dirOf(r.full_name)}/channel.md`, frontmatter: fm, body: "" };
+  }
+
+  async function projects(): Promise<string[]> {
+    try {
+      // the workspaces the `repos` globs name; none (or a glob workspace) → every repository the token sees
+      const ws = [...new Set((globs ?? []).map((g) => g.split("/")[0] ?? ""))];
+      const listed =
+        ws.length && ws.every((w) => w && !w.includes("*"))
+          ? (await Promise.all(ws.map((w) => all<Repo>(`/repositories/${w}?role=member&pagelen=100`, "values")))).flat()
+          : (await all<{ repository: Repo }>("/user/permissions/repositories?pagelen=100", "values")).map(
+              (x) => x.repository,
+            );
+      const out = listed.map((r) => r.full_name).filter((p) => matches(p, globs));
+      projectCount = out.length;
+      st.connected = true;
+      st.error = undefined;
+      return out;
+    } catch (e) {
+      st.connected = false;
+      st.error = e instanceof Error ? e.message : String(e);
+      throw e;
+    }
+  }
+
+  return {
+    events: (signal) => queue.events(signal),
+
+    enqueue(e) {
+      st.lastEvent = e.ts;
+      return queue.push(e);
+    },
+
+    async webhook(req) {
+      const h = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
+      if (!hmacVerify(`${name}-webhook`, req.body, h["x-hub-signature"])) return { ok: false };
+      const type = h["x-event-key"];
+      const key = h["x-request-uuid"];
+      if (!type || !key) return { ok: false };
+      let b: Payload;
+      try {
+        b = JSON.parse(req.body.toString("utf8")) as Payload;
+      } catch {
+        return { ok: false };
+      }
+      return KIND.test(type) ? { ok: true, event: await toEvent(type, key, b) } : { ok: true };
+    },
+
+    async mirror(e): Promise<Mirrored> {
+      const { type, body: b, prs } = e.payload as Wrapped;
+      const p = b.repository?.full_name ?? "";
+      const thread = threadOf(type, b);
+      const none = { changes: [], wake: false };
+      if (!thread) {
+        if (!type.startsWith("repo:commit_status_") || !prs?.length) return none; // a push: the repo mirror's business
+        const checks = await checksOf(p, b.commit_status?.commit?.hash);
+        const changes: Change[] = prs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks } }));
+        return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
+      }
+      const action = type.slice(type.indexOf(":") + 1);
+      if (action.startsWith("comment_") && b.comment) {
+        if (action === "comment_deleted" || b.comment.deleted)
+          return { changes: [{ op: "delete", path: at(p, thread, String(b.comment.id)) }], wake: false };
+        return { changes: [commentChange(p, thread, b.comment)], wake: action === "comment_created" };
+      }
+      if (b.issue) return { changes: [issueTop(p, b.issue)], wake: true };
+      if (!b.pullrequest) return none;
+      const r = b.approval ?? b.changes_request;
+      if (action === "approved" || action === "changes_request_created") {
+        if (!r) return none;
+        const review = action === "approved" ? "approved" : "changes_requested";
+        return { changes: [reviewChange(p, thread, r.user, r.date, review)], wake: true };
+      }
+      if ((action === "unapproved" || action === "changes_request_removed") && r)
+        return { changes: [{ op: "delete", path: at(p, thread, `review-${safe(idOf(r.user))}`) }], wake: false };
+      return {
+        changes: await prTop(p, b.pullrequest, action === "created" || action === "updated"),
+        wake: ["created", "fulfilled", "rejected"].includes(action),
+      };
+    },
+
+    scopes: projects,
+    projects,
+
+    async *history(project, cursor) {
+      const q = cursor ? `&q=${encodeURIComponent(`updated_on > "${cursor}"`)}` : "";
+      const changes: Change[] = [channelChange(await json<Repo>(R(project)))];
+      let max = cursor ?? "";
+      const seen = (ts: string) => {
+        const t = iso(ts);
+        if (t > max) max = t;
+      };
+      const comments = async (kind: string, id: number, thread: string) => {
+        for (const c of await all<Comment>(`${R(project)}/${kind}/${id}/comments?pagelen=100`, "values"))
+          if (!c.deleted) changes.push(commentChange(project, thread, c));
+      };
+      let issues: Issue[] = [];
+      try {
+        issues = await all<Issue>(`${R(project)}/issues?pagelen=50${q}`, "values");
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 404)) throw e; // 404: the repo has no issue tracker
+      }
+      for (const i of issues) {
+        seen(i.updated_on);
+        changes.push(issueTop(project, i));
+        await comments("issues", i.id, `#${i.id}`);
+      }
+      const done = "state=MERGED&state=DECLINED&state=SUPERSEDED";
+      for (const pr of await all<Pull>(`${R(project)}/pullrequests?${done}&pagelen=50${q}`, "values")) {
+        seen(pr.updated_on);
+        changes.push(...(await prTop(project, pr, false)));
+        await comments("pullrequests", pr.id, `!${pr.id}`);
+      }
+      // open PRs whole: state, statuses, diff, comments and approvals (a status moves without touching updated_on)
+      for (const listed of await all<Pull>(`${R(project)}/pullrequests?state=OPEN&pagelen=50`, "values")) {
+        seen(listed.updated_on);
+        const pr = await json<Pull>(`${R(project)}/pullrequests/${listed.id}`);
+        changes.push(...(await prTop(project, pr, true)));
+        await comments("pullrequests", pr.id, `!${pr.id}`);
+        for (const x of pr.participants ?? [])
+          if (x.approved || x.state === "changes_requested")
+            changes.push(
+              reviewChange(
+                project,
+                `!${pr.id}`,
+                x.user,
+                x.participated_on ?? pr.updated_on,
+                x.approved ? "approved" : "changes_requested",
+              ),
+            );
+      }
+      yield { changes, cursor: max };
+    },
+
+    clone: (project) => `https://bitbucket.org/${project}.git`,
+
+    pushed(e) {
+      const w = e.payload as Wrapped;
+      return w.type === "repo:push" ? (w.body.repository?.full_name ?? null) : null;
+    },
+
+    status: () => ({ ...st, notes: [`projects mirrored: ${projectCount}`] }),
+  };
+}
