@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.github.com/user/repos",
+    "headers": { "authorization": "token hortus-secret-github", "content-type": "application/json" },
+    "body": "{\"name\":\"new\"}",
+    "stream": false
+  },
+  "template": {
+    "method": "POST",
+    "url": "https://api.github.com/user/repos",
+    "headers": {
+      "authorization": "Bearer {sign:installation-token({\"name\":\"github\",\"admin\":true})}",
+      "content-type": "application/json"
+    },
+    "body": "{\"name\":\"new\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 201,
+    "headers": { "content-type": "application/json" },
+    "body": "{\"full_name\":\"o/new\",\"html_url\":\"https://github.com/o/new\"}"
+  },
+  "expected": {
+    "res": {
+      "status": 201,
+      "headers": { "content-type": "application/json" },
+      "body": "{\"full_name\":\"o/new\",\"html_url\":\"https://github.com/o/new\"}"
+    },
+    "repos": ["github:o/new"]
+  }
+}

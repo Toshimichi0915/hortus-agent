@@ -56,6 +56,8 @@ export interface Gateway {
   reconcile(dof?: string, scope?: string): Promise<void>;
   list(): SourceStatus[];
   resync(dof: string, scope?: string): Promise<void>;
+  /** the running connector of `dof` (the webhook listener hands forges their deliveries) */
+  connector(dof: string): Connector | undefined;
 }
 
 interface Runner {
@@ -241,12 +243,16 @@ export function createGateway(deps: GatewayDeps): Gateway {
       else db.prepare("DELETE FROM syncs WHERE dof = ?").run(dof);
       await reconcile(dof, scope);
     },
+    connector: (dof) => runners.get(dof)?.conn,
   };
   return gw;
 }
 
 /** The running gateway the RPCs answer from. */
 let current: Gateway | undefined;
+
+/** The running gateway's connector for `dof` (webhooks.ts). */
+export const connectorOf = (dof: string): Connector | undefined => current?.connector(dof);
 
 define("source.list", { roles: ["owner"], input: z.unknown(), run: () => current?.list() ?? [] });
 define("source.resync", {

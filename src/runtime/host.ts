@@ -52,7 +52,7 @@ export const agentCmd = (id: string): string[] => [
 ];
 
 /** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */
-export function sandboxEnv(task: TaskJson): Record<string, string> {
+export function sandboxEnv(task: TaskJson, config?: Config): Record<string, string> {
   const ctl = paths.ctl(task.id);
   const env: Record<string, string> = {
     HOME: homedir(),
@@ -65,13 +65,18 @@ export function sandboxEnv(task: TaskJson): Record<string, string> {
   if (existsSync(ca))
     for (const k of ["SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "GIT_SSL_CAINFO", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE"])
       env[k] = ca;
-  // ponytail: forge insteadOf entries (one per configured forge) arrive with step 6
   const git: [string, string][] = [
     ["user.name", "hortus"],
     ["user.email", "hortus@localhost"],
     ["credential.helper", ""],
     ["safe.directory", "*"],
   ];
+  // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects)
+  for (const [name, d] of Object.entries(config?.dofs ?? {})) {
+    if (d.type !== "github") continue;
+    const host = d.host ?? "github.com";
+    git.push([`url.https://x-access-token:hortus-secret-${name}@${host}/.insteadOf`, `https://${host}/`]);
+  }
   env.GIT_CONFIG_COUNT = String(git.length);
   git.forEach(([k, v], i) => {
     env[`GIT_CONFIG_KEY_${i}`] = k;
@@ -111,7 +116,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
 
   const child = spawn(shim.path, ["--", ...o.cmd], {
     cwd: o.cwd,
-    env: { ...sandboxEnv(o.task), ...o.env },
+    env: { ...sandboxEnv(o.task, o.config), ...o.env },
     stdio: ["ignore", "pipe", "pipe", "pipe"],
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];

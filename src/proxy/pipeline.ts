@@ -12,7 +12,7 @@ import { PassThrough, pipeline, Readable } from "node:stream";
 import { logger } from "../log.ts";
 import type { Manifest, Req, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
-import { type Handle, handles, late, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
+import { type Handle, handles, late, mintHandle, resolvable, resolveHandle, type Secret } from "../vault/ops.ts";
 import type { Signing } from "../vault/sigv4.ts";
 import type { Scrubber } from "../vault/scrub.ts";
 import * as transforms from "../vault/transforms.ts";
@@ -216,6 +216,53 @@ export function readUpTo(r: Readable, max: number): Promise<{ buf: Buffer } | { 
   });
 }
 
+const RECEIVE_PACK = /^application\/x-git-receive-pack-request/i;
+
+/** Where the pkt-line command list ends (after its flush `0000`); -1 not pkt-lines; undefined: need more bytes. */
+function pktEnd(b: Buffer): number | undefined {
+  for (let i = 0; i + 4 <= b.length; ) {
+    const h = b.toString("latin1", i, i + 4);
+    if (!/^[0-9a-f]{4}$/i.test(h)) return -1;
+    const n = Number.parseInt(h, 16);
+    if (n === 0) return i + 4;
+    if (n < 4) return -1;
+    i += n;
+  }
+  return undefined;
+}
+
+/** The leading ref commands of a `git-receive-pack` body (≤ 64 KB, else null) and a stream of the whole body. */
+function peekCommands(r: Readable): Promise<{ body: Readable; commands: string | null }> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const done = (commands: string | null, ended: boolean) => {
+      r.off("data", onData);
+      r.off("end", onEnd);
+      r.off("error", reject);
+      r.pause();
+      const pt = new PassThrough();
+      for (const c of chunks) pt.write(c);
+      if (ended) pt.end();
+      else {
+        r.on("error", (e) => pt.destroy(e));
+        r.pipe(pt);
+      }
+      resolve({ body: pt, commands });
+    };
+    const onData = (c: Buffer) => {
+      chunks.push(c);
+      const b = Buffer.concat(chunks);
+      const end = pktEnd(b);
+      if (end !== undefined) done(end < 0 ? null : b.subarray(0, end).toString("utf8"), false);
+      else if (b.length > 64 * 1024) done(null, false);
+    };
+    const onEnd = () => done(null, true);
+    r.on("data", onData);
+    r.on("end", onEnd);
+    r.on("error", reject);
+  });
+}
+
 const utf8 = (b: Buffer): string | undefined => {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(b);
@@ -364,6 +411,8 @@ export interface Prepared {
   scrub: Scrubber;
   /** the session's own model call: its body is conversation, sent as is (handles in it are text, not handles) */
   llmCall?: boolean;
+  /** handle text → value, for handles minted asynchronously after the gate (installation tokens) */
+  tokens?: Map<string, string>;
 }
 
 export async function prepare(client: Client, req: IncomingRequest): Promise<Prepared | Out> {
@@ -386,8 +435,12 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   let stream = STREAM_REQUEST.test(ct) || Number(req.headers["content-length"] ?? 0) > REQUEST_BUFFER;
   let text: string | null = null;
   let body: Readable | null = null;
-  if (req.body && stream) body = req.body;
-  else if (req.body) {
+  if (req.body && stream) {
+    body = req.body;
+    // a push's identity is its ref commands, not the pack: they become the (read-only) body the transform renders
+    // and the hash covers, while the whole stream still goes upstream (v6 › Projects › Push)
+    if (RECEIVE_PACK.test(ct)) ({ body, commands: text } = await peekCommands(body));
+  } else if (req.body) {
     const r = await readUpTo(req.body, REQUEST_BUFFER);
     if ("rest" in r) {
       stream = true;
@@ -506,13 +559,19 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const line = `${template.method} ${host}${requestPath}`;
   const consequential = [...manifests].some((m) => (m.consequential ?? []).some((p) => glob(p).test(line)));
   if (found.length && client.task) {
+    // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a
+    // project spans segments (`o/r`), which a capture cannot delimit
+    const names = new Set(found.map((f) => f.h.name));
+    const projects = (task?.scope?.repos ?? [])
+      .filter((r) => names.has(r.slice(0, r.indexOf(":"))))
+      .map((r) => r.slice(r.indexOf(":") + 1));
     for (const m of manifests) {
       if (!m.scope?.length || consequential) continue;
-      const repos = task?.scope?.repos ?? [];
-      const ok = m.scope.some((p) => {
-        const hit = glob(p).exec(`${host}${requestPath}`);
-        return hit && (hit[1] === undefined || repos.some((r) => r === hit[1] || r.endsWith(`:${hit[1]}`)));
-      });
+      const ok = m.scope.some((p) =>
+        p.includes("{project}")
+          ? projects.some((x) => glob(p.split("{project}").join(x)).test(`${host}${requestPath}`))
+          : glob(p).test(`${host}${requestPath}`),
+      );
       if (!ok) return refuse(403, `project scope: ${host}${requestPath} is outside the task's repos`, { host });
     }
   }
@@ -533,7 +592,21 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       approved = true;
     }
   }
-  return { client, host, raw, template, tf, target, consequential, approved, secrets, body, scrub, llmCall };
+
+  // installation tokens are minted only for a request that passed, per caller and its scope.repos
+  const tokens = new Map<string, string>();
+  for (const { h } of found) {
+    if (h.op !== "installation-token" || tokens.has(h.text)) continue;
+    try {
+      tokens.set(h.text, await mintHandle(h, client.role, client.task, task?.scope?.repos ?? []));
+    } catch (e) {
+      log.error("installation token failed", e, { host });
+      return refuse(502, `installation token: ${(e as Error).message}`, { host });
+    }
+  }
+  // a token minted just now must be in the set that scrubs this very response
+  const s = tokens.size ? scrubber() : scrub;
+  return { client, host, raw, template, tf, target, consequential, approved, secrets, body, scrub: s, llmCall, tokens };
 }
 
 const pendingOut = (id: number, category: string): Out =>
@@ -572,7 +645,7 @@ function resolveIn(s: string, p: Prepared, encode: boolean, req?: Signing): stri
     if (req && !late.has(h.op ?? "")) continue;
     const secret = p.secrets.get(h.name);
     if (!secret) throw new Error(`unresolved handle ${h.name}`);
-    const v = resolveHandle(h, secret, req);
+    const v = p.tokens?.get(h.text) ?? resolveHandle(h, secret, req);
     s = s.split(h.text).join(encode ? encodeURIComponent(v) : v);
   }
   return s;

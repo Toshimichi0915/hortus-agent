@@ -10,6 +10,7 @@ import { RpcError } from "../types.ts";
 import * as paths from "../paths.ts";
 import { consoleModule } from "../console/index.ts";
 import { gatewayModule, wireGateway } from "../gateway/gateway.ts";
+import { webhooksModule } from "../gateway/webhooks.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
 import { coreFetch, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
@@ -25,6 +26,7 @@ const modules: Module[] = [
   runtimeModule,
   proxyModule,
   gatewayModule,
+  webhooksModule,
   dispatcherModule,
   consoleModule,
 ];

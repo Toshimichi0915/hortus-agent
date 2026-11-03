@@ -1,7 +1,33 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { Ctx } from "../../ctx.ts";
+import { forgeState } from "../../gateway/webhooks.ts";
 import type { ConnectorStatus } from "../../types.ts";
-import { button, error, h, layout, type Page, time, tryCall } from "../html.ts";
+import { read as readVault } from "../../vault/vault.ts";
+import { button, error, h, layout, type Page, type Raw, time, tryCall } from "../html.ts";
+
+/** A forge's rows (17-github.md): installation, deliveries, the redelivery check, the URL to give the App. */
+function forgeRows(ctx: Ctx, name: string): Raw {
+  const e = readVault()[name];
+  const inst =
+    e?.type === "github-app" ? `App ${e.appId}, installation ${e.installationId}` : "no github-app credential";
+  const q = ctx.db.prepare("SELECT count(*) AS n, max(created) AS last FROM events WHERE dof = ? AND created >= ?");
+  const today = q.get(name, new Date().toISOString().slice(0, 10)) as { n: number; last: string | null };
+  const day = q.get(name, new Date(Date.now() - 86400_000).toISOString()) as { n: number; last: string | null };
+  const last = (ctx.db.prepare("SELECT max(created) AS t FROM events WHERE dof = ?").get(name) as { t: string | null })
+    .t;
+  const st = forgeState(name);
+  const missed = st?.missed ?? 0;
+  return h`<p>installation: ${inst} · deliveries today ${today.n} · last delivery ${time(last)} · last redelivery check ${time(
+    st?.lastRedelivery,
+  )}</p><p class="hint">Webhook URL for the App: <code>https://&lt;your tunnel&gt;/${name}/webhook</code> (secret: the <code>${name}-webhook</code> credential). The tunnel forwards to <code>http://127.0.0.1:7701</code>: <code>cloudflared tunnel --url http://127.0.0.1:7701</code> or <code>ssh -R</code>; hortus installs neither.</p>${
+    missed && !day.n
+      ? h`<p class="error">no deliveries in 24 h while events were expected (${missed} found only in the delivery log)</p>`
+      : missed
+        ? h`<p class="error">${missed} deliveries arrived only through the redelivery check: check the tunnel</p>`
+        : ""
+  }`;
+}
 
 const sizes = new Map<string, { at: number; text: string }>();
 
@@ -48,6 +74,8 @@ export const sources: Page = async (ctx) => {
       } · last event ${time(s?.lastEvent)} · mirror ${await size(ctx.paths.dof(name))}</p>${
         s?.error ? h`<p class="error">${s.error}</p>` : ""
       }${(s?.notes ?? []).map((n) => h`<p class="hint">${n}</p>`)}${
+        ctx.config.dofs[name]?.type === "github" ? forgeRows(ctx, name) : ""
+      }${
         scopes.length
           ? h`<table><thead><tr><th>Scope</th><th>Last sync</th><th></th></tr></thead><tbody>${scopes.map(
               (x) =>

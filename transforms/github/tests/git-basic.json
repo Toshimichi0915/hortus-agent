@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://github.com/o/r.git/info/refs?service=git-upload-pack",
+    "headers": { "authorization": "Basic eC1hY2Nlc3MtdG9rZW46aG9ydHVzLXNlY3JldC1naXRodWI=" },
+    "body": null,
+    "stream": false
+  },
+  "template": {
+    "method": "GET",
+    "url": "https://github.com/o/r.git/info/refs?service=git-upload-pack",
+    "headers": {
+      "authorization": "Basic {sign:installation-token({\"name\":\"github\",\"basic\":\"x-access-token\"})}"
+    },
+    "body": null,
+    "stream": false
+  }
+}
