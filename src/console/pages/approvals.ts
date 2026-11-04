@@ -122,12 +122,19 @@ function decidedLine(a: ApprovalRow): Raw {
 }
 
 export function approvalEntry(a: ApprovalRow): Raw {
-  const escalated = a.status === "pending" ? parse<{ judge?: string }>(a.payload)?.judge : undefined;
+  const payload = a.status === "pending" ? parse<{ judge?: string; untrusted?: string[] }>(a.payload) : undefined;
+  const escalated = payload?.judge;
+  const untrusted = payload?.untrusted ?? [];
   return h`<article class="approval ${a.status ?? ""} kind-${a.kind ?? ""}" id="a${a.id}">
 <header><a href="/approvals/${a.id}">#${a.id}</a> <b>${label(a)}</b>${
     a.task_id ? h` · task <a href="/tasks/${a.task_id}">${a.task_id}</a>` : ""
   } · ${time(a.requested_at)}</header>
-${escalated ? h`<p class="hint">escalated by judge: ${escalated.slice(0, 200)}</p>` : ""}
+${
+  untrusted.length
+    ? h`<p class="hint untrusted">this task read messages from untrusted authors (${untrusted.join(", ")}): make sure the request is what you asked for, not what they asked for</p>`
+    : ""
+}
+${escalated ? h`<p class="hint">escalated${untrusted.length ? "" : " by judge"}: ${escalated.slice(0, 200)}</p>` : ""}
 ${
   // a decided merge keeps its 40-line excerpt folded: the decided list stays scannable
   a.status !== "pending" && a.category === "merge"

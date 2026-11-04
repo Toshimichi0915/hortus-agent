@@ -143,8 +143,9 @@ define("task_message", {
   input: z.object({ task_id: z.string(), text: z.string().min(1) }),
   run({ task_id, text }) {
     task(task_id);
-    // a routing note, not the owner: rendered quoted (agent/inbox.ts)
-    return { seq: tasks.inboxWrite(task_id, { from: "planner", trusted: true, text }) };
+    // a routing note, not the owner: rendered quoted (agent/inbox.ts); the Planner reads untrusted events, so its note
+    // is never `trusted=true` (an injected Planner must not hand a Worker a trusted request)
+    return { seq: tasks.inboxWrite(task_id, { from: "planner", trusted: false, text }) };
   },
 });
 
@@ -154,7 +155,9 @@ define("task_close", {
   async run({ task_id, outcome }) {
     task(task_id);
     // a task waiting on its own timers is not finished, and closing deletes them: the owner decides that one
-    const { n } = pctx().db.prepare("SELECT COUNT(*) AS n FROM schedules WHERE task_id = ?").get(task_id) as { n: number };
+    const { n } = pctx().db.prepare("SELECT COUNT(*) AS n FROM schedules WHERE task_id = ?").get(task_id) as {
+      n: number;
+    };
     if (n) throw new RpcError("invalid", `task ${task_id} has ${n} timer${n > 1 ? "s" : ""}; it is waiting for them`);
     await tasks.close(task_id, outcome);
     return { ok: true };

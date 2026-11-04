@@ -17,7 +17,7 @@ Spec: v6 › Planner, Gateway (wake), Config (`owner.notify`, `planner`). Depend
 ## Results
 - [t_abc] result: <summary.md excerpt>
 ## Open tasks
-- t_abc "Fix crash" (running, host, project foo, 1.2M tokens, refs: slack:C0123:…) — <latest summary 300 chars>
+- t_abc "Fix crash" (running, host, project foo, 1.2M tokens, refs: slack:C0123:…) — summary "<latest summary 300 chars, one line, a JSON string>"
 ```
 
 Non-owner text quoted (v7 Chat format); the owner's own text is not quoted but still labelled.
@@ -33,7 +33,7 @@ Tools (RPC through `hortusd.internal`, role `planner` stamped by the proxy): `ta
 - `task_create`: every `event_keys` event must exist and be `trusted` (else `forbidden: untrusted event <key>`); `scope.repos` ⊆ known forge projects; `scope.credentials` ⊆ configured names (default `worker.credentials` or all); `scope.project` ∈ `projects` and every event's author is `dofs.<dof>.owner` (else `forbidden`); `origins` derived; `runtime` from the project (`host` default) else `vm` when the image exists and `planner`… no: Workers without a project run in a VM (v6: "Everything else runs in a VM"); without an image (`images/agent.ext4` missing) hortusd refuses with `failed: no VM image; set a project or build the image` and the Planner is told (v7 note). Inserts `queued` with `task_refs` from the events' `refs`; events get `task_id`.
 - `task_attach`: `inboxWrite(task, { from: "<dof>:<channel>:<thread>", author, trusted, text: event.summary + body, data: event })` and `task_refs` for the events' refs; `waiting` → `queued`.
 - `event_ignore`: `ignored = reason`.
-- `task_message`: `inboxWrite({ from: "planner", trusted: true, text })` wrapped (not owner).
+- `task_message`: `inboxWrite({ from: "planner", trusted: false, text })` wrapped (not owner; never `trusted=true`: the Planner reads untrusted events, v7 › round 5).
 - `task_close`: `tasks.close`.
 - All refuse unknown ids with `not_found` and non-planner roles with `forbidden`.
 
