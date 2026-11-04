@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { taintOf } from "../../db.ts";
 import { readCapped } from "../../hostile.ts";
-import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
+import { budget, button, details, h, isOpen, layout, more, PAGE, type Page, parse, skipOf, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
 import { type ScheduleListRow, scheduleTable } from "./schedules.ts";
@@ -23,18 +23,22 @@ function tail(f: string): string | null {
   return readCapped(f, 64 * 1024, true)?.text ?? null; // the Worker's file: no links, FIFOs
 }
 
-export const task: Page = (ctx, { m }) => {
+export const task: Page = (ctx, { m, q }) => {
   const id = m[1] as string;
   const t = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
   if (!t) return layout(ctx, "tasks", "Task", h`<p>no task ${id}</p>`);
-  const outbox = ctx.db
-    .prepare("SELECT seq, body, created FROM outbox WHERE task_id = ? ORDER BY seq")
-    .all(id) as unknown as MsgRow[];
-  const inbox = (
-    ctx.db
-      .prepare("SELECT seq, body, created FROM inbox WHERE task_id = ? ORDER BY seq DESC LIMIT 50")
-      .all(id) as unknown as MsgRow[]
-  ).reverse();
+  // the newest PAGE of each, oldest first; `?skip=` pages back (a scheduled task's 5,000 posts were a 3 MB card)
+  const skip = skipOf(q);
+  const box = (table: "outbox" | "inbox") => ({
+    rows: (
+      ctx.db
+        .prepare(`SELECT seq, body, created FROM ${table} WHERE task_id = ? ORDER BY seq DESC LIMIT ? OFFSET ?`)
+        .all(id, PAGE, skip) as unknown as MsgRow[]
+    ).reverse(),
+    total: (ctx.db.prepare(`SELECT count(*) AS n FROM ${table} WHERE task_id = ?`).get(id) as { n: number }).n,
+  });
+  const outbox = box("outbox");
+  const inbox = box("inbox");
   const replies = lastReplies(ctx, id, -1, 200);
   const timers = ctx.db
     .prepare("SELECT * FROM schedules WHERE task_id = ? ORDER BY fire_at")
@@ -70,11 +74,11 @@ ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join(";
 </table>
 <p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>${log ? details("console.log", log) : ""}
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
-${pendingFor(ctx, id).map(approvalEntry)}
+${pendingFor(ctx, id).map((a) => approvalEntry(a))}
 ${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
-<h2>Messages</h2>${outbox.length ? h`<ul class="msgs">${outbox.map(msg)}</ul>` : h`<p class="empty">none</p>`}
+<h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : h`<p class="empty">none</p>`}
 <h2>Stream</h2>${replies.length ? h`<div class="stream">${replies.map((r) => h`<div class="line">${time(r.created)} ${replyLine(r)}</div>`)}</div>` : h`<p class="empty">none</p>`}
-<h2>Inbox</h2>${inbox.length ? h`<ul class="msgs">${inbox.map(msg)}</ul>` : h`<p class="empty">empty</p>`}
+<h2>Inbox</h2>${more(q, "inbox messages", inbox.rows.length, inbox.total)}${inbox.rows.length ? h`<ul class="msgs">${inbox.rows.map(msg)}</ul>` : h`<p class="empty">empty</p>`}
 </div>${
       open
         ? h`<h2>Note to the task</h2><form data-call="task.message" data-input="${JSON.stringify({ id })}"><textarea name="text" rows="2" required></textarea><button>Send note</button></form>

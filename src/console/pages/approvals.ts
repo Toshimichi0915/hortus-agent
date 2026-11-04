@@ -1,5 +1,5 @@
 import type { Ctx } from "../../ctx.ts";
-import { button, details, h, layout, type Page, parse, type Raw, raw, time } from "../html.ts";
+import { button, details, h, layout, more, PAGE, type Page, parse, type Raw, raw, skipOf, time } from "../html.ts";
 import { type TransformSummary, transformForm, transformView } from "./transform-entry.ts";
 
 export interface ApprovalRow {
@@ -30,15 +30,22 @@ ${s.rendered ? h`<pre class="rendered">${str(s.rendered)}</pre>` : ""}
 ${body ? (body.length > 300 ? details(`body (${body.length} chars)`, body) : h`<pre>${body}</pre>`) : ""}`;
 }
 
-/** project, `hortus/<id>` → main at main_sha[:7], `+a −r in n files`, the first 40 patch lines, the patch folded. */
-function mergeView(s: Summary): Raw {
+/**
+ * project, `hortus/<id>` → main at main_sha[:7], `+a −r in n files`, the first 40 patch lines (≤ 8 KB), then the patch
+ * folded on the entry's own page (`full`) or a link to it: lists stay small (50 merges were 3 MB of diffs a render).
+ */
+function mergeView(s: Summary, id: number | undefined, full: boolean): Raw {
   const patch = str(s.patch);
   const lines = patch.split("\n");
   const n = Number(s.files ?? 0);
   return h`<p class="req"><b>${str(s.project)}</b> <code>${str(s.branch)}</code> → <code>main</code> at <code>${str(s.main_sha).slice(0, 7)}</code> (tip <code>${str(s.sha).slice(0, 7)}</code>)</p>
 <p class="stat">+${str(s.added)} −${str(s.removed)} in ${String(n)} file${n === 1 ? "" : "s"}</p>
-<pre class="patch">${lines.slice(0, 40).join("\n")}${lines.length > 40 ? "\n…" : ""}</pre>
-${details(`full diff${s.truncated ? " (first 64 KB)" : ""}`, patch)}${details("stat", str(s.stat))}`;
+<pre class="patch">${lines.slice(0, 40).join("\n").slice(0, 8192)}${lines.length > 40 ? "\n…" : ""}</pre>
+${
+  full || id === undefined
+    ? details(`full diff${s.truncated ? " (first 64 KB)" : ""}`, patch)
+    : h`<p><a href="/approvals/${id}">full diff (${String(lines.length)} lines)</a></p>`
+}${details("stat", str(s.stat))}`;
 }
 
 /** One case per kind; merge (3b), transforms (3f) and login (3h) fall back to the JSON until their steps add a view. */
@@ -47,10 +54,12 @@ export function summaryView(
   category: string | null,
   summary: Summary | undefined,
   taskId?: string | null,
+  id?: number,
+  full = false,
 ): Raw {
   const s = summary ?? {};
   if (category === "transforms") return transformView(s as TransformSummary);
-  if (category === "merge") return mergeView(s);
+  if (category === "merge") return mergeView(s, id, full);
   switch (kind) {
     case "request":
       return requestView(s);
@@ -121,7 +130,8 @@ function decidedLine(a: ApprovalRow): Raw {
   }</p>`;
 }
 
-export function approvalEntry(a: ApprovalRow): Raw {
+/** `full`: the entry's own page (`/approvals/:id`), where a merge shows its whole diff. */
+export function approvalEntry(a: ApprovalRow, full = false): Raw {
   const payload = a.status === "pending" ? parse<{ judge?: string; untrusted?: string[] }>(a.payload) : undefined;
   const escalated = payload?.judge;
   const untrusted = payload?.untrusted ?? [];
@@ -138,8 +148,8 @@ ${escalated ? h`<p class="hint">escalated${untrusted.length ? "" : " by judge"}:
 ${
   // a decided merge keeps its 40-line excerpt folded: the decided list stays scannable
   a.status !== "pending" && a.category === "merge"
-    ? h`<details><summary>the change</summary>${summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id)}</details>`
-    : summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id)
+    ? h`<details><summary>the change</summary>${summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id, a.id, full)}</details>`
+    : summaryView(a.kind, a.category, parse<Summary>(a.summary), a.task_id, a.id, full)
 }
 ${
   a.status === "pending" && a.category === "transforms"
@@ -175,28 +185,30 @@ export const approvals: Page = (ctx, { m, q }) => {
       ctx,
       "approvals",
       `Approval #${id}`,
-      a ? h`<div data-refresh id="list">${approvalEntry(a)}</div>` : h`<p>not found</p>`,
+      a ? h`<div data-refresh id="list">${approvalEntry(a, true)}</div>` : h`<p>not found</p>`,
     );
   }
+  const skip = skipOf(q);
   const pending = ctx.db
-    .prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY id DESC")
-    .all() as unknown as ApprovalRow[];
+    .prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY id DESC LIMIT ? OFFSET ?")
+    .all(PAGE, skip) as unknown as ApprovalRow[];
   const hideJudge = q.get("judge") === "hide";
+  const where = `status <> 'pending'${hideJudge ? " AND decided_by IS NOT 'judge'" : ""}`;
   const decided = ctx.db
-    .prepare(
-      `SELECT * FROM approvals WHERE status <> 'pending'${hideJudge ? " AND decided_by IS NOT 'judge'" : ""} ORDER BY coalesce(decided_at, requested_at) DESC LIMIT 50`,
-    )
-    .all() as unknown as ApprovalRow[];
+    .prepare(`SELECT * FROM approvals WHERE ${where} ORDER BY coalesce(decided_at, requested_at) DESC LIMIT ? OFFSET ?`)
+    .all(PAGE, skip) as unknown as ApprovalRow[];
+  const count = (sql: string) =>
+    (ctx.db.prepare(`SELECT count(*) AS n FROM approvals WHERE ${sql}`).get() as { n: number }).n;
   return layout(
     ctx,
     "approvals",
     "Approvals",
-    h`<div data-refresh id="list"><h2>Pending</h2>${pending.length ? pending.map(approvalEntry) : h`<p class="empty">nothing pending</p>`}
+    h`<div data-refresh id="list"><h2>Pending</h2>${more(q, "pending", pending.length, count("status = 'pending'"))}${pending.length ? pending.map((a) => approvalEntry(a)) : h`<p class="empty">nothing pending</p>`}
 <h2>Decided</h2><p class="hint">${
       hideJudge
         ? h`<a href="/approvals">show judge allows</a>`
         : h`<a href="/approvals?judge=hide">hide judge allows</a>`
-    }</p>${
+    }</p>${more(q, "decided", decided.length, count(where))}${
       decided.length
         ? decided.map((a) => (a.decided_by === "judge" ? judgeLine(a) : approvalEntry(a)))
         : h`<p class="empty">none yet</p>`

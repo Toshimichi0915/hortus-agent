@@ -35,14 +35,21 @@ function taskOut(t: TaskRow) {
   };
 }
 
+/** The newest `limit` open tasks, then the newest `limit` closed ones, each list from `skip` (the CLI pages `--all`). */
 define("task.list", {
   roles: [...owner],
-  input: z.object({}).loose().default({}),
-  run() {
+  input: z
+    .object({
+      limit: z.number().int().positive().max(500).default(50),
+      skip: z.number().int().nonnegative().default(0),
+    })
+    .loose()
+    .default({ limit: 50, skip: 0 }),
+  run({ limit, skip }) {
     const db = ctx().db;
     return [
-      ...(db.prepare(OPEN_SQL).all() as unknown as TaskRow[]),
-      ...(db.prepare(CLOSED_SQL).all() as unknown as TaskRow[]),
+      ...(db.prepare(OPEN_SQL).all(limit, skip) as unknown as TaskRow[]),
+      ...(db.prepare(CLOSED_SQL).all(limit, skip) as unknown as TaskRow[]),
     ].map(taskOut);
   },
 });

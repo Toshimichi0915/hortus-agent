@@ -20,10 +20,10 @@ Each is `(ctx, params) => string` using a shared `layout(title, body, nav)` and 
 
 | Page | Route | Shows | Does (RPC) |
 | --- | --- | --- | --- |
-| Tasks | `/` | open tasks first (status, title, project, kind, budget used `tokens/limit`, hours, updated), then closed from `logs` (title, status, exit time) | open chat (`task.open`), `task.message`, `task.stop`, `task.budget`, `task.close`; link to `/tasks/:id` |
-| Task | `/tasks/:id` | the card: row fields, replies (`replies` table), latest `summary.md`, pending approvals of the task, inbox (recent 50), link to `session.md` (`/tasks/:id/log`, plain text) | the same actions |
+| Tasks | `/` | open tasks first (status, title, project, kind, budget used `tokens/limit`, hours, updated), then closed from `logs` (title, status, exit time); 50 of each, newest first, `?skip=N` for older (every capped list says `showing 1–50 of N … · older`) | open chat (`task.open`), `task.message`, `task.stop`, `task.budget`, `task.close`; link to `/tasks/:id` |
+| Task | `/tasks/:id` | the card: row fields, replies (`replies` table), latest `summary.md`, pending approvals of the task, messages and inbox (newest 50 each, `?skip=N`), link to `session.md` (`/tasks/:id/log`, plain text) | the same actions |
 | Chat | `/chat`, `/chat/:id` | the stream (SSE `chat` from `replies` rows, so a reconnecting page sees the last 1000 lines), a textarea, the task's pending approvals inline, project picker (sets `cwd`) | `task.open` (first message), `task.send`, approve/reject |
-| Approvals | `/approvals`, `/approvals/:id` | pending first, then decided (50); each: id, category, task, requested, summary (03-vault-proxy.md); merge entries (3b): stat, patch excerpt, full diff in `<details>`; transform entries (3f): manifest diff and credential fields; login entries (3h): the view | `approval.decide` |
+| Approvals | `/approvals`, `/approvals/:id` | pending first, then decided (50 of each, `?skip=N`); each: id, category, task, requested, summary (03-vault-proxy.md); merge entries (3b): stat, patch excerpt (40 lines, ≤ 8 KB), the full diff in `<details>` on `/approvals/:id` only (lists link it); transform entries (3f): manifest diff and credential fields; login entries (3h): the view | `approval.decide` |
 | Credentials | `/credentials` | name, type, transform, hosts, last use | `credential.set` (type-specific fields, value fields `type=password`, never prefilled), `credential.delete` |
 | Projects | `/projects` | name, path, main, runtime, exclude, origins, shadow snapshots (3b) | `project.set`, `project.delete`, `project.sync` (force), `project.restore` |
 | Settings | `/settings` | the rest of `hortusd.json` as a JSON editor (`<textarea>`, validated server-side, errors shown with the zod path), `policy` and `judge_notes` as a table (category → select, notes), `PAUSED` toggle, enrolment code and sessions (3d), `dev` keys under a "development" heading | `settings.set`, `pause.set`, `enroll.code`, `session.revoke` |
@@ -39,9 +39,9 @@ Line-oriented client of the abstract socket (`rpc.serveSocket` frames). Commands
 
 ```
 hortus ping
-hortus tasks [<id>]                         # table / card with replies and summary
+hortus tasks [--all | <id>]                 # table (newest 50 open and closed; --all every one) / card with replies and summary
 hortus chat [-r <id>] [<text>…]             # REPL: prints the stream (text live, tool calls as one line each), reads lines; Ctrl-D closes (task → waiting)
-hortus approvals [approve|reject <id>]      # pending first
+hortus approvals [--all | approve|reject <id>]  # pending first (newest 50 of each; --all every one)
 hortus stop <id> | close <id> [failed]
 hortus search <query> [--in …] (alias of dof search)
 hortus sync --force <project>               # 3b
@@ -54,7 +54,7 @@ The chat REPL subscribes to the stream with the RPC `task.stream` (a long-lived 
 
 ### RPC methods (role `owner` unless noted)
 
-`ping`; `dof.search` (owner, worker, planner); `task.list`, `task.get`, `task.open({ text, cwd? })`, `task.send({ id, text })`, `task.message({ id, text })`, `task.stop`, `task.close({ id, outcome })`, `task.budget({ id, tokens?, hours? })`, `task.log`, `task.stream` (socket only); `approval.list`, `approval.get`, `approval.decide({ id, decision, credentials?, reason? })`; `credential.list`, `credential.set`, `credential.delete`; `project.set`, `project.delete`, `project.sync`, `project.restore`; `settings.get`, `settings.set`, `pause.set`; `source.list`, `source.resync`; `schedule.list`, `schedule.unset` (owner, worker), `schedule.set` (worker); planner tools (planner); `merge` (worker); `transforms.submit` (worker); `browser.login` (worker); `enroll.code`, `session.list`, `session.revoke` (owner, loopback).
+`ping`; `dof.search` (owner, worker, planner); `task.list({ limit?, skip? })`, `task.get`, `task.open({ text, cwd? })`, `task.send({ id, text })`, `task.message({ id, text })`, `task.stop`, `task.close({ id, outcome })`, `task.budget({ id, tokens?, hours? })`, `task.log`, `task.stream` (socket only); `approval.list({ status?, limit?, skip? })`, `approval.count({ status? })` (the nav badge), `approval.get`, `approval.decide({ id, decision, credentials?, reason? })`; `credential.list`, `credential.set`, `credential.delete`; `project.set`, `project.delete`, `project.sync`, `project.restore`; `settings.get`, `settings.set`, `pause.set`; `source.list`, `source.resync`; `schedule.list`, `schedule.unset` (owner, worker), `schedule.set` (worker); planner tools (planner); `merge` (worker); `transforms.submit` (worker); `browser.login` (worker); `enroll.code`, `session.list`, `session.revoke` (owner, loopback).
 
 ## Functional tests
 

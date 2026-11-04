@@ -286,7 +286,8 @@ test("settings.set: invalid → names the key, nothing written; valid → saved 
 
 test("task.list and task.get read the DB", async () => {
   const list = (await call("task.list", undefined, { role: "owner" })) as { id: string; budget: { tokens: number } }[];
-  assert.equal(list.length, 400 + 50);
+  assert.equal(list.length, 50 + 50); // the newest 50 of each list
+  assert.equal(((await call("task.list", { limit: 500 }, { role: "owner" })) as unknown[]).length, 400 + 100);
   assert.equal(list[0]?.budget.tokens, 2e6);
   const card = (await call("task.get", { id: "t1" }, { role: "owner" })) as {
     replies: { body: { type: string } }[];

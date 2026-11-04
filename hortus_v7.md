@@ -260,3 +260,24 @@ Residual risk (stated honestly):
 - JSON, plain-text and API responses are not marked: Slack history, a forge issue through the API, a raw README. Upgrade: per-transform "untrusted response" paths in the manifest.
 - The open-task list in every batch carries Worker summaries (JSON strings, labelled data); a batch whose only stranger text is a tainted task's summary in that list does not taint what it creates.
 - WebSocket frames are not inspected.
+
+## Review round 6 — large database
+
+Seeded `HORTUS_HOME` (5,000 tasks, a seventh with 20 KB briefs; 5,000 approvals, a quarter merges with 64 KB patches, 313 pending; 50,000 events; 2,000 captured rows; 1,000 schedules; a chat with 10,000 replies; a task with 5,000 outbox and inbox rows; a 4.5 MB session; 200 credentials; 20,000 search rows), a real `hortusd` (`HORTUS_NO_NET=1`, user scope), medians of 5. Before → after:
+
+| Page / RPC / CLI | Before | After |
+| --- | --- | --- |
+| `/` (Tasks) | 31 ms, 742 KB | 15 ms, 35 KB |
+| `task.list` | 42 ms, 8.9 MB | 16 ms, 550 KB |
+| `/approvals` | 131 ms, 21.6 MB | 33 ms, 235 KB |
+| `approval.list {}` | 56 ms, 21.4 MB | 14 ms, 4.0 MB |
+| nav badge (`approval.list` pending 500 → `approval.count`), every approvals event on every page | 61 ms, 20.6 MB | 1 ms |
+| `/tasks/<id>` with 5,000 posts | 20 ms, 3.1 MB | 1 ms, 55 KB |
+| `hortus tasks` / `hortus approvals` | 161 / 506 ms | 62 / 78 ms |
+| app.js re-render (Chromium) on `/`, `/approvals`, the card | 84, 245, 93 ms | 19, 43, 3 ms |
+
+- **One scheme**: a capped list is `LIMIT 50 OFFSET skip` in SQL and says `showing 1–50 of 5,123 open tasks · newer · older`; `?skip=N` pages every list of the page together (Tasks: open and closed; Approvals: pending and decided, `judge=hide` kept; the card: messages and inbox). OFFSET, not a cursor (ponytail: rows shift while tasks update; keyset if that bites). Open tasks and pending approvals were unbounded; closed tasks, decided entries and the inbox were 50 with no way past them.
+- **Merge diffs** are only on `/approvals/:id`; a list shows the 40-line excerpt (now also ≤ 8 KB) and links the full diff. 50 pending merges were 3.2 MB of diffs per render even with the cap.
+- **The badge** is `approval.count` (a count): it fetched 500 full pending rows on every `approvals` event on every page, and said 500 past 500.
+- **RPCs**: `task.list` and `approval.list` take `limit` (≤ 500, default 50) and `skip`, applied to each of their two lists (pending was uncapped). `hortus tasks|approvals` show 50 of each list and `… hortus tasks --all for every one` when cut; `--all` pages by 500.
+- Left alone (under ~200 ms and ~1 MB): Schedules (1,000 rows, 35 ms, 610 KB), the chat (its 1,000-line replay, 893 KB), Search (95 ms, already capped at 200 hits and 64K snippet bodies), Sources (40 ms: the forge rows scan `events` by `dof` without an index; add `events(dof, created)` past ~500k events), `/tasks/:id/log` (session.md, 881 KB, capped at 16 MB in round 5), `approval.list {}` (4 MB of JSON for 100 rows with diffs: an RPC, not a page; the CLI reads it in 78 ms), SSE streams (small payloads; the chat replays ≤ 1,000 lines). `src/console/large.test.ts` asserts the caps, the lines, the links and a loose time bound.

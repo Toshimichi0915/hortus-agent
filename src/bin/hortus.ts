@@ -99,6 +99,30 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * A two-list RPC (task.list: open then closed; approval.list: pending then decided), grouped by `first`. Without
+ * `--all`: the newest 50 of each, and a line per list that had more; with it: every page of 500.
+ */
+async function listing(
+  rpc: RpcClient,
+  method: string,
+  all: boolean,
+  first: (r: Row) => boolean,
+): Promise<{ rows: Row[]; cut: boolean }> {
+  const page = all ? 500 : 50;
+  const rows: Row[] = [];
+  for (let skip = 0; ; skip += page) {
+    const got = (await rpc.call(method, { limit: all ? page : page + 1, skip })) as Row[];
+    rows.push(...got);
+    if (!all || !got.length) break;
+  }
+  const a = rows.filter(first);
+  const b = rows.filter((r) => !first(r));
+  if (all) return { rows: [...a, ...b], cut: false };
+  return { rows: [...a.slice(0, page), ...b.slice(0, page)], cut: a.length > page || b.length > page };
+}
+const cutLine = (cmd: string) => grey(`… only the newest 50 of each list; hortus ${cmd} --all for every one`);
+
 const needId = (id: string | undefined, what: string): string => {
   if (!id) throw new Usage(`usage: hortus ${what}`);
   return id;
@@ -181,12 +205,14 @@ const commands: Record<string, Command> = {
     },
   },
   tasks: {
-    usage: "tasks [<id>]                        open and recent tasks, or one task's card",
+    usage: "tasks [--all | <id>]                open and recent tasks, or one task's card",
     async run([id], rpc) {
-      if (id === undefined) {
-        const list = (await rpc.call("task.list", {})) as Row[];
-        if (!list.length) return console.log("no tasks");
-        for (const t of list) console.log([t.id, t.status, t.kind, budget(t), t.title].map(s).join("\t"));
+      if (id === undefined || id === "--all") {
+        const closed = (t: Row) => t.status === "done" || t.status === "failed";
+        const { rows, cut } = await listing(rpc, "task.list", id === "--all", (t) => !closed(t));
+        if (!rows.length) return console.log("no tasks");
+        for (const t of rows) console.log([t.id, t.status, t.kind, budget(t), t.title].map(s).join("\t"));
+        if (cut) console.log(cutLine("tasks"));
         return;
       }
       const c = (await rpc.call("task.get", { id })) as {
@@ -213,13 +239,12 @@ const commands: Record<string, Command> = {
     run: chat,
   },
   approvals: {
-    usage: "approvals [approve|reject <id>]     pending first",
+    usage: "approvals [--all | approve|reject <id>]  pending first",
     async run([verb, id], rpc) {
-      if (verb === undefined) {
-        const list = (await rpc.call("approval.list", {})) as Row[];
-        if (!list.length) return console.log("no approvals");
-        const sorted = [...list].sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending"));
-        for (const a of sorted) {
+      if (verb === undefined || verb === "--all") {
+        const { rows, cut } = await listing(rpc, "approval.list", verb === "--all", (a) => a.status === "pending");
+        if (!rows.length) return console.log("no approvals");
+        for (const a of rows) {
           const sum = (typeof a.summary === "string" ? JSON.parse(a.summary) : (a.summary ?? {})) as Row;
           // a request's method host path; a login's origin; a transform's name and what it puts on which hosts
           const puts = Object.entries((sum.credentials ?? {}) as Record<string, { hosts?: string[] }>).map(
@@ -231,6 +256,7 @@ const commands: Record<string, Command> = {
             .join(" ");
           console.log([`#${s(a.id)}`, a.status, a.category, a.task_id, where].map(s).join("\t"));
         }
+        if (cut) console.log(cutLine("approvals"));
         return;
       }
       if (verb !== "approve" && verb !== "reject") throw new Usage("usage: hortus approvals [approve|reject <id>]");
