@@ -411,9 +411,11 @@ test("SSE: events arrive unbuffered and a token straddling chunks is scrubbed", 
   });
   assert.equal(text, "data: e1\n\ndata: e2 hortus-secret-slack\n\ndata: e3\n\n");
   assert.equal(arrivals.length, 3);
-  // the fake's clock started a little after ours: each event within 100 ms of its send
-  for (let i = 0; i < 3; i++) assert.ok((arrivals[i] ?? 0) - (sseSent[i] ?? 0) < 150, `${arrivals} vs ${sseSent}`);
-  assert.ok((arrivals[1] ?? 0) < 900, "event 2 was not held back until the stream ended");
+  // the clocks start apart by the TLS handshake (≈150 ms under a loaded suite): compare gaps from the first event
+  const gap = (a: number[], i: number) => (a[i] ?? 0) - (a[0] ?? 0);
+  for (let i = 1; i < 3; i++)
+    assert.ok(Math.abs(gap(arrivals, i) - gap(sseSent, i)) < 150, `${arrivals} vs ${sseSent}`);
+  assert.ok(gap(arrivals, 1) < gap(sseSent, 2), "event 2 arrived before event 3 was sent (not held back)");
 });
 
 test("x-git-receive-pack: a 5 MB body streams; the transform sees body null, stream true", async () => {
