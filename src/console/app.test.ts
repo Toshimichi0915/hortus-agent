@@ -17,6 +17,7 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { tempDir } from "../test/until.ts";
+import { RpcError } from "../types.ts";
 import { bus } from "./events.ts";
 import { consoleModule } from "./index.ts";
 import { approvalEntry } from "./pages/approvals.ts";
@@ -106,6 +107,29 @@ test("an action is busy while in flight; Esc disarms a confirm; focus survives t
   await sleep(200);
   assert.equal(await ev(`document.activeElement.dataset.call`), "task.close");
   assert.equal(await ev(`${close}.hasAttribute("aria-disabled")`), false);
+});
+
+// decided elsewhere (another tab, the CLI, the phone) while this page's stream was down
+define("approval.decide", {
+  roles: ["owner"],
+  input: z.object({ id: z.number() }),
+  run({ id }) {
+    ctx.db.prepare("UPDATE approvals SET status = 'approved', decided_by = 'owner' WHERE id = ?").run(id);
+    throw new RpcError("invalid", "already decided");
+  },
+});
+
+test("a stale page: Approve on an entry decided elsewhere says so and shows the decision", { skip }, async () => {
+  const r = ctx.db
+    .prepare(
+      "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES ('request', 'credential:x', 'stale', 't1', '{}', 'pending', ?, '{}')",
+    )
+    .run(new Date().toISOString());
+  await go(`/approvals/${r.lastInsertRowid}`);
+  await ev(`document.querySelector('button[data-call="approval.decide"]').click()`);
+  await until(`document.querySelector('#msg').textContent === "already decided"`);
+  await until(`document.querySelector('#list .decided')?.textContent.startsWith("approved by owner")`);
+  assert.equal(await ev(`document.querySelectorAll('#list button[data-call="approval.decide"]').length`), 0);
 });
 
 test("a decided merge entry folds its patch excerpt; a pending one shows it", () => {

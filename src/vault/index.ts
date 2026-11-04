@@ -97,11 +97,13 @@ define("approval.decide", {
     /** 3f: values for the credentials a transform entry names */
     credentials: z.record(z.string(), z.unknown()).optional(),
     reason: z.string().optional(),
+    /** round 7: also allow the entry's category for its (tainted) task; `gate.grantable` entries only */
+    grant: z.boolean().optional(),
   }),
-  run: async ({ id, decision, credentials, reason }) => {
+  run: async ({ id, decision, credentials, reason, grant }) => {
     // a transforms entry is claimed, installed and decided by approveTransform
     if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
-      gate.decide(id, decision, "owner", { reason });
+      gate.decide(id, decision, "owner", { reason, grant });
     // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
     if (decision === "approve") await landMerge(id);
     return { ok: true };

@@ -203,6 +203,14 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
     for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))])
       rmSync(dir, { recursive: true, force: true });
     db.prepare("DELETE FROM schedules WHERE task_id = ?").run(id);
+    // its requests and task grants wait for no one now (a merge or a transform outlives the task; a login holds a
+    // view the login module closes on its decision: kept)
+    const r = db
+      .prepare(
+        "UPDATE approvals SET status = 'expired', decided_at = ?, reason = 'the task closed' WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
+      )
+      .run(now(), id);
+    if (r.changes) bus.emit("approvals", { task: id });
   } finally {
     closing.delete(id);
   }

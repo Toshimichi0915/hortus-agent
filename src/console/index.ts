@@ -8,6 +8,7 @@ import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
 import { bus } from "./events.ts";
 import { parse } from "./html.ts";
+import { PENDING_FOR } from "./pages/approvals.ts";
 import { lastReplies } from "./pages/chat.ts";
 import { CLOSED_SQL, OPEN_SQL, type TaskRow } from "./pages/tasks.ts";
 import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
@@ -78,9 +79,10 @@ define("task.get", {
       task: taskOut(t),
       summary: t.summary,
       replies: lastReplies(current as Ctx, id).map((r) => ({ ...r, body: line(r.body) })),
-      approvals: rows<{ summary: string }>(
-        "SELECT * FROM approvals WHERE task_id = ? AND status = 'pending' ORDER BY id",
-      ).map((a) => ({ ...a, summary: parse(a.summary) ?? null })),
+      approvals: rows<{ summary: string }>(`${PENDING_FOR} ORDER BY id`).map((a) => ({
+        ...a,
+        summary: parse(a.summary) ?? null,
+      })),
       inbox: rows<{ body: string }>("SELECT * FROM inbox WHERE task_id = ? ORDER BY seq DESC LIMIT 50")
         .reverse()
         .map((m) => ({ ...m, body: parse(m.body) ?? m.body })),
