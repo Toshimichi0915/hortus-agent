@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { Ctx } from "../../ctx.ts";
-import { button, details, h, layout, type Page, type Params, raw, time } from "../html.ts";
+import { button, details, h, layout, PAUSED, type Page, type Params, raw, time } from "../html.ts";
 import { svg } from "../qr.ts";
 import { certSource, liveEnroll, sessions } from "../remote.ts";
 
@@ -14,7 +14,7 @@ export const settings: Page = (ctx, p) => {
     "settings",
     "Settings",
     h`<section data-refresh id="pause"><h2>Pause</h2>
-<p class="hint">Pausing stops the dispatcher from starting queued tasks; running ones finish their turn.</p>
+<p class="hint">While paused, ${PAUSED}</p>
 <p>${paused ? "Paused." : "Running."} ${button(paused ? "Resume" : "Pause", "pause.set", { paused: !paused })}</p></section>
 ${remote(ctx, p)}
 <section data-refresh id="policy"><h2>Policy</h2>${

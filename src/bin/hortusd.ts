@@ -61,7 +61,7 @@ async function main(): Promise<void> {
   try {
     config = load();
   } catch (e) {
-    unfixable((e as Error).message);
+    unfixable(`${(e as Error).message} (fix the file, then start hortusd again)`);
   }
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
 

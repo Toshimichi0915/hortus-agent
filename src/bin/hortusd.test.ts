@@ -52,7 +52,10 @@ test("hortusd: creates HORTUS_HOME 0700, answers ping, a second daemon fails, ex
   process.env.HORTUS_HOME = home;
   const absent = await cli("ping");
   assert.equal(absent.code, 1);
-  assert.equal(absent.err, `hortusd is not running (socket \\0${paths.socket().slice(1)})\n`);
+  assert.equal(
+    absent.err,
+    `hortusd is not running (socket \\0${paths.socket().slice(1)}): sudo systemctl start hortusd\n`,
+  );
 
   const d = daemon(home);
   try {
@@ -116,7 +119,10 @@ test("hortusd: an invalid hortusd.json → one line naming each key, exit 78", a
   const { code, lines } = await unfixable(home);
   assert.equal(code, 78);
   assert.equal(lines.length, 1, lines.join("\n"));
-  assert.match(JSON.parse(lines[0] ?? "").msg, /hortusd\.json: vm\.cpus: expected number, received string$/);
+  assert.match(
+    JSON.parse(lines[0] ?? "").msg,
+    /hortusd\.json: vm\.cpus: expected number, received string \(fix the file, then start hortusd again\)$/,
+  );
 });
 
 test("hortusd: a corrupt DB → one line naming the file and what to do, exit 78", async () => {

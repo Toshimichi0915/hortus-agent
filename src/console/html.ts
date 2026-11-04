@@ -105,6 +105,14 @@ export function button(label: string, method: string, input: unknown, opts: { co
   )}>${label}</button>`;
 }
 
+/** What `PAUSED` does (dispatcher, schedules tick, Planner wake), said the same on Tasks, Settings and in the CLI. */
+export const PAUSED = "queued tasks, schedules and the Planner wait; running tasks go on.";
+
+/** A task error's headline: its last line (a crash's last words), but hortusd's own reason when the serial tail follows
+ * it (a VM boot timeout, dispatcher.ts). */
+export const errorLine = (e: string): string =>
+  (/^boot timeout:/.test(e) ? e.split("\n")[0] : e.split("\n").at(-1)) ?? "";
+
 export const error = (msg: string): Raw => h`<p class="error">${msg}</p>`;
 
 /** An RPC another module owns may be absent: the page shows an error line instead of failing. */

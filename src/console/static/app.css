@@ -116,6 +116,15 @@ time {
 output.error {
   color: var(--bad);
 }
+/* a date never breaks inside (overflow-wrap: anywhere on approvals split "2026-|11-04" at 390 px) */
+time {
+  white-space: nowrap;
+}
+/* the task read untrusted messages: the warning reads as one, not as a muted hint */
+.hint.untrusted {
+  color: var(--warn);
+  font-weight: 600;
+}
 .st-running,
 .st-done {
   color: var(--ok);
