@@ -5,7 +5,7 @@
 import { Readable } from "node:stream";
 import { call, isStream } from "../rpc.ts";
 import { RpcError } from "../types.ts";
-import type { Client } from "./links.ts";
+import { type Client, turn } from "./links.ts";
 import { type IncomingRequest, type Out, readUpTo, refuse } from "./pipeline.ts";
 
 interface Route {
@@ -16,22 +16,7 @@ interface Route {
 
 const STATUS: Record<RpcError["code"], number> = { not_found: 404, forbidden: 403, invalid: 400, failed: 500 };
 
-/**
- * One RPC start per client per loop turn. Each method's synchronous part runs on hortusd's thread (a search over
- * megabyte logs ~12 ms); 64 arriving in one poll phase ran back to back and held the loop ~790 ms, the console's
- * requests behind them. Only the starts are queued: a slow RPC (a merge) does not hold the client's next one.
- */
-const turns = new Map<Client, Promise<void>>();
-
 async function rpc(client: Client, req: IncomingRequest, method: string): Promise<Out> {
-  const turn = (turns.get(client) ?? Promise.resolve()).then(() => new Promise<void>((r) => setImmediate(r)));
-  turns.set(client, turn);
-  await turn;
-  if (turns.get(client) === turn) turns.delete(client);
-  return rpcNow(client, req, method);
-}
-
-async function rpcNow(client: Client, req: IncomingRequest, method: string): Promise<Out> {
   let input: unknown;
   if (req.body) {
     const r = await readUpTo(req.body, 16 * 1024 * 1024);
@@ -51,6 +36,8 @@ async function rpcNow(client: Client, req: IncomingRequest, method: string): Pro
     headers: { "content-type": "application/json" },
     body: JSON.stringify(v),
   });
+  // one start per loop turn across clients (links.ts › turn): each method's synchronous part runs on hortusd's thread
+  await turn(client);
   try {
     const result = await call(method, input, { role: client.role, ...(client.task ? { task: client.task } : {}) });
     if (!isStream(result)) return json(200, { result: result ?? null });

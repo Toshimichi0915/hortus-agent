@@ -85,7 +85,7 @@ before(async () => {
   await consoleModule.start(ctx);
   consolePort = consoleModule.port();
   await transforms.load([transforms.shippedDir(), fixtures]);
-  links.register("127.0.0.2", "worker", "T", "session");
+  for (let i = 0; i < 20; i++) links.register(`127.0.0.${2 + i}`, "worker", "T", "session");
   proxyPort = (await listen("127.0.0.1", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" })).http;
 });
 
@@ -109,7 +109,13 @@ const taskList = async () => {
 };
 
 /** Runs the attack while probing the console; prints and bounds hold, p95 and RSS; returns the attack's tally. */
-async function measure(attack: string, n: number, ms: number, rssMax = 1024): Promise<Record<string, number>> {
+async function measure(
+  attack: string,
+  n: number,
+  ms: number,
+  rssMax = 1024,
+  clients?: number,
+): Promise<Record<string, number>> {
   global.gc?.();
   const base = rssMb();
   let peak = base;
@@ -126,7 +132,7 @@ async function measure(attack: string, n: number, ms: number, rssMax = 1024): Pr
       await sleep(50);
     }
   })();
-  const result = await ask<Record<string, number>>({ attack, proxy: proxyPort, n, ms });
+  const result = await ask<Record<string, number>>({ attack, proxy: proxyPort, n, ms, clients });
   busy = false;
   await probe;
   h.disable();
@@ -187,3 +193,9 @@ test(
     assert.deepEqual(await measure("search", 256, 60_000), { 200: 256 });
   },
 );
+
+test("20 Workers at once, each flooding RPCs and proxy requests: the console stays responsive", opts, async () => {
+  // before round 6's turns and global buffering bound: hold 1.3 s, task.list p95 550 ms, rss +1.4 GB
+  const r = await measure("swarm", 64, 60_000, 700, 20);
+  assert.deepEqual(r, { "search 200": 20 * 64, "never gave up": 20 * 64, "endless 200 read 24 MB": 20 * 4 });
+});

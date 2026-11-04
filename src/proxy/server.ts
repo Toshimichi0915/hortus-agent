@@ -11,7 +11,7 @@ import type { TLSSocket } from "node:tls";
 import { logger } from "../log.ts";
 import { sniCallback } from "../vault/ca.ts";
 import { dnsServer } from "./dns.ts";
-import { type Client, lookup } from "./links.ts";
+import { type Client, lookup, turn } from "./links.ts";
 import { handle, type IncomingRequest, type Out } from "./pipeline.ts";
 import { relay } from "./ws.ts";
 
@@ -100,8 +100,9 @@ function serve(tls: boolean, proxyAddress: string) {
       if (!res.writableFinished) ac.abort();
     });
     // a writeOut that throws (a transform's status 0 or header name with a space) lands in catch, not unhandled
-    handle(client, toIncoming(req, tls), ac.signal)
-      .then((out) => writeOut(res, out))
+    turn(client)
+      .then(() => (ac.signal.aborted ? undefined : handle(client, toIncoming(req, tls), ac.signal)))
+      .then((out) => out && writeOut(res, out))
       .catch((e) => {
         log.error("pipeline failed", e);
         if (!res.headersSent) writeOut(res, { status: 502, headers: {}, body: "hortus: proxy error\n" });
@@ -113,10 +114,12 @@ function serve(tls: boolean, proxyAddress: string) {
     if (!client) return socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
     if (!admit(client, socket))
       return socket.end("HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
-    relay(client, toIncoming(req, tls), socket, head).catch((e) => {
-      log.error("upgrade failed", e);
-      socket.destroy();
-    });
+    turn(client)
+      .then(() => (socket.destroyed ? undefined : relay(client, toIncoming(req, tls), socket, head)))
+      .catch((e) => {
+        log.error("upgrade failed", e);
+        socket.destroy();
+      });
   };
   const server = tls
     ? https.createServer({ SNICallback: sniCallback, ALPNProtocols: ["http/1.1"] }, onRequest)
@@ -130,7 +133,9 @@ function serve(tls: boolean, proxyAddress: string) {
 const bindTcp = (s: http.Server, address: string, port: number) =>
   new Promise<number>((resolve, reject) => {
     s.once("error", reject);
-    s.listen(port, address, () => {
+    // Node's default backlog (511) dropped SYNs when 20 Workers opened 2,600 connections at once (connects timed out
+    // after a minute); the kernel caps it at net.core.somaxconn
+    s.listen({ port, host: address, backlog: 4096 }, () => {
       s.off("error", reject);
       resolve((s.address() as AddressInfo).port);
     });

@@ -47,3 +47,39 @@ export function release(address: string): void {
 
 export const lookup = (address: string | undefined): Client | undefined =>
   address ? cache.get(norm(address)) : undefined;
+
+/**
+ * Round-robin turns across clients (review round 6): one start per loop turn in all, the next from the next client
+ * with one waiting. A start's synchronous part (the pipeline's lookups and transform calls, ~0.7 ms; an RPC's search
+ * over megabyte logs, ~12 ms) runs on hortusd's thread: 20 Workers flooding at once ran 20 searches per turn (290 ms)
+ * and 1,280 request starts in one turn (950 ms), the console behind them. A per-client queue bounded one Worker only.
+ */
+const waiting = new Map<Client, (() => void)[]>();
+let armed = false;
+
+function pump(): void {
+  armed = false;
+  const first = waiting.entries().next();
+  if (first.done) return;
+  const [client, q] = first.value;
+  waiting.delete(client);
+  const go = q.shift();
+  if (q.length) waiting.set(client, q); // to the back of the line
+  arm();
+  go?.();
+}
+
+function arm(): void {
+  if (armed || !waiting.size) return;
+  armed = true;
+  setImmediate(pump);
+}
+
+export function turn(client: Client): Promise<void> {
+  return new Promise((go) => {
+    const q = waiting.get(client);
+    if (q) q.push(go);
+    else waiting.set(client, [go]);
+    arm();
+  });
+}

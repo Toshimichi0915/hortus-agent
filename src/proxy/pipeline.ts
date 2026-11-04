@@ -874,21 +874,36 @@ const DECODERS: Record<string, () => Transform> = {
 
 /** Responses one client may be buffering at once (≤ 16 MB each, a few copies while scrubbed and transformed): 10
  * endless bodies cost hortusd 165 MB, and MAX_INFLIGHT of them would have been ~12 GB. Further responses wait, their
- * upstream sockets paused. hortusd's own (core) calls are not counted. */
+ * upstream sockets paused. `BUFFERING_ALL` bounds every client together (review round 6: 20 Workers × 4 were +1.1 GB);
+ * a freed slot goes to the oldest waiter whose client is under its own bound. hortusd's own (core) calls are not
+ * counted. */
 export const BUFFERING = 4;
+export const BUFFERING_ALL = 16;
 export const BUFFER_MS = 30_000;
-const slots = new Map<Client, { n: number; wait: (() => void)[] }>();
+const owned = new Map<Client, number>();
+const waiters: { c: Client; go: () => void }[] = [];
+let buffering = 0;
+const free = (c: Client) => buffering < BUFFERING_ALL && (owned.get(c) ?? 0) < BUFFERING;
+const take = (c: Client) => {
+  buffering++;
+  owned.set(c, (owned.get(c) ?? 0) + 1);
+};
 
 async function slot(c: Client): Promise<() => void> {
   if (c.role === "core") return () => {};
-  const own = slots.get(c) ?? { n: 0, wait: [] };
-  slots.set(c, own);
-  if (own.n < BUFFERING) own.n++;
-  else await new Promise<void>((r) => own.wait.push(r));
+  if (free(c)) take(c);
+  else await new Promise<void>((go) => waiters.push({ c, go }));
   return () => {
-    const next = own.wait.shift();
-    if (next) return next(); // the slot passes on
-    if (--own.n === 0) slots.delete(c);
+    buffering--;
+    const n = (owned.get(c) ?? 1) - 1;
+    if (n) owned.set(c, n);
+    else owned.delete(c);
+    const i = waiters.findIndex((w) => free(w.c));
+    const w = i < 0 ? undefined : waiters.splice(i, 1)[0];
+    if (w) {
+      take(w.c); // the slot passes on
+      w.go();
+    }
   };
 }
 

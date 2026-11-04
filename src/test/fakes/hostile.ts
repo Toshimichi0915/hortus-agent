@@ -110,6 +110,9 @@ interface Ask {
   proxy: number;
   n: number;
   ms: number;
+  /** the Worker's local address (default 127.0.0.2); `swarm` uses `clients` addresses from 127.0.0.2 up */
+  from?: string;
+  clients?: number;
 }
 
 /** One request through the proxy as the Worker (local address 127.0.0.2); reads up to `max` bytes, gives up at `ms`. */
@@ -121,7 +124,13 @@ function get(
   return new Promise((resolve) => {
     let got = 0;
     const r = http.request(
-      { host: "127.0.0.1", port: a.proxy, localAddress: "127.0.0.2", method: o.method ?? "GET", path: o.path ?? "/" },
+      {
+        host: "127.0.0.1",
+        port: a.proxy,
+        localAddress: a.from ?? "127.0.0.2",
+        method: o.method ?? "GET",
+        path: o.path ?? "/",
+      },
       (res) => {
         res.on("data", (c: Buffer) => {
           got += c.length;
@@ -135,7 +144,11 @@ function get(
       },
     );
     r.setHeader("host", host);
-    r.on("error", (e) => resolve(`error ${(e as NodeJS.ErrnoException).code ?? e.message}`));
+    r.on("error", (e) =>
+      resolve(
+        `error ${(e as NodeJS.ErrnoException).code ?? e.message} ${(e as NodeJS.ErrnoException).syscall ?? ""}`.trim(),
+      ),
+    );
     setTimeout(() => {
       r.destroy();
       resolve("gave up");
@@ -199,6 +212,26 @@ async function run(a: Ask): Promise<unknown> {
           body: JSON.stringify({ q: "the", limit: 200 }),
         }),
       );
+    case "swarm": {
+      // `clients` Workers at once, each with a.n searches, a.n never-answered requests and 4 endless bodies
+      const each = await Promise.all(
+        Array.from({ length: a.clients ?? 20 }, (_, i) => {
+          const w = { ...a, from: `127.0.0.${2 + i}` };
+          return Promise.all([
+            ...Array.from({ length: a.n }, () =>
+              get(w, "hortusd.internal", {
+                method: "POST",
+                path: "/rpc/dof.search",
+                body: JSON.stringify({ q: "the", limit: 200 }),
+              }).then((r) => `search ${r}`),
+            ),
+            ...Array.from({ length: a.n }, () => get(w, "never.test").then((r) => `never ${r}`)),
+            ...Array.from({ length: 4 }, () => get(w, "endless.test", { max: 24 * MB }).then((r) => `endless ${r}`)),
+          ]);
+        }),
+      );
+      return tally(each.flat());
+    }
     default:
       throw new Error(`no attack ${a.attack}`);
   }
