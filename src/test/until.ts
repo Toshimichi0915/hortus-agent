@@ -1,5 +1,6 @@
 /** Test helpers. */
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -38,4 +39,19 @@ export function tempDir(prefix: string): string {
   const d = mkdtempSync(join(tmpdir(), prefix));
   temps.push(d);
   return d;
+}
+
+/** A free TCP port on 127.0.0.1 for a daemon the test starts, picked below the kernel's ephemeral range (32768+): a
+ * port bound and released (the old `listen(0)` probe) was handed out again to another test file's `listen(0)` before
+ * the daemon took it, and the test then talked to that file's console ("no method task.open"). */
+export async function freePort(): Promise<number> {
+  for (;;) {
+    const port = 20_000 + Math.floor(Math.random() * 12_000);
+    const ok = await new Promise<boolean>((resolve) => {
+      const s = createServer()
+        .once("error", () => resolve(false))
+        .listen(port, "127.0.0.1", () => s.close(() => resolve(true)));
+    });
+    if (ok) return port;
+  }
 }

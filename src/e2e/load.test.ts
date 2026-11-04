@@ -7,20 +7,12 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { tempDir, until } from "../test/until.ts";
+import { freePort, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
-const freePort = (): Promise<number> =>
-  new Promise((resolve) => {
-    const s = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = s.address() as { port: number };
-      s.close(() => resolve(port));
-    });
-  });
 
 const FAKE = `
 const complete = async (req, onText) => {
@@ -170,7 +162,8 @@ test(`${ROUNDS} rounds of ${N} simultaneous chats: own replies, responsive conso
     console.log(
       `# load round ${round}: ${N} chats in ${secs.toFixed(1)} s; task.list p50 ${s.p50.toFixed(0)} ms p95 ${s.p95.toFixed(0)} ms; fds ${s.fds}; rss ${s.rss.toFixed(0)} MB`,
     );
-    assert.ok(s.p95 < 1000, `console p95 ${s.p95} ms while ${N} chats ran`);
+    // alone: 17–21 ms since round 6 paced the sandbox spawns (was 125–156 ms); the default suite runs files side by side
+    assert.ok(s.p95 < 500, `console p95 ${s.p95} ms while ${N} chats ran`);
   }
   const [first, , last] = stats;
   assert.ok(first && last);

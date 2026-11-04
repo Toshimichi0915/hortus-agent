@@ -10,7 +10,6 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
-import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -18,17 +17,10 @@ import { openDb, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { tempDir, until } from "../test/until.ts";
+import { freePort, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
-const freePort = (): Promise<number> =>
-  new Promise((resolve) => {
-    const s = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = s.address() as { port: number };
-      s.close(() => resolve(port));
-    });
-  });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** a path in the real HOME (read-only to the unattended profile) the Planner tries to create */
 const PROBE = join(homedir(), `.hortus-step4-probe-${process.pid}`);

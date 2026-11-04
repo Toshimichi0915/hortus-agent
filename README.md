@@ -12,8 +12,9 @@ No Worker or Planner ever holds a secret. Every credential lives in `hortusd`'s 
 placeholders (`hortus-secret-<name>`), and all their traffic goes through `hortusd`'s proxy, which puts the real value in
 only where a transform says it belongs (a header, a host) and scrubs it from responses. A request that uses a credential
 passes the Approval Gate: the owner approves it on the Approvals page (or, under the `auto` policy, a judge model does,
-except for consequential requests, merges, new transforms, logins, and tasks that read untrusted messages). The design
-is `hortus_v6.md` (in the owner's vault); `hortus_v7.md` here records every decision made while building it.
+except for consequential requests, merges, new transforms, logins, and tainted tasks: ones that read a stranger's
+message, a web page or an untrusted search hit). The design is `hortus_v6.md` (in the owner's vault); `hortus_v7.md`
+here records every decision made while building it.
 
 ## Install
 

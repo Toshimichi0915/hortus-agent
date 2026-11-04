@@ -144,7 +144,7 @@ ${
     ? h`<p class="hint untrusted">tainted: ${untrusted.join("; ")}. Make sure the request is what you asked for, not what they asked for</p>`
     : ""
 }
-${escalated ? h`<p class="hint">escalated${untrusted.length ? "" : " by judge"}: ${escalated.slice(0, 200)}</p>` : ""}
+${escalated && !untrusted.length ? h`<p class="hint">escalated by judge: ${escalated.slice(0, 200)}</p>` : ""}
 ${
   // a decided merge keeps its 40-line excerpt folded: the decided list stays scannable
   a.status !== "pending" && a.category === "merge"

@@ -17,24 +17,16 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
-import { tempDir, until } from "../test/until.ts";
+import { freePort, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
-const freePort = (): Promise<number> =>
-  new Promise((resolve) => {
-    const s = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = s.address() as { port: number };
-      s.close(() => resolve(port));
-    });
-  });
 
 const FAKE = (dir: string) => `
 import { appendFileSync } from "node:fs";

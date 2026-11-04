@@ -20,26 +20,18 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { tempDir, until } from "../test/until.ts";
+import { freePort, tempDir, until } from "../test/until.ts";
 
 const ENABLED = process.env.HORTUS_TEST_VM === "1";
 const NET = process.env.HORTUS_TEST_NET === "1";
 const IMAGES = process.env.HORTUS_TEST_IMAGES ?? "";
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const freePort = (): Promise<number> =>
-  new Promise((resolve) => {
-    const s = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = s.address() as { port: number };
-      s.close(() => resolve(port));
-    });
-  });
 
 /**
  * Inside the guest: plays `/task/out/fake-script.json` turn by turn and records requests to

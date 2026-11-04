@@ -171,6 +171,8 @@ function releaseLinks(id: string): void {
 }
 
 /** `vm`: boot it with startVm; `note`: a status line on the card (the host fallback for a VM task). */
+const SPAWNS: links.Client = { role: "core" };
+
 function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
   if (!ctx) return;
   const c = ctx.config;
@@ -214,6 +216,9 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
       await prepareClone(task, env.HORTUS_RPC_LOCAL);
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
+      // the Landlock profile walk and the spawn are ~8 ms of hortusd's thread each: 20 chats opened at once ran them
+      // back to back (180 ms, the console's p95 150 ms); one per loop turn, in line with the Workers' requests
+      await links.turn(SPAWNS);
       const child = await spawnSandboxed({
         task,
         kind: kind.profile,

@@ -492,6 +492,7 @@ test("a task given an untrusted author's message: the owner decides (no judge ca
     assert.match(dms.at(-1) ?? "", /; tainted: read untrusted messages \(slack:U2\)/);
     const page = await approvalsPage(ctx, { m: [], q: new URLSearchParams() });
     assert.match(page, /tainted: read untrusted messages \(slack:U2\)\. Make sure/);
+    assert.doesNotMatch(page, /escalated[^<]*tainted/, "the taint line once, not again as the judge's reason");
     // T2 (slack in scope, nothing untrusted routed to it) is still judged
     assert.equal((await send({ from: "127.0.0.4" })).status, 200);
     assert.equal(llmSeen.length, judged + 1);
