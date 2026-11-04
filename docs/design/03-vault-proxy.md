@@ -47,7 +47,7 @@ runTests(name): { file, ok, diff? }[]   // tests/*.json: { request, template, re
 
 Runtime: `quickjs-emscripten`, one WASM module per process, per call a new runtime (`setMemoryLimit(32 MiB)`, `setInterruptHandler(shouldInterruptAfterDeadline(now + 100))`), a fresh context, the transform evaluated as an ES module, the function called with JSON strings and its result parsed from a JSON string; everything disposed in `finally`. A thrown error, an interrupt, or a non-object result refuses the request (`502 transform failed`, logged with the name).
 
-Shipped transforms (`transforms/<name>/`): `slack` (`slack.com`, `files.slack.com`; `header:Authorization`; `response()` returns `refs` for `chat.postMessage` as `slack:<channel>:<thread_ts ?? ts>`; consequential: `POST slack.com/api/chat.delete`, `files.delete`), `anthropic` (`api.anthropic.com`, `header:x-api-key`), `openai` (`api.openai.com`, `header:Authorization`), `openrouter` (`openrouter.ai`), `ollama` (`ollama.com`). Each `request()` replaces every `hortus-secret-<name>` it knows in its declared location with `{secret:<name>}` and returns the template; everything else untouched.
+Shipped transforms (`transforms/<name>/`): `slack` (`slack.com`, `files.slack.com`; `header:Authorization`; `response()` returns `refs` for `chat.postMessage` as `slack:<channel>:<thread_ts ?? ts>`; consequential: any method on `*.delete*`), `anthropic` (`api.anthropic.com`, `header:x-api-key`), `openai` (`api.openai.com`, `header:Authorization`), `openrouter` (`openrouter.ai`), `ollama` (`ollama.com`). Each `request()` replaces every `hortus-secret-<name>` it knows in its declared location with `{secret:<name>}` and returns the template; everything else untouched.
 
 ### `src/vault/scrub.ts`
 

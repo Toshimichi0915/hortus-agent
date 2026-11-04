@@ -4,6 +4,7 @@
     "telegram": { "type": "token", "hosts": ["api.telegram.org"], "locations": ["path:/bot{}/"] }
   },
   "consequential": [
+    "* api.telegram.org/bot*",
     "* api.telegram.org/bot*/delete*",
     "* api.telegram.org/bot*/leaveChat",
     "* api.telegram.org/bot*/banChatMember",

@@ -210,9 +210,24 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     ["POST", "api.telegram.org", `${bot}/DELETEMESSAGE`],
     ["POST", "api.telegram.org", `${bot}/deleteMessages`],
     ["POST", "discord.com", "/api/v10/channels/300/messages/bulk-delete"],
+    // the same call in other spellings: an upstream decodes `%65` and drops the extra `/`
+    ["POST", "api.telegram.org", `${bot}/d%65leteMessage`],
+    ["POST", "api.telegram.org", `${bot}/deleteMessage/`],
+    ["POST", "discord.com", "/api/v10/channels/300//messages/bulk%2Ddelete/"],
+    // no method in the path: the Bot API server takes it from the `method` argument (its Query.cpp)
+    ["GET", "api.telegram.org", `${bot}/?method=deleteMessage&chat_id=1&message_id=2`],
   ] as const) {
     assert.equal(await worker(method, host, path), 403, path);
     assert.equal(consequential(), true, path);
+  }
+  // a read, and a path that only names a delete, are ordinary
+  for (const [method, host, path] of [
+    ["GET", "api.telegram.org", `${bot}/getMe`],
+    ["GET", "discord.com", "/api/v10/channels/delete-me/messages"],
+    ["GET", "discord.com", "/api/v10/channels/300/messages%2Fbulk-delete"],
+  ] as const) {
+    assert.equal(await worker(method, host, path), 403, path);
+    assert.equal(consequential(), false, path);
   }
 });
 

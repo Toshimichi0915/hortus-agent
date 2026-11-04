@@ -426,6 +426,20 @@ function glob(p: string): RegExp {
   return new RegExp(`^${src}$`);
 }
 
+/**
+ * The path as an upstream routes it, for the consequential patterns only: `%65` and `e` are the same path (RFC 3986),
+ * and routers drop a doubled or trailing `/`. Those patterns deny, so a spelling they miss was an ordinary request; the
+ * scope patterns allow, so a spelling they miss is refused already.
+ */
+const routed = (path: string): string =>
+  path
+    .replace(/%([0-9a-f]{2})/gi, (e, x: string) => {
+      const c = String.fromCharCode(Number.parseInt(x, 16));
+      return /[\w.~-]/.test(c) ? c : e;
+    })
+    .replace(/\/{2,}/g, "/")
+    .replace(/(.)\/$/, "$1");
+
 const sorted = (h: Record<string, string>) =>
   Object.fromEntries(
     Object.entries(h)
@@ -643,7 +657,9 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     if (why) return refuse(403, why, { host });
     secrets.set(name, secret);
   }
-  const line = `${template.method} ${host}${requestPath}`;
+  // both ways: GitLab's `g%2Fp` is one segment to `projects/*`, and to a router that decodes first `o%2Fr` is two
+  const line = `${template.method} ${host}${routed(requestPath)}`;
+  const lines = [line, line.replace(/%2f/gi, "/")];
   // captured credentials: every method but GET/HEAD is consequential, plus the site manifest's patterns (3h)
   const capturedOnly = found.length > 0 && found.every((f) => f.h.name.startsWith("c-"));
   // a streamed body (over 1 MB, octet-stream) is outside the hash and the judge's view: the owner decides each one
@@ -652,7 +668,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const consequential =
     blind ||
     // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
-    [...manifests].some((m) => (m.consequential ?? []).some((p) => new RegExp(glob(p), "i").test(line))) ||
+    [...manifests].some((m) => (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l)))) ||
     (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
   if (found.length && client.task) {
     // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a
