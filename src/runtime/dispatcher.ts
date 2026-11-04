@@ -16,7 +16,7 @@ import { now } from "../db.ts";
 import { appendText, MAX_ENTRIES, MAX_LINE, readCapped, readDir } from "../hostile.ts";
 import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
-import { prepareClone } from "../projects/origin.ts";
+import { prepareClone, sync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
@@ -195,6 +195,10 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       tasks.prepare(c, task);
       if (note) reply(row.id, { type: "status", text: note });
       if (vm) {
+        // round 8: the guest clones the origin itself, so sync it first (a host task's prepareClone does); without
+        // it a VM task cloned an empty origin (or a stale main) and its merge was refused as "not based on main"
+        if (task.scope.project && task.paths.clone)
+          await sync(task.scope.project).catch((e) => log().error("sync at task start failed", e, { task: row.id }));
         const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
         const child = await startVm({ task, config: c, deadlineMs });
         entry.child = child;

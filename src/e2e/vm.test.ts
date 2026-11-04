@@ -169,8 +169,7 @@ interface Row {
 const row = (id: string) => db((d) => d.prepare("SELECT * FROM tasks WHERE id = ?").get(id)) as Row | undefined;
 
 /** a queued VM task with `script` (the fake's turns); the tick starts it within a second */
-function vmTask(script: unknown[], hours = 1): string {
-  const id = `vmt${Date.now().toString(36)}${++n}`;
+function vmTask(script: unknown[], hours = 1, project?: string, id = `vmt${Date.now().toString(36)}${++n}`): string {
   mkdirSync(join(paths.out(id), "work"), { recursive: true });
   mkdirSync(join(paths.ctl(id), "inbox"), { recursive: true });
   writeFileSync(join(paths.out(id), "fake-script.json"), JSON.stringify(script));
@@ -178,10 +177,18 @@ function vmTask(script: unknown[], hours = 1): string {
   db((d) =>
     d
       .prepare(
-        `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated,
-          hours) VALUES (?, 'unattended', ?, 'b', 'queued', ?, ?, '{"tokens":0}', 'vm', '[]', ?, ?, 0)`,
+        `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, project, runtime, event_keys, created,
+          updated, hours) VALUES (?, 'unattended', ?, 'b', 'queued', ?, ?, '{"tokens":0}', ?, 'vm', '[]', ?, ?, 0)`,
       )
-      .run(id, id, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1e6, hours }), t, t),
+      .run(
+        id,
+        id,
+        JSON.stringify({ credentials: [], repos: [], ...(project && { project }) }),
+        JSON.stringify({ tokens: 1e6, hours }),
+        project ?? null,
+        t,
+        t,
+      ),
   );
   return id;
 }
@@ -265,7 +272,10 @@ before(async () => {
     slack = await FakeSlack.start();
     slack.user("U1", "alice");
     slack.channel("D1", { is_im: true, user: "U1", members: [slack.botUser, "U1"], name: "" });
+    mkdirSync(join(fake, "site"));
+    writeFileSync(join(fake, "site", "README.md"), "site\n");
     Object.assign(config, {
+      projects: { site: { path: join(fake, "site") } },
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": slack.url } },
       planner: { provider: "fake", model: "m", runtime: "vm" },
@@ -530,4 +540,52 @@ test("SIGKILL with a VM on a tap: the restart flushes the tap and its rules, the
   );
   // released after the tap (cleanup order)
   await until(() => !db((d) => d.prepare("SELECT 1 FROM links WHERE kind = 'vm'").get()), 10_000, "links row released");
+});
+
+test("v6 step 5: a VM task clones the origin, pushes hortus/<id>, and its merge lands through the same gate", {
+  skip: online,
+}, async () => {
+  const id = `vmm${Date.now().toString(36)}`;
+  const clone = "/task/out/work/clone";
+  const push = [
+    `git clone -q https://hortusd.internal/git/site ${clone} 2>&1`,
+    `cd ${clone}`,
+    "echo '- vm' > CHANGELOG.md",
+    "git add -A",
+    "git -c user.name=w -c user.email=w@example.invalid commit -qm vm",
+    `git push -q origin HEAD:refs/heads/hortus/${id} 2>&1`,
+    "echo pushed",
+  ].join(" && ");
+  vmTask(
+    [
+      { calls: [{ name: "bash", input: { command: push } }] },
+      { calls: [{ name: "merge", input: {} }] },
+      { calls: [{ name: "done", input: { summary: "merged from a vm" } }] },
+    ],
+    1,
+    "site",
+    id,
+  );
+  const entry = await until(
+    () =>
+      db((d) =>
+        d.prepare("SELECT id FROM approvals WHERE task_id = ? AND category = 'merge' AND status = 'pending'").get(id),
+      ) as { id: number } | undefined,
+    180_000,
+    "the merge entry",
+  );
+  assert.match(JSON.stringify(requests(id)), /pushed/);
+  const r = await fetch(`http://127.0.0.1:${port}/api/approval.decide`, {
+    method: "POST",
+    headers: { "X-Hortus": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ id: entry.id, decision: "approve" }),
+  });
+  assert.equal(r.status, 200, await r.text());
+  const st = db((d) => d.prepare("SELECT status, reason FROM approvals WHERE id = ?").get(entry.id)) as {
+    status: string;
+    reason: string | null;
+  };
+  assert.equal(st.status, "landed", String(st.reason));
+  assert.equal(readFileSync(join(fake, "site", "CHANGELOG.md"), "utf8"), "- vm\n");
+  await until(() => outbox(id).some((m) => m.type === "result"), 180_000, "the task's result");
 });
