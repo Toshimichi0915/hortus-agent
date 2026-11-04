@@ -65,7 +65,7 @@ const refresh = single(rerender);
 
 /** Only the nav's approvals badge (pages without approvals on them are not re-fetched). */
 async function navBadge() {
-  const n = (await post("approval.list", { status: "pending", limit: 500 }).catch(() => null))?.length;
+  const n = (await post("approval.count", {}).catch(() => null)) ?? undefined;
   const a = $('nav a[href="/approvals"]');
   if (n === undefined || !a) return;
   a.querySelector(".badge")?.remove();

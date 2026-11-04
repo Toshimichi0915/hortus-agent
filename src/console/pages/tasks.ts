@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { budget, button, h, isOpen, layout, type Page, type Raw, status, time } from "../html.ts";
+import type { DatabaseSync } from "../../db.ts";
+import { budget, button, h, isOpen, layout, more, PAGE, type Page, type Raw, skipOf, status, time } from "../html.ts";
 
 export interface TaskRow {
   id: string;
@@ -22,8 +23,13 @@ export interface TaskRow {
   brief?: string | null;
 }
 
-export const OPEN_SQL = "SELECT * FROM tasks WHERE status NOT IN ('done', 'failed') ORDER BY updated DESC";
-export const CLOSED_SQL = "SELECT * FROM tasks WHERE status IN ('done', 'failed') ORDER BY closed DESC LIMIT 50";
+// ponytail: OFFSET paging (rows shift while tasks update; deep pages scan); a keyset cursor if that bites
+const OPEN = "status NOT IN ('done', 'failed')";
+const CLOSED = "status IN ('done', 'failed')";
+export const OPEN_SQL = `SELECT * FROM tasks WHERE ${OPEN} ORDER BY updated DESC LIMIT ? OFFSET ?`;
+export const CLOSED_SQL = `SELECT * FROM tasks WHERE ${CLOSED} ORDER BY closed DESC LIMIT ? OFFSET ?`;
+export const countTasks = (db: DatabaseSync, open: boolean): number =>
+  (db.prepare(`SELECT count(*) AS n FROM tasks WHERE ${open ? OPEN : CLOSED}`).get() as { n: number }).n;
 
 /** Stop and close for an open task; nothing for a closed one. */
 export function taskActions(t: TaskRow): Raw {
@@ -35,9 +41,10 @@ export function taskActions(t: TaskRow): Raw {
 
 const title = (t: TaskRow) => h`<a href="/tasks/${t.id}">${t.title || t.id}</a>`;
 
-export const tasks: Page = (ctx) => {
-  const open = ctx.db.prepare(OPEN_SQL).all() as unknown as TaskRow[];
-  const closed = ctx.db.prepare(CLOSED_SQL).all() as unknown as TaskRow[];
+export const tasks: Page = (ctx, { q }) => {
+  const skip = skipOf(q);
+  const open = ctx.db.prepare(OPEN_SQL).all(PAGE, skip) as unknown as TaskRow[];
+  const closed = ctx.db.prepare(CLOSED_SQL).all(PAGE, skip) as unknown as TaskRow[];
   return layout(
     ctx,
     "tasks",
@@ -47,7 +54,7 @@ export const tasks: Page = (ctx) => {
         ? h`<p class="error">Paused: queued tasks, timers and the Planner wait. <a href="/settings">Resume in Settings</a>.</p>`
         : ""
     }
-<h2>Open</h2>${
+<h2>Open</h2>${more(q, "open tasks", open.length, countTasks(ctx.db, true))}${
       open.length
         ? h`<table><thead><tr><th>Status</th><th>Title</th><th>Project</th><th>Kind</th><th>Budget</th><th>Updated</th><th></th></tr></thead><tbody>${open.map(
             (t) =>
@@ -55,7 +62,7 @@ export const tasks: Page = (ctx) => {
           )}</tbody></table>`
         : h`<p class="empty">no open tasks</p>`
     }
-<h2>Closed</h2>${
+<h2>Closed</h2>${more(q, "closed tasks", closed.length, countTasks(ctx.db, false))}${
       closed.length
         ? h`<table class="closed"><thead><tr><th>Status</th><th>Title</th><th>Closed</th></tr></thead><tbody>${closed.map(
             (t) => h`<tr><td>${status(t.status)}</td><td>${title(t)}</td><td>${time(t.closed)}</td></tr>`,

@@ -107,6 +107,31 @@ export function button(label: string, method: string, input: unknown, opts: { co
 
 export const error = (msg: string): Raw => h`<p class="error">${msg}</p>`;
 
+/** Rows per list on a page; `?skip=N` pages every capped list of that page together (SQL `LIMIT PAGE OFFSET N`). */
+export const PAGE = 50;
+/** `?skip=` as an OFFSET SQLite takes (an integer, not `1e300`). */
+export const skipOf = (q: URLSearchParams): number =>
+  Math.min(1e9, Math.max(0, Math.floor(Number(q.get("skip")) || 0)));
+
+/**
+ * What a capped list cut and how to see more: `showing 51–100 of 5,123 open tasks · newer · older`, nothing when
+ * the list fits. The links keep the page's other query parameters.
+ */
+export function more(q: URLSearchParams, what: string, shown: number, total: number): Raw {
+  const skip = skipOf(q);
+  if (skip === 0 && shown >= total) return raw("");
+  const link = (to: number, label: string) => {
+    const p = new URLSearchParams(q);
+    if (to) p.set("skip", String(to));
+    else p.delete("skip");
+    return h` · <a href="?${p.toString()}">${label}</a>`;
+  };
+  const n = (v: number) => v.toLocaleString("en");
+  return h`<p class="hint more">showing ${shown ? `${n(skip + 1)}–${n(skip + shown)}` : "none"} of ${n(total)} ${what}${
+    skip ? link(Math.max(0, skip - PAGE), "newer") : ""
+  }${skip + shown < total ? link(skip + PAGE, "older") : ""}</p>`;
+}
+
 /** An RPC another module owns may be absent: the page shows an error line instead of failing. */
 export async function tryCall<T>(
   method: string,

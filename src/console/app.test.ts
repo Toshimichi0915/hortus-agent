@@ -141,7 +141,9 @@ test("200 approvals in a burst: the open Approvals page re-renders a few times, 
     );
     bus.emit("approvals", { id: Number(r.lastInsertRowid), task: "t1" }); // as gate.check does
   }
-  await until(`document.querySelectorAll('[data-call="approval.decide"]').length >= 200`, 15_000);
+  // the page shows the newest 50 and says how many there are
+  await until(`document.querySelector('#list .more')?.textContent.includes("of 200 pending")`, 15_000);
+  assert.equal(await ev(`document.querySelectorAll('[data-call="approval.decide"]').length`), 100);
   await sleep(500);
   const n = (await ev<number>(fetches)) - before;
   const t0 = performance.now();

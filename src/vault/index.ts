@@ -52,21 +52,31 @@ const parse = (r: gate.ApprovalRow) => ({
   url: gate.approvalUrl(r.id),
 });
 
+/** Newest first, `limit` from `skip`; without `status`, pending then decided, each list paged (the CLI pages `--all`). */
 define("approval.list", {
   roles: ["owner"],
-  input: z.object({ status: z.string().optional(), limit: z.number().int().positive().max(500).default(50) }).default({
-    limit: 50,
-  }),
-  run: ({ status, limit }) => {
+  input: z
+    .object({
+      status: z.string().optional(),
+      limit: z.number().int().positive().max(500).default(50),
+      skip: z.number().int().nonnegative().default(0),
+    })
+    .default({ limit: 50, skip: 0 }),
+  run: ({ status, limit, skip }) => {
     const db = ctx().db;
-    const rows = status
-      ? db.prepare("SELECT * FROM approvals WHERE status = ? ORDER BY id DESC LIMIT ?").all(status, limit)
-      : [
-          ...db.prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY id DESC").all(),
-          ...db.prepare("SELECT * FROM approvals WHERE status != 'pending' ORDER BY id DESC LIMIT ?").all(limit),
-        ];
+    const page = (where: string, ...a: string[]) =>
+      db.prepare(`SELECT * FROM approvals WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...a, limit, skip);
+    const rows = status ? page("status = ?", status) : [...page("status = 'pending'"), ...page("status != 'pending'")];
     return (rows as unknown as gate.ApprovalRow[]).map(parse);
   },
+});
+
+/** The nav badge's number: a count, not 500 rows of 64 KB diffs on every approvals event. */
+define("approval.count", {
+  roles: ["owner"],
+  input: z.object({ status: z.string().default("pending") }).default({ status: "pending" }),
+  run: ({ status }) =>
+    (ctx().db.prepare("SELECT count(*) AS n FROM approvals WHERE status = ?").get(status) as { n: number }).n,
 });
 
 define("approval.get", {

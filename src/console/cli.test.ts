@@ -125,7 +125,7 @@ test("hortus help: stdout, exit 0; unknown command: named, usage, exit 64; <cmd>
   assert.match(bogus.err, /^unknown command bogus\nusage: hortus <command>/);
   const th = await run(["tasks", "--help"]);
   assert.equal(th.code, 0);
-  assert.match(th.out, /^usage: hortus tasks \[<id>\]/);
+  assert.match(th.out, /^usage: hortus tasks \[--all \| <id>\]/);
   const sync = await run(["sync", "--force", "web"]);
   assert.equal(sync.code, 0);
   assert.equal(sync.out, "synced web\n");
