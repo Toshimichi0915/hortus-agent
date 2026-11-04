@@ -104,6 +104,16 @@ export function render(t) {
       return undefined;
     }
   }
+  // the `sha` is in the approved hash and GitHub answers 409 when the head moved: what the owner approved is what lands
+  const merge = p.match(/^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)\/merge$/);
+  if (merge && t.method === "PUT") {
+    let sha;
+    try {
+      sha = JSON.parse(t.body ?? "{}").sha;
+    } catch {}
+    const what = `merge PR ${merge[1]}!${merge[2]}`;
+    return sha ? `${what} at ${String(sha).slice(0, 7)}` : `${what}: NO sha, lands whatever the head is by then`;
+  }
   if (t.method === "DELETE") return `DELETE ${p}`;
   return undefined;
 }

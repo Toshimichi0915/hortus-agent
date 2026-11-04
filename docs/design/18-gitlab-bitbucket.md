@@ -12,7 +12,7 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 - Mirror: `#iid` issues, `!iid` MRs (`head` = `source_branch`, `base` = `target_branch`, `head_sha` = `last_commit.id`, `checks` from `pipeline` status: `success`/`failed`/`running`→`pending`), notes as messages, `GET /projects/{p}/merge_requests/{iid}/changes` → `diff.patch` (assembled from `changes[].diff` as unified diff), approvals as `review: approved`.
 - History: `/projects/{p}/issues?updated_after=`, `/merge_requests?updated_after=`, `/issues/{iid}/notes`, `/merge_requests/{iid}/notes`, `/changes`, `/pipelines?ref=`; cursor = max `updated_at`.
 - `projects()`: `GET /projects?membership=true&min_access_level=30` filtered by `repos`; `clone` = `https://<host>/<p>.git` (`oauth2:hortus-secret-gitlab`); `pushed` from `push` events.
-- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`.
+- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`, `PUT …/merge_requests/*/merge` (`render()` shows the `sha`).
 
 ### `src/connectors/bitbucket.ts`
 
@@ -21,7 +21,7 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 - Mirror: `#id` issues, `!id` PRs (`head` = `source.branch.name`, `base` = `destination.branch.name`, `head_sha` = `source.commit.hash`, `checks` from commit statuses), comments, `GET /repositories/{p}/pullrequests/{id}/diff` → `diff.patch`.
 - History: `/repositories/{p}/issues?q=updated_on>`, `/pullrequests?q=updated_on>` (state ALL), comments, diffs, statuses; cursor `updated_on`.
 - `projects()`: `GET /repositories/{workspace}?role=member` per workspace in `repos` (or `GET /user/permissions/repositories`); `clone` = `https://bitbucket.org/<w/r>.git` (`x-token-auth:hortus-secret-bitbucket`).
-- Transform `bitbucket`: hosts `api.bitbucket.org`, `bitbucket.org`; `scope` `api.bitbucket.org/2.0/repositories/{project}/**`, `bitbucket.org/{project}.git/**`; consequential `DELETE api.bitbucket.org/**`, `POST bitbucket.org/**/git-receive-pack`, `POST api.bitbucket.org/2.0/repositories/*/*` (creation).
+- Transform `bitbucket`: hosts `api.bitbucket.org`, `bitbucket.org`; `scope` `api.bitbucket.org/2.0/repositories/{project}/**`, `bitbucket.org/{project}.git/**`; consequential `DELETE api.bitbucket.org/**`, `POST bitbucket.org/**/git-receive-pack`, `POST api.bitbucket.org/2.0/repositories/*/*` (creation), `POST …/pullrequests/*/merge` (no commit to pin: `render()` says so).
 
 ### `equals` op
 

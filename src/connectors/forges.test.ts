@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type http from "node:http";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { prompt } from "../agent/prompt.ts";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
@@ -26,6 +27,7 @@ import * as paths from "../paths.ts";
 import { fetchRepo, repoDir } from "../projects/repos.ts";
 import { coreFetch, links, listen, proxyModule } from "../proxy/index.ts";
 import { sandboxEnv } from "../runtime/host.ts";
+import { type TaskRow, taskJson } from "../runtime/tasks.ts";
 import { FakeBitbucket } from "../test/fakes/bitbucket.ts";
 import { FakeGitHub } from "../test/fakes/github.ts";
 import { FakeGitLab } from "../test/fakes/gitlab.ts";
@@ -34,7 +36,7 @@ import type { Forge, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { dirOf } from "./forge.ts";
+import { dirOf, gitOf } from "./forge.ts";
 import { patchOf } from "./gitlab.ts";
 import { connectors } from "./index.ts";
 
@@ -120,6 +122,15 @@ interface Harness {
   approve(n: number, user: string): Promise<string>;
   ci(sha: string, s: CI): Promise<unknown>;
   merge(n: number, user: string): Promise<unknown>;
+  /** a commit on the PR's branch, with the forge's event for it */
+  pushPR(n: number, file: string, diff: string): Promise<Sent & { sha: string }>;
+  /** a CI result on `sha`, in the shape that names the PR outright (GitLab: an MR pipeline, not a branch one) */
+  result(sha: string, s: "failure" | "success"): Promise<unknown>;
+  /** the Worker's merge call pinned to `sha` where the forge can; `pinned`: it can */
+  mergeCall(n: number, sha: string): { method: string; path: string; body: string };
+  pinned: boolean;
+  /** the same payload again under a new delivery id (a late redelivery) */
+  again(guid: string): Promise<Sent>;
   push(ref: string, before: string, after: string, user: string): Promise<Sent>;
   /** re-post delivery `guid` as is, and with a bad signature */
   replay(guid: string): Promise<Sent>;
@@ -172,6 +183,11 @@ const H: Harness[] = [
         s === "failure" ? { conclusion: "failure" } : { status: "in_progress", conclusion: null },
       ),
     merge: (n, user) => gh.closeThread("o/r", n, user, { merged: true }),
+    pushPR: (n, file, diff) => gh.pushPR("o/r", n, { user: "hortus[bot]", file, diff }),
+    result: (sha, s) => gh.checkSuite("o/r", sha, { conclusion: s }),
+    mergeCall: (n, sha) => ({ method: "PUT", path: `/repos/o/r/pulls/${n}/merge`, body: JSON.stringify({ sha }) }),
+    pinned: true,
+    again: (guid) => gh.deliver(ghPayload(guid).event, ghPayload(guid).request.payload),
     push: (ref, b, a, user) => gh.push("o/r", ref, b, a, user),
     replay: (guid) => gh.deliver(ghPayload(guid).event, ghPayload(guid).request.payload, { guid }),
     forged: (guid) =>
@@ -210,6 +226,15 @@ const H: Harness[] = [
     // the failure as a branch pipeline (the connector finds the MR), the rerun as an MR pipeline
     ci: (sha, s) => gl.pipeline("g/sub/p", sha, s === "failure" ? "failed" : "running", { branch: s === "failure" }),
     merge: (n, user) => gl.mergeMR("g/sub/p", n, user),
+    pushPR: (n, file, diff) => gl.pushMR("g/sub/p", n, { user: gl.self, file, diff }),
+    result: (sha, s) => gl.pipeline("g/sub/p", sha, s === "failure" ? "failed" : "success"),
+    mergeCall: (n, sha) => ({
+      method: "PUT",
+      path: `/api/v4/projects/g%2Fsub%2Fp/merge_requests/${n}/merge`,
+      body: JSON.stringify({ sha }),
+    }),
+    pinned: true,
+    again: (guid) => gl.deliver(own(gl.deliveries, guid).event, own(gl.deliveries, guid).payload),
     push: (ref, b, a, user) => gl.push("g/sub/p", ref, b, a, user),
     replay: (guid) => gl.deliver(own(gl.deliveries, guid).event, own(gl.deliveries, guid).payload, { guid }),
     forged: (guid) =>
@@ -249,6 +274,11 @@ const H: Harness[] = [
     },
     ci: (sha, s) => bb.status("w/r", sha, s === "failure" ? "FAILED" : "INPROGRESS"),
     merge: (n, user) => bb.mergePR("w/r", n, user),
+    pushPR: (n, file, diff) => bb.pushPR("w/r", n, { user: bb.self, file, diff }),
+    result: (sha, s) => bb.status("w/r", sha, s === "failure" ? "FAILED" : "SUCCESSFUL"),
+    mergeCall: (n) => ({ method: "POST", path: `/2.0/repositories/w/r/pullrequests/${n}/merge`, body: "{}" }),
+    pinned: false,
+    again: (guid) => bb.deliver(own(bb.deliveries, guid).event, own(bb.deliveries, guid).payload),
     push: (ref, b, a, user) => bb.push("w/r", ref, b, a, user),
     replay: (guid) => bb.deliver(own(bb.deliveries, guid).event, own(bb.deliveries, guid).payload, { guid }),
     forged: (guid) =>
@@ -574,6 +604,121 @@ for (const h of H) {
     await until(() => wakes > w, 3000, "merge wakes");
   });
 
+  test(`${dof}: a second push moves the PR; a result for the old commit moves nothing; the merge lands what was approved`, async () => {
+    const diff = (f: string) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -0,0 +1 @@\n+${f}\n`;
+    const A = await h.commit("second", "s1.txt", "1\n");
+    const pr = await h.openPR("toshi", "Second", "second", diff("s1.txt"));
+    const t = `!${pr.n}`;
+    const top = () => fm(dof, `${D}/${t}/${t}.md`)?.frontmatter ?? {};
+    const patch = join(paths.dof(dof), `${D}/${t}/files/diff.patch`);
+    const onHead = (sha: string) => sha.startsWith(String(top().head_sha)) && !!top().head_sha;
+    await until(() => onHead(A) && existsSync(patch), 3000, "the PR");
+    db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:${t}`);
+    await h.ci(A, "pending");
+    await until(() => top().checks === "pending", 3000, "checks: pending");
+    /** the newest event of this forge, once the gateway has decided about it */
+    const settled = (like: string) =>
+      until(
+        () => {
+          const q = db.prepare("SELECT summary, consumed FROM events WHERE dof = ? ORDER BY id DESC LIMIT 1");
+          const e = q.get(dof) as { summary: string; consumed: number };
+          return e.summary.includes(like) && e.consumed !== -2 ? e : undefined;
+        },
+        3000,
+        like,
+      );
+
+    // the push: head_sha, diff.patch; A's pending is not the new head's
+    const B = await h.pushPR(pr.n, "s2.txt", diff("s2.txt"));
+    await until(() => onHead(B.sha), 3000, "head_sha moved");
+    assert.equal(readFileSync(patch, "utf8"), diff("s2.txt"));
+    assert.ok(!top().checks, `no CI on the new head yet: ${top().checks}`);
+
+    // a failure for the superseded commit: no checks, no wake, whichever way the forge attaches it
+    await sleep(100);
+    let w = wakes;
+    await h.result(A, "failure");
+    assert.equal((await settled(` on ${A.slice(0, 7)}`)).consumed, -1, "not Planner input");
+    await sleep(50);
+    assert.equal(wakes, w);
+    assert.ok(!top().checks, `an old failure on the PR: ${top().checks}`);
+
+    // a result on the head: checks, wake, and the text says what and where
+    await h.result(B.sha, "failure");
+    await until(() => top().checks === "failure", 3000, "checks: failure");
+    await until(() => wakes === w + 1, 3000, "the head's result wakes");
+    assert.match((await settled(` on ${B.sha.slice(0, 7)}`)).summary, /(failure|failed|FAILED) on [0-9a-f]{7}$/);
+
+    // the old commit's late success does not clear it
+    w = wakes;
+    await h.result(A, "success");
+    await settled(` on ${A.slice(0, 7)}`);
+    await sleep(50);
+    assert.equal(top().checks, "failure");
+    assert.equal(wakes, w);
+
+    // a late delivery of the second push does not move the head back
+    const C = await h.pushPR(pr.n, "s3.txt", diff("s3.txt"));
+    await until(() => onHead(C.sha), 3000, "head_sha moved again");
+    await h.again(B.guid);
+    await settled(dof === "bitbucket" ? "pullrequest:updated" : "Second");
+    await sleep(50);
+    assert.ok(onHead(C.sha), `head_sha went back to ${top().head_sha}`);
+    assert.equal(readFileSync(patch, "utf8"), diff("s3.txt"));
+
+    // the merge: consequential whatever the policy; the head it was approved at, or nothing
+    const call = h.mergeCall(pr.n, C.sha);
+    const headers = { ...h.rest, "content-type": "application/json" };
+    const merge = () => send({ host: h.apiHost, ...call, headers });
+    const asked = await merge();
+    assert.ok(isApproval(asked), asked.body);
+    const entry = pending(true).at(-1);
+    assert.ok(entry);
+    const rendered = String(JSON.parse(entry.summary).rendered);
+    assert.ok(rendered.includes(h.pinned ? C.sha.slice(0, 7) : "cannot pin"), rendered);
+    gate.decide(entry.id, "approve", "owner");
+    const D2 = await h.pushPR(pr.n, "s4.txt", diff("s4.txt"));
+    await until(() => onHead(D2.sha), 3000, "a push after the approval");
+    const landed = await merge();
+    if (!h.pinned) {
+      // the recorded ceiling (v7 › Review round 10 — flows): the owner was told
+      assert.equal(landed.status, 200);
+      return;
+    }
+    assert.equal(landed.status, 409, landed.body);
+    await sleep(50);
+    assert.equal(top().state, "open");
+    const fresh = h.mergeCall(pr.n, D2.sha);
+    const again = await send({ host: h.apiHost, ...fresh, headers });
+    assert.ok(isApproval(again), "a new head is a new approval");
+    const next = pending(true).at(-1);
+    assert.ok(next);
+    gate.decide(next.id, "approve", "owner");
+    const ok = await send({ host: h.apiHost, ...fresh, headers });
+    assert.equal(ok.status, 200, ok.body);
+  });
+
+  test(`${dof}: a Worker following the prompt literally clones through the proxy`, async () => {
+    const row = { id: "W", kind: "unattended", title: "t", brief: "b", scope: JSON.stringify(SCOPE) } as TaskRow;
+    const cfg = Config.parse({ ...base, worker: { provider: "fake", model: "m" } });
+    const text = prompt(taskJson(cfg, row));
+    const m = text.match(new RegExp(`^- ${dof}:${P}: (\\S+) \\(read cache (\\S+)\\)$`, "m"));
+    assert.ok(m, text);
+    assert.equal(m[1], `https://${h.gitHost}/${P}.git`);
+    assert.equal(m[2], repoDir(dof, P));
+    assert.match(text, /git clone --reference-if-able <read cache> <url> /);
+    assert.match(text, /git push origin HEAD:hortus\/W/);
+    assert.match(text, /The requested URL returned error: 403/);
+    assert.match(text, /Never merge/);
+    const work = tempDir(`hortus-${dof}-prompt-`);
+    await gitUntil(h, work, ["clone", "-q", "--reference-if-able", m[2] ?? "", m[1] ?? "", "r"]);
+    assert.ok(existsSync(join(work, "r", ".git")));
+    assert.ok(existsSync(join(work, "r", "README.md")));
+    // a task with a project works in its clone of the local origin: no forge section
+    const project = { ...row, scope: JSON.stringify({ ...SCOPE, project: "p" }) } as TaskRow;
+    assert.doesNotMatch(prompt(taskJson(cfg, project)), /# Forge repositories/);
+  });
+
   test(`${dof}: push → the repo mirror fetches the commit, no wake`, async () => {
     const b = await h.sha("main");
     const a = await h.commit("main", "b.txt", "b\n");
@@ -826,6 +971,41 @@ test("the shipped gitlab and bitbucket transforms pass their tests and render pu
     }),
     "DELETE /2.0/repositories/w/r",
   );
+});
+
+test("gitlab: a merged-results pipeline (its own merge commit) is the head's: checks and a wake", async () => {
+  const sha = await gl.commit("g/sub/p", "results", "m.txt", "m\n");
+  const pr = await gl.openMR("g/sub/p", { user: "toshi", title: "Results", head: "results", diff: "" });
+  const top = () => fm("gitlab", `g__sub__p/!${pr.n}/!${pr.n}.md`)?.frontmatter ?? {};
+  await until(() => top().head_sha === sha, 3000, "the MR");
+  db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`gitlab:g/sub/p:!${pr.n}`);
+  await sleep(100);
+  const w = wakes;
+  await gl.pipeline("g/sub/p", sha, "failed", { result: "f".repeat(40) });
+  await until(() => top().checks === "failure", 3000, "checks: failure");
+  await until(() => wakes === w + 1, 3000, "the wake");
+});
+
+test("the image's insteadOf entries are gitOf's, for every forge", async () => {
+  const sh = readFileSync(new URL("../../scripts/build-image.sh", import.meta.url), "utf8");
+  const js = sh.match(/node -e '([\s\S]*?)' "\$home\/hortusd\.json" >>"\$root\/etc\/gitconfig"/)?.[1];
+  assert.ok(js);
+  const d = {
+    github: { type: "github" },
+    ghe: { type: "github", host: "ghe.example.com" },
+    gle: { type: "gitlab", host: "gitlab.example.com" },
+    gitlab: { type: "gitlab" },
+    bitbucket: { type: "bitbucket", host: "ignored" },
+    slack: { type: "slack" },
+  };
+  const file = join(tempDir("hortus-image-"), "hortusd.json");
+  writeFileSync(file, JSON.stringify({ dofs: d }));
+  const { stdout } = await run(process.execPath, ["-e", js, file]);
+  const want = Object.entries(d).flatMap(([n, c]) => {
+    const g = gitOf(c);
+    return g ? [`[url "https://${g.user}:hortus-secret-${n}@${g.host}/"]`, `\tinsteadOf = https://${g.host}/`] : [];
+  });
+  assert.deepEqual(stdout.trim().split("\n"), want);
 });
 
 test("sandboxEnv: insteadOf entries for gitlab (oauth2, its host) and bitbucket (x-token-auth) DOFs", () => {

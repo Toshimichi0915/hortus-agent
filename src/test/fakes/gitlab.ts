@@ -148,7 +148,16 @@ interface Thing {
   author: User;
   created_at: string;
   updated_at: string;
-  mr?: { source_branch: string; target_branch: string; sha: string; diff: string; approvals: User[] };
+  mr?: {
+    source_branch: string;
+    target_branch: string;
+    sha: string;
+    diff: string;
+    approvals: User[];
+    /** every head it has had */
+    shas: string[];
+    head_pipeline?: { id: number; status: string };
+  };
 }
 interface Note {
   id: number;
@@ -297,7 +306,14 @@ export class FakeGitLab {
       id: t.iid + 1000,
       project_id: p.id,
       ...rest,
-      ...(mr ? { source_branch: mr.source_branch, target_branch: mr.target_branch, sha: mr.sha } : {}),
+      ...(mr
+        ? {
+            source_branch: mr.source_branch,
+            target_branch: mr.target_branch,
+            sha: mr.sha,
+            head_pipeline: mr.head_pipeline ?? null,
+          }
+        : {}),
       web_url: `https://gitlab.com/${p.path}/-/${kind}/${t.iid}`,
     };
   }
@@ -398,9 +414,23 @@ export class FakeGitLab {
     const base = o.base ?? "main";
     const diff = o.diff ?? (await this.git.diff(path, base, o.head).catch(() => ""));
     const t = this.newThing(p, true, o);
-    t.mr = { source_branch: o.head, target_branch: base, sha, diff, approvals: [] };
+    t.mr = { source_branch: o.head, target_branch: base, sha, diff, approvals: [], shas: [sha] };
     const x = await this.send("merge_request", p, o.user, { object_attributes: this.hookAttrs(t, "open") }, d);
     return { ...x, n: t.iid, sha };
+  }
+
+  /** A commit on the MR's branch: the head moves, `update` fires with `oldrev`. */
+  async pushMR(path: string, n: number, o: { user: string; file: string; diff: string }, d?: DeliverOpts) {
+    const t = this.thing(path, n, true);
+    if (!t.mr) throw new Error(`fake: no MR !${n}`);
+    const oldrev = t.mr.sha;
+    const sha = await this.commit(path, t.mr.source_branch, o.file, `${o.file}\n`);
+    Object.assign(t.mr, { sha, diff: o.diff, head_pipeline: undefined });
+    t.mr.shas.push(sha);
+    t.updated_at = this.ts();
+    const object_attributes = { ...this.hookAttrs(t, "update"), oldrev };
+    const x = await this.send("merge_request", this.get(path), o.user, { object_attributes }, d);
+    return { ...x, sha };
   }
 
   approve(path: string, n: number, user: string, d?: DeliverOpts) {
@@ -417,12 +447,16 @@ export class FakeGitLab {
     return this.send("merge_request", this.get(path), by, { object_attributes: this.hookAttrs(t, "merge") }, d);
   }
 
-  /** A pipeline on `sha`; `branch` sends it as a branch pipeline (no `merge_request`, the connector looks it up). */
-  pipeline(path: string, sha: string, status: string, o: { branch?: boolean } = {}, d?: DeliverOpts) {
+  /**
+   * A pipeline on `sha`, for the opened MR that had it as a head; `branch` sends it as a branch pipeline (no
+   * `merge_request`, the connector looks it up); `result`: a merged-results pipeline, run on that merge commit.
+   */
+  pipeline(path: string, sha: string, status: string, o: { branch?: boolean; result?: string } = {}, d?: DeliverOpts) {
     const p = this.get(path);
-    const mr = [...p.mrs.values()].find((t) => t.mr?.sha === sha && t.state === "opened");
-    const pl = { id: this.ids++, sha, ref: mr?.mr?.source_branch ?? "main", status };
+    const mr = [...p.mrs.values()].find((t) => t.mr?.shas.includes(sha) && t.state === "opened");
+    const pl = { id: this.ids++, sha: o.result ?? sha, ref: mr?.mr?.source_branch ?? "main", status };
     p.pipelines.unshift(pl);
+    if (mr?.mr?.sha === sha) mr.mr.head_pipeline = { id: pl.id, status };
     const merge_request = mr && !o.branch ? { iid: mr.iid } : null;
     return this.send("pipeline", p, "ci", { object_attributes: { ...pl, source: "push" }, merge_request }, d);
   }
@@ -547,6 +581,15 @@ export class FakeGitLab {
         200,
         list.map((t) => this.restJson(p, t)),
       );
+    }
+    x = rest.match(/^\/merge_requests\/(\d+)\/merge$/);
+    if (x && M === "PUT") {
+      const t = p.mrs.get(Number(x[1]));
+      if (!t?.mr) return json(404, { message: "404 Not found" });
+      const sha = body.sha ?? q("sha");
+      if (sha && sha !== t.mr.sha) return json(409, { message: "SHA does not match HEAD of source branch" });
+      await this.mergeMR(p.path, t.iid, this.self, { drop: true });
+      return json(200, this.restJson(p, t));
     }
     x = rest.match(/^\/(issues|merge_requests)\/(\d+)(\/notes|\/changes|\/approvals)?$/);
     if (x) {

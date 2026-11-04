@@ -225,6 +225,8 @@ export interface TaskJson {
   };
   /** the origin to clone (unattended project tasks) */
   clone_url?: string;
+  /** the plain clone URL of each `scope.repos` entry */
+  repo_urls?: Record<string, string>;
   /** chat: the owner's projects */
   projects?: Record<string, { path: string; main: string; runtime: "host" | "vm" }>;
   /** chat: the CLI's cwd */

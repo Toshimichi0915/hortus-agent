@@ -39,6 +39,14 @@ export function eventQueue(): { push(e: Event): Promise<void>; events(signal: Ab
 /** A channel id with `/` would nest in the mirror: `owner/repo` lives in `owner__repo/` (v7 › DOF). */
 export const dirOf = (project: string): string => project.replace(/\//g, "__");
 
+/** git over HTTPS per forge type: the Basic user it wants and its host (18-gitlab-bitbucket.md); Bitbucket is cloud only. */
+export function gitOf(d: { type: string; host?: string | undefined }): { user: string; host: string } | undefined {
+  if (d.type === "github") return { user: "x-access-token", host: d.host ?? "github.com" };
+  if (d.type === "gitlab") return { user: "oauth2", host: d.host ?? "gitlab.com" };
+  if (d.type === "bitbucket") return { user: "x-token-auth", host: "bitbucket.org" };
+  return undefined;
+}
+
 /** `dofs.<name>.repos` globs: `*` one segment, `**` anything; none configured → every project. */
 export function matches(project: string, globs: string[] | undefined): boolean {
   if (!globs?.length) return true;

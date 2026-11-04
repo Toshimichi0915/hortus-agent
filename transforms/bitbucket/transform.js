@@ -97,6 +97,10 @@ export function render(t) {
       return undefined;
     }
   }
+  // ponytail: Bitbucket's merge call takes no commit to pin (v7 › Review round 10 — flows)
+  const merge = p.match(/^\/2\.0\/repositories\/([^/]+\/[^/]+)\/pullrequests\/(\d+)\/merge$/);
+  if (merge && t.method === "POST")
+    return `merge PR ${merge[1]}!${merge[2]}: Bitbucket cannot pin a commit, lands whatever the head is by then`;
   const repo = p.match(/^\/2\.0\/repositories\/([^/]+\/[^/]+)\/?$/);
   if (repo && t.method === "POST") {
     let priv = true;

@@ -415,6 +415,22 @@ after(async () => {
   if (!process.env.KEEP) rmSync(fake, { recursive: true, force: true });
 });
 
+test("a chat gets every mirrored forge project (v6 › Forge origin), with its clone URL in the prompt", {
+  skip,
+}, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "hi" });
+  const scope = JSON.parse(taskRow(id)?.scope ?? "{}") as { repos: string[] };
+  assert.deepEqual(scope.repos.sort(), ["bitbucket:w/r", "gle:g/sub/p"]);
+  const file = join(paths.ctl(id), "task.json");
+  await until(() => existsSync(file), 15_000, "the chat's task.json");
+  const task = JSON.parse(readFileSync(file, "utf8")) as { repo_urls: unknown };
+  assert.deepEqual(task.repo_urls, {
+    "bitbucket:w/r": "https://bitbucket.org/w/r.git",
+    "gle:g/sub/p": "https://gitlab.example.com/g/sub/p.git",
+  });
+  await api("task.close", { id }).catch(() => {});
+});
+
 for (const f of forges) {
   let task = "";
   let mr = 0;
@@ -425,7 +441,7 @@ for (const f of forges) {
   }, async () => {
     planner(`export default ({ n, events }) => n === 0 ? { calls: [{ name: "task_create", input: {
       title: "fix #1", brief: "!bash sh ${join(fake, `worker-${f.dof}.sh`)}", event_ids: [events[0].id],
-      scope: { repos: ["${f.dof}:${f.project}"], credentials: ["${f.dof}"] } } }] } : { text: "created" };`);
+      scope: { repos: ["${f.dof}:${f.project}"], credentials: ["${f.dof}"], dofs: ["${f.dof}"] } } }] } : { text: "created" };`);
     const count = batches().length;
     await f.comment(1, "toshi", `fix this on ${f.dof}`);
     const b = await batchWith(count, `fix this on ${f.dof}`);
@@ -524,6 +540,10 @@ for (const f of forges) {
     b = await batchWith(count, f.failed);
     assert.match(batchText(b), new RegExp(`matches task ${task}\\)`), "CI wakes only with the MR's ref in task_refs");
     await until(() => reqs(task).length > seen, 15_000, "resumed by CI");
+    // the Worker's inbox: which commit failed, and a pointer that exists on disk
+    const inbox = JSON.stringify(reqs(task).at(-1)?.messages);
+    assert.ok(inbox.includes(` on ${(await f.sha(`hortus/${task}`)).slice(0, 7)}`), inbox);
+    assert.ok(inbox.includes(`(the thread: ${f.dof}/${dirOf(f.project)}/!${mr}/ under the DOF root)`), inbox);
     assert.ok(existsSync(join(paths.out(task), "work", "r", "fix.txt")), "the same work/");
     const top = join(home, "dof", f.dof, dirOf(f.project), `!${mr}`, `!${mr}.md`);
     await until(() => /checks: failure/.test(readFileSync(top, "utf8")), 15_000, "the mirror's checks");

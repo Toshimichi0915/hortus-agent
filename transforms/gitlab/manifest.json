@@ -22,6 +22,7 @@
     "DELETE {host}/api/v4/**",
     "POST {host}/**/git-receive-pack",
     "POST {host}/api/v4/projects",
+    "PUT {host}/api/v4/projects/*/merge_requests/*/merge",
     "PUT {host}/api/v4/projects/*",
     "POST {host}/api/v4/projects/*/transfer",
     "PUT {host}/api/v4/projects/*/transfer",

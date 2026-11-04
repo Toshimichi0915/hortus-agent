@@ -143,7 +143,8 @@ define("task_attach", {
     const seqs = evs.map((e) => {
       const ref = refsOf(e)[0];
       // a thread outside the task's scope.dofs is not mounted: no pointer to it
-      const where = ref && can.includes(e.dof) ? `\n(the thread: ${ref.split(":").join("/")}/ under the DOF root)` : "";
+      const where =
+        ref && can.includes(e.dof) ? `\n(the thread: ${ref.split(":").map(dirOf).join("/")}/ under the DOF root)` : "";
       return tasks.inboxWrite(
         task_id,
         {

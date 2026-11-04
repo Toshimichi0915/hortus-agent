@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
+import { gitOf } from "../connectors/forge.ts";
 import { logger } from "../log.ts";
 import { lines, MAX_LINE, openAppend } from "../hostile.ts";
 import * as paths from "../paths.ts";
@@ -88,18 +89,13 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
   ];
   // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
   // under the user each forge expects (18-gitlab-bitbucket.md)
-  const users: Record<string, [string, string]> = {
-    github: ["x-access-token", "github.com"],
-    gitlab: ["oauth2", "gitlab.com"],
-    bitbucket: ["x-token-auth", "bitbucket.org"],
-  };
   for (const [name, d] of Object.entries(config?.dofs ?? {})) {
-    const u = users[d.type];
-    if (!u) continue;
-    const host = d.type === "bitbucket" ? u[1] : (d.host ?? u[1]);
+    const g = gitOf(d);
+    if (!g) continue;
+    const { user, host } = g;
     // HORTUS_NO_NET=1 has no DNS/DNAT: the forge host resolves to the session's alias, on its listener's port
     const at = loopback ? `${host}:${loopback.https}` : host;
-    git.push([`url.https://${u[0]}:hortus-secret-${name}@${at}/.insteadOf`, `https://${host}/`]);
+    git.push([`url.https://${user}:hortus-secret-${name}@${at}/.insteadOf`, `https://${host}/`]);
     if (loopback) git.push(["http.curloptResolve", `${at}:${loopback.address}`]);
   }
   env.GIT_CONFIG_COUNT = String(git.length);

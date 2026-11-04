@@ -40,6 +40,8 @@ interface Pull {
   sha: string;
   diff: string;
   approvals: Map<string, User>;
+  /** the head it merged at */
+  landed?: string;
   created_on: string;
   updated_on: string;
 }
@@ -284,6 +286,17 @@ export class FakeBitbucket {
     return { ...x, n: p.id, sha };
   }
 
+  /** A commit on the PR's branch: the head moves, `pullrequest:updated` fires. */
+  async pushPR(full: string, n: number, o: { user: string; file: string; diff: string }, d?: DeliverOpts) {
+    const r = this.get(full);
+    const p = this.pr(full, n);
+    p.sha = await this.commit(full, p.head, o.file, `${o.file}\n`);
+    p.diff = o.diff;
+    p.updated_on = this.ts();
+    const x = await this.send("pullrequest:updated", r, o.user, { pullrequest: this.prJson(r, p) }, d);
+    return { ...x, sha: p.sha };
+  }
+
   approve(full: string, n: number, user: string, d?: DeliverOpts) {
     const r = this.get(full);
     const p = this.pr(full, n);
@@ -304,6 +317,7 @@ export class FakeBitbucket {
     const r = this.get(full);
     const p = this.pr(full, n);
     p.state = "MERGED";
+    p.landed = p.sha;
     p.updated_on = this.ts();
     return this.send("pullrequest:fulfilled", r, by, { pullrequest: this.prJson(r, p) }, d);
   }
@@ -420,6 +434,12 @@ export class FakeBitbucket {
         base: dst?.branch?.name ?? "main",
       });
       return json(201, this.prJson(r, this.pr(full, pr.n)));
+    }
+    x = rest.match(/^\/pullrequests\/(\d+)\/merge$/);
+    if (x && M === "POST") {
+      const n = Number(x[1]);
+      await this.mergePR(full, n, this.self, { drop: true });
+      return json(200, this.prJson(r, this.pr(full, n)));
     }
     x = rest.match(/^\/(issues|pullrequests)\/(\d+)(\/comments|\/diff)?$/);
     if (x) {

@@ -41,6 +41,7 @@ interface MR extends Issue {
   source_branch: string;
   target_branch: string;
   sha: string;
+  head_pipeline?: { id: number; status: string } | null;
 }
 interface Note {
   id: number;
@@ -203,7 +204,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       b.user ?? (b.user_username ? { id: b.user_id ?? -1, username: b.user_username } : undefined);
     const own = u ? (await me())?.id === u.id : false;
     const bot = !pipeline && !!u && (own || u.bot === true || BOT_NAME.test(u.username));
-    const text = oneLine(a?.note ?? a?.title ?? a?.status ?? b.ref);
+    const result = pipeline && a?.sha ? `${a.status} on ${a.sha.slice(0, 7)}` : a?.status;
+    const text = oneLine(a?.note ?? a?.title ?? result ?? b.ref);
     return {
       dof: name,
       key,
@@ -376,9 +378,22 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         }
         case "pipeline": {
           if (!mrs?.length || !a?.sha) return none;
-          const checks = ci(a.status) ?? (await checksOf(p, a.sha));
-          const changes: Change[] = mrs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks } }));
-          return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
+          // `checks` is the MR head's, whatever commit this pipeline ran on; only a result on a head wakes. A
+          // merged-results pipeline runs on a merge commit: `head_pipeline` is how it is the head's.
+          const open = await Promise.all(mrs.map((n) => json<MR>(`${P(p)}/merge_requests/${n}`)));
+          const onHead = (m: MR) => m.sha === a.sha || m.head_pipeline?.id === a.id;
+          const changes = await Promise.all(
+            open.map(
+              async (m): Promise<Change> => ({
+                op: "patch",
+                path: at(p, `!${m.iid}`),
+                frontmatter: {
+                  checks: ci(onHead(m) ? a.status : m.head_pipeline?.status) ?? (await checksOf(p, m.sha)),
+                },
+              }),
+            ),
+          );
+          return { changes, wake: open.some((m) => onHead(m) && deps.hasRef(ref(p, `!${m.iid}`))) };
         }
         default:
           return none; // push (the repo mirror's business)
