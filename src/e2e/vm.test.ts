@@ -2,8 +2,8 @@
  * Worker VMs under failure (13-worker-vm.md), the real daemon and the real image (HORTUS_TEST_VM=1; the image in
  * `$HORTUS_TEST_IMAGES`, /dev/kvm). Without HORTUS_TEST_NET the daemon runs under HORTUS_NO_NET=1 in a delegated user
  * scope (VMs on `-netdev user`: the fake provider plugin answers inside the guest, the Worker's `done` is an outbox
- * file): SIGKILL during a VM start and during a run, the hours deadline across a restart, `vm.max_concurrent` and a
- * kernel that does not boot. With HORTUS_TEST_NET=1 (passwordless sudo) the daemon is a capability-bearing system unit
+ * file): SIGKILL during a VM start and during a run, the hours deadline across a restart, `vm.max_concurrent`, a kernel
+ * that does not boot, and a guest that crashes (panic, Worker, QEMU, virtiofsd) or hangs. With HORTUS_TEST_NET=1 (passwordless sudo) the daemon is a capability-bearing system unit
  * (scripts/dev-run.sh's properties) and VMs get taps: `planner.runtime: "vm"` end to end, and taps/rules after a kill.
  * The guest runs the image's own copy of hortus-agent (`npm pack` at `hortus image build`), not this tree's dist.
  */
@@ -16,6 +16,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -244,6 +245,32 @@ const mark = (what: string) => console.log(`# [${((Date.now() - t0) / 1000).toFi
 
 let slack: FakeSlack | undefined;
 
+/**
+ * The Worker is uid `agent` and cannot reach /proc/sysrq-trigger, so a real panic needs root in the guest: a copy of the
+ * image with a root service that panics the kernel when `out/work/panic` appears (debugfs, no sudo; QEMU's -snapshot
+ * leaves the copy as it is).
+ */
+function crashImage(): void {
+  const img = join(fake, "agent.ext4");
+  const unit = join(fake, "crash.service");
+  writeFileSync(
+    unit,
+    `[Service]\nExecStart=/bin/sh -c 'until [ -e /task/out/work/panic ]; do sleep 0.2; done; echo c > /proc/sysrq-trigger'\n`,
+  );
+  const cp = spawnSync("cp", ["--sparse=always", join(IMAGES, "agent.ext4"), img]);
+  assert.equal(cp.status, 0, String(cp.stderr));
+  const cmds = join(fake, "debugfs.cmds");
+  const dir = "/etc/systemd/system";
+  writeFileSync(
+    cmds,
+    `write ${unit} ${dir}/crash.service\nsymlink ${dir}/multi-user.target.wants/crash.service ${dir}/crash.service\n`,
+  );
+  const r = spawnSync("debugfs", ["-w", "-f", cmds, img], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  rmSync(join(home, "images", "agent.ext4"));
+  symlinkSync(img, join(home, "images", "agent.ext4"));
+}
+
 before(async () => {
   if (!ENABLED) return;
   home = tempDir("hortus-vmtest-");
@@ -261,26 +288,31 @@ before(async () => {
   writeFileSync(join(fake, "plugins", "fake", "fake.mjs"), FAKE);
   port = await freePort();
   const config: Record<string, unknown> = {
-    owner: { tz: "UTC" },
+    owner: { tz: "UTC", notify: "slack" },
     worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
     // boot to the guest's hortus-agent takes a few seconds; 30 s keeps the hung-kernel test short
     vm: { cpus: 1, mem_mb: 1024, max_concurrent: 1, boot_timeout_s: 30 },
   };
   const vault: Record<string, unknown> = { fake: { type: "token", value: "x", transform: "fake" } };
+  slack = await FakeSlack.start();
+  slack.user("U1", "alice");
+  slack.channel("D1", { is_im: true, user: "U1", members: [slack.botUser, "U1"], name: "" });
+  Object.assign(config, {
+    dofs: { slack: { type: "slack", owner: "U1" } },
+    dev: { upstreams: { "slack.com": slack.url } },
+  });
+  Object.assign(vault, slack.vault("slack"));
   if (NET) {
-    slack = await FakeSlack.start();
-    slack.user("U1", "alice");
-    slack.channel("D1", { is_im: true, user: "U1", members: [slack.botUser, "U1"], name: "" });
     mkdirSync(join(fake, "site"));
     writeFileSync(join(fake, "site", "README.md"), "site\n");
     Object.assign(config, {
       projects: { site: { path: join(fake, "site") } },
-      dofs: { slack: { type: "slack", owner: "U1" } },
-      dev: { upstreams: { "slack.com": slack.url } },
       planner: { provider: "fake", model: "m", runtime: "vm" },
     });
-    Object.assign(vault, slack.vault("slack"));
-  } else config.proxy = { https: 0, http: 0, dns: 0 };
+  } else {
+    config.proxy = { https: 0, http: 0, dns: 0 };
+    crashImage();
+  }
   writeFileSync(join(home, "hortusd.json"), JSON.stringify(config));
   writeFileSync(join(home, "vault.json"), JSON.stringify(vault), { mode: 0o600 });
   await startDaemon();
@@ -438,34 +470,149 @@ test("a kernel that does not boot: the task waits with QEMU's error and is not r
   }
 });
 
-test("a kernel that loads and hangs (no initramfs: it panics with panic=0): boot timeout, the task waits, not restarted", {
+test("a kernel with no root (the initramfs drops to its shell and sits there): boot timeout, the task waits, not restarted", {
   skip: offline,
 }, async () => {
-  const i = join(home, "images", "initramfs.img");
+  const i = join(home, "images", "agent.ext4");
+  const real = readlinkSync(i);
   rmSync(i);
-  writeFileSync(i, "not an initramfs\n".repeat(100));
+  writeFileSync(i, "not a filesystem\n".repeat(1000));
   try {
     const id = vmTask([{ text: "never" }]);
     const t = Date.now();
     await until(() => row(id)?.status === "waiting", 90_000, "waiting");
     const secs = (Date.now() - t) / 1000;
     const err = row(id)?.error ?? "";
-    mark(`hung kernel: waiting after ${secs.toFixed(1)} s: ${err.slice(0, 300).replaceAll("\n", " | ")}`);
+    mark(`hung boot: waiting after ${secs.toFixed(1)} s: ${err.slice(0, 300).replaceAll("\n", " | ")}`);
     assert.match(err, /^boot timeout: no contact from the guest within 30 s/);
-    assert.match(err, /Kernel panic|Linux version/, "the console.log tail follows");
+    assert.match(err, /emergency shell/, "the console.log tail follows");
     assert.ok(secs >= 25 && secs < 60, `${secs} s`);
     await until(() => qemus().length === 0, 10_000, "QEMU gone");
-    const starts = () =>
-      logText()
-        .split("\n")
-        .filter((l) => l.includes('"msg":"starting"') && l.includes(id)).length;
     await sleep(3000);
-    assert.equal(starts(), 1, "not restarted");
+    assert.equal(started(id), 1, "not restarted");
     assert.equal(row(id)?.status, "waiting");
+  } finally {
+    rmSync(i);
+    symlinkSync(real, i);
+  }
+});
+
+test("a kernel that panics at boot: guest died at once, not at the boot timeout", { skip: offline }, async () => {
+  const i = join(home, "images", "initramfs.img");
+  rmSync(i);
+  writeFileSync(i, "not an initramfs\n".repeat(100));
+  try {
+    const id = vmTask([{ text: "never" }]);
+    const t = Date.now();
+    await until(() => row(id)?.status === "waiting", 30_000, "waiting");
+    mark(`panic at boot: waiting after ${((Date.now() - t) / 1000).toFixed(1)} s`);
+    assert.match(row(id)?.error ?? "", /^guest died: .*Kernel panic/s);
+    await until(() => qemus().length === 0, 10_000, "QEMU gone");
+    await sleep(3000);
+    assert.equal(started(id), 1, "not restarted");
   } finally {
     rmSync(i);
     symlinkSync(join(IMAGES, "initramfs.img"), i);
   }
+});
+
+/** the owner's failure DMs so far (the first of a minute names its task, the rest are "N more") */
+const failureDms = () =>
+  (slack as FakeSlack).calls
+    .filter((c) => c.method === "chat.postMessage" && c.params.channel === "D1")
+    .map((c) => c.params.text ?? "")
+    .filter((t) => /failed|over budget/.test(t));
+const planned = (id: string) =>
+  db((d) => d.prepare("SELECT body FROM outbox WHERE task_id = ? AND seq < 0").all(id)) as { body: string }[];
+const started = (id: string) =>
+  logText()
+    .split("\n")
+    .filter((l) => l.includes('"msg":"starting"') && l.includes(id)).length;
+
+/** The task ended by `crash`: waiting, the card says `error`, one DM, one Planner row, and a restart changes nothing. */
+async function crashes(script: unknown[], crash: (id: string) => Promise<void> | void, error: RegExp): Promise<void> {
+  const dms = failureDms().length;
+  const id = vmTask(script);
+  await until(() => existsSync(join(paths.out(id), "booted")), 60_000, "the guest's first contact");
+  const t = Date.now();
+  await crash(id);
+  await until(() => row(id)?.status === "waiting", 90_000, "waiting");
+  const err = row(id)?.error ?? "";
+  mark(`${((Date.now() - t) / 1000).toFixed(1)} s to waiting, ${err.slice(0, 160).replaceAll("\n", " | ")}`);
+  assert.match(err, error);
+  await until(() => qemus().length === 0, 10_000, "QEMU gone");
+  await until(() => failureDms().length > dms, 70_000, "the DM");
+  assert.equal(failureDms().length, dms + 1, String(failureDms().slice(dms)));
+  assert.equal(planned(id).length, 1);
+  assert.equal(JSON.parse(planned(id)[0]?.body ?? "{}").type, "result");
+  assert.equal(outbox(id).filter((m) => m.type === "result").length, 0, "the Worker said nothing");
+  await killDaemon();
+  await startDaemon();
+  await sleep(3000);
+  assert.equal(row(id)?.status, "waiting");
+  assert.equal(row(id)?.error, err);
+  assert.equal(started(id), 1, "not restarted");
+  assert.equal(failureDms().length, dms + 1, "no second DM");
+  assert.equal(planned(id).length, 1, "no second row");
+}
+
+const longTool = (first: string) => [{ calls: [{ name: "bash", input: { command: `${first}; sleep 600` } }] }];
+
+test("a kernel panic in a running guest ends the task at once", { skip: offline }, () =>
+  crashes(
+    longTool("touch /task/out/work/panic"),
+    (id) => until(() => existsSync(join(paths.out(id), "work", "panic")), 60_000, "the tool ran").then(() => {}),
+    /^guest died: .*Rebooting in 1 seconds/s,
+  ),
+);
+
+test("the Worker killed inside the guest", { skip: offline }, () =>
+  crashes(longTool("pkill -9 -f bin/hortus-agent"), () => {}, /^guest died: /),
+);
+
+test("QEMU killed from outside", { skip: offline }, () =>
+  crashes(
+    longTool("touch /task/out/work/go"),
+    async (id) => {
+      await until(() => existsSync(join(paths.out(id), "work", "go")), 60_000, "the tool ran");
+      for (const q of qemus()) process.kill(q.pid, "SIGKILL");
+    },
+    /^QEMU killed by SIGKILL/,
+  ),
+);
+
+test("virtiofsd killed under a running guest", { skip: offline }, () =>
+  crashes(
+    longTool("touch /task/out/work/go"),
+    async (id) => {
+      await until(() => existsSync(join(paths.out(id), "work", "go")), 60_000, "the tool ran");
+      for (const p of vmProcs()) if (p.exe.includes("virtiofsd")) process.kill(p.pid, "SIGKILL");
+    },
+    /virtiofsd|guest died/,
+  ),
+);
+
+test("a guest that hangs after boot: running until its hours, the card's STOP ends it in 30 s, nothing notified", {
+  skip: offline,
+}, async () => {
+  const dms = failureDms().length;
+  const id = vmTask(longTool("touch /task/out/work/go"));
+  await until(() => existsSync(join(paths.out(id), "work", "go")), 60_000, "the tool ran");
+  for (const q of qemus()) process.kill(q.pid, "SIGSTOP");
+  await sleep(5000);
+  assert.equal(row(id)?.status, "running");
+  const r = await fetch(`http://127.0.0.1:${port}/api/task.stop`, {
+    method: "POST",
+    headers: { "X-Hortus": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  assert.equal(r.status, 200, await r.text());
+  await until(() => row(id)?.status === "waiting", 45_000, "the STOP's kill");
+  assert.equal(row(id)?.error, null);
+  await until(() => qemus().length === 0, 10_000, "QEMU gone");
+  await sleep(2000);
+  assert.equal(failureDms().length, dms);
+  assert.equal(planned(id).length, 0);
 });
 
 const nftComments = (): string[] => {
