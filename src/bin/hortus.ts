@@ -240,8 +240,11 @@ const commands: Record<string, Command> = {
     run: chat,
   },
   approvals: {
-    usage: "approvals [--all | approve|reject <id>]  pending first",
-    async run([verb, id], rpc) {
+    usage: "approvals [--all | approve [--grant]|reject <id>]  pending first; --grant: allow for the task",
+    async run(argv, rpc) {
+      // --grant: "Approve, and allow … for this task" (a tainted task's non-consequential entry, gate.grantable)
+      const grant = argv.includes("--grant");
+      const [verb, id] = argv.filter((a) => a !== "--grant");
       if (verb === undefined || verb === "--all") {
         const { rows, cut } = await listing(rpc, "approval.list", verb === "--all", (a) => a.status === "pending");
         if (!rows.length) return console.log("no approvals");
@@ -260,10 +263,11 @@ const commands: Record<string, Command> = {
         if (cut) console.log(cutLine("approvals"));
         return;
       }
-      if (verb !== "approve" && verb !== "reject") throw new Usage("usage: hortus approvals [approve|reject <id>]");
+      if ((verb !== "approve" && verb !== "reject") || (grant && verb !== "approve"))
+        throw new Usage("usage: hortus approvals [approve [--grant] <id> | reject <id>]");
       const n = Number(needId(id, `approvals ${verb} <id>`));
-      await rpc.call("approval.decide", { id: n, decision: verb });
-      console.log(`${verb === "approve" ? "approved" : "rejected"} #${n}`);
+      await rpc.call("approval.decide", { id: n, decision: verb, ...(grant ? { grant } : {}) });
+      console.log(`${verb === "approve" ? "approved" : "rejected"} #${n}${grant ? ", and allowed for its task" : ""}`);
     },
   },
   stop: {

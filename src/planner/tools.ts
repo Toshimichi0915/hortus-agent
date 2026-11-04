@@ -51,9 +51,9 @@ function batchTaint(caller: Caller): string | undefined {
   const results = db.prepare("SELECT DISTINCT task_id FROM outbox WHERE consumed = ?").all(Number(n)) as {
     task_id: string;
   }[];
-  return strangers || results.some((r) => taintOf(db, r.task_id, pctx().config).length)
-    ? `created from a batch with untrusted events (${caller.task})`
-    : undefined;
+  if (strangers) return `created from a batch with untrusted events (${caller.task})`;
+  const from = results.find((r) => taintOf(db, r.task_id, pctx().config).length);
+  return from ? `created from a batch with tainted task ${from.task_id}'s result (${caller.task})` : undefined;
 }
 
 function route(taskId: string, evs: EventRow[]): void {
