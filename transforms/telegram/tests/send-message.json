@@ -17,6 +17,6 @@
       "headers": { "content-type": "application/json" },
       "body": "{\"ok\":true,\"result\":{\"message_id\":9,\"chat\":{\"id\":-100},\"reply_to_message\":{\"message_id\":7}}}"
     },
-    "refs": ["telegram:-100:7"]
+    "refs": ["telegram:-100:7", "telegram:-100:9"]
   }
 }

@@ -7,7 +7,9 @@ export function request(req) {
   return { ...req, url };
 }
 
-// sendMessage → refs `telegram:<chat>:<thread>`: the forum topic, else the replied-to message, else the message.
+// sendMessage → refs `telegram:<chat>:<thread>`: the forum topic, else the replied-to message, else the message; and
+// the sent message itself. The bot's messages are never updates and a reply carries no chain, so someone answering
+// this message is on thread <this message> to the connector.
 export function response(res, req) {
   const out = { res };
   if (!/\/sendMessage(\?|$)/.test(req.url) || !res.body) return out;
@@ -21,6 +23,6 @@ export function response(res, req) {
   if (!m?.chat) return out;
   const r = m.reply_to_message;
   const thread = m.message_thread_id ?? r?.message_thread_id ?? r?.message_id ?? m.message_id;
-  out.refs = [`telegram:${m.chat.id}:${thread}`];
+  out.refs = [...new Set([thread, m.message_id])].map((t) => `telegram:${m.chat.id}:${t}`);
   return out;
 }

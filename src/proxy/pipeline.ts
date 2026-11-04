@@ -847,7 +847,10 @@ function flatHeaders(h: http.IncomingHttpHeaders): Record<string, string | strin
   return out;
 }
 
-/** Refs and repos are `<dof>:…`; a transform speaks only for the configured DOFs of its own type. */
+/**
+ * Refs and repos are `<dof>:…`; a transform speaks only for the configured DOFs of its own type. It writes its type
+ * for the DOF, which it cannot know: the DOF is the credential of that name (a connector's is `hortus-secret-<dof>`).
+ */
 function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | undefined): void {
   const task = p.client.task;
   if (!task) return;
@@ -856,8 +859,11 @@ function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | un
     const d = r.split(":", 1)[0] ?? "";
     return r.includes(":") && Object.hasOwn(dofs, d) && dofs[d]?.type === p.tf?.name;
   };
-  const refs = all?.filter(own);
-  const repos = allRepos?.filter(own);
+  const type = `${p.tf?.name}:`;
+  const dof = [...p.secrets.keys()].find((n) => Object.hasOwn(dofs, n) && dofs[n]?.type === p.tf?.name);
+  const named = (r: string) => (dof && r.startsWith(type) ? `${dof}:${r.slice(type.length)}` : r);
+  const refs = all?.map(named).filter(own);
+  const repos = allRepos?.map(named).filter(own);
   const db = ctx().db;
   for (const r of refs ?? []) db.prepare("INSERT OR IGNORE INTO task_refs(ref, task_id) VALUES (?, ?)").run(r, task);
   if (repos?.length && p.consequential && p.approved) {
