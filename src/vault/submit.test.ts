@@ -26,7 +26,7 @@ import type { InboxMsg, VaultEntry } from "../types.ts";
 import * as dof from "./dof.ts";
 import { gate, transforms, transformsDofModule, vaultModule } from "./index.ts";
 import { sigv4 } from "./sigv4.ts";
-import { diff, MAX_TESTS } from "./submit.ts";
+import { diff, MAX_TESTS, TESTS } from "./submit.ts";
 import { read as readVault, write as writeVault } from "./vault.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-submit-");
@@ -261,7 +261,7 @@ test("tests gate: template mismatch → invalid with the diff, no entry; zero te
 test("runtime limits apply to tests: an infinite loop in request() fails within ~200 ms", async () => {
   const t0 = Date.now();
   await invalid(submit("spin", files("spin", { code: "export function request() { for (;;) {} }" })), /tests failed/);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
 });
 
 test("manifest safety: body:* location, unknown credential type, a host with a path, 300 KB code, other paths", async () => {
@@ -513,6 +513,27 @@ test("going back to an earlier approved version opens a fresh entry", async () =
   assert.equal((await entry(back.approval)).status, "pending");
 });
 
+test("a submission's native call holds no loop: it is cut at the total, and one test run at a time", async () => {
+  const hold = `export function request(r) { "a".repeat(1 << 22).indexOf("a".repeat(1 << 16) + "b"); return r; }`;
+  let worst = 0;
+  let last = performance.now();
+  const beat = setInterval(() => {
+    worst = Math.max(worst, performance.now() - last);
+    last = performance.now();
+  }, 10);
+  TESTS.ms = 2000;
+  try {
+    const held = submit("hold", files("hold", { code: hold }));
+    await invalid(submit("hold2", files("hold2")), /another submission's tests/);
+    await invalid(held, /ran over 2000 ms/);
+  } finally {
+    TESTS.ms = 30_000;
+    clearInterval(beat);
+  }
+  assert.ok(worst < 10_000, `the loop stalled ${Math.round(worst)} ms`); // the indexOf alone is minutes
+  assert.ok((await submit("after", files("after"))).approval); // the thread is gone, the slot free
+});
+
 test("tests are capped, the first failure ends the run, and a huge diff falls back to the first difference", async () => {
   const one = { method: "", url: "", headers: {}, body: null, stream: false };
   const t = JSON.stringify({ request: one, template: one });
@@ -521,12 +542,10 @@ test("tests are capped, the first failure ends the run, and a huge diff falls ba
   const t0 = Date.now();
   const loop = "export function request() { for (;;) {} }";
   await invalid(submit("spin2", files("spin2", { code: loop, tests: many(MAX_TESTS) })), /tests failed/);
-  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
-  // every call just under the deadline, every test passing: the total stops it (was 32 × 90 ms of hortusd's thread)
+  assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
+  // every call just under the deadline passes: the tests' total is another thread's, so a busy machine fails nothing
   const slow = "export function request(r) { const t = Date.now(); while (Date.now() - t < 90) {} return r; }";
-  const t2 = Date.now();
-  await invalid(submit("spin3", files("spin3", { code: slow, tests: many(MAX_TESTS) })), /over 500 ms in total/);
-  assert.ok(Date.now() - t2 < 1000, `${Date.now() - t2} ms`);
+  assert.ok((await submit("spin3", files("spin3", { code: slow, tests: many(MAX_TESTS) }))).approval);
   const big = (k: string) => Array.from({ length: 5000 }, (_, i) => `${k}${i}`).join("\n");
   const t1 = Date.now();
   assert.match(diff(big("a"), big("b")), /^\(too large for a full diff; first difference at line 1\)\n-a0\n\+b0\n$/);

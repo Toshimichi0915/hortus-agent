@@ -6,6 +6,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 import { z } from "zod";
 import { define } from "../rpc.ts";
 import { type Caller, type Manifest, RpcError, type VaultEntry } from "../types.ts";
@@ -15,10 +16,10 @@ import * as transforms from "./transforms.ts";
 import { ctx, NAME, read, write } from "./vault.ts";
 
 export const MAX_BYTES = 256 * 1024;
-/** Tests run synchronously in QuickJS (≤ 100 ms a call): the cap bounds how long one submission blocks the loop. */
 export const MAX_TESTS = 32;
-/** All of a submission's test calls together, on hortusd's thread. */
-export const TESTS_MS = 500;
+/** All of a submission's test calls together, on their own thread (`inThread`): a bound on one core, so a busy machine
+ * has room; 32 tests × 2 calls at the 100 ms deadline are 6.4 s of work. */
+export const TESTS = { ms: 30_000 };
 const FILE = /^(manifest\.json|transform\.js|README\.md|tests\/[a-z0-9-]+\.json)$/;
 
 const Hostname = z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/, "a hostname");
@@ -107,42 +108,23 @@ export interface Submission {
   files: Record<string, string>;
 }
 
-/** Steps 1–2: the manifest and the tests. Returns the parsed manifest and the test count; throws `invalid`. */
-export function validate({ name, files }: Submission): { manifest: Manifest; tests: number } {
-  const bad = Object.keys(files).filter((f) => !FILE.test(f));
-  if (bad.length)
-    invalid(`unexpected files: ${bad.join(", ")} (manifest.json, transform.js, tests/<x>.json, README.md)`);
-  const size = Object.values(files).reduce((n, s) => n + Buffer.byteLength(s), 0);
-  if (size > MAX_BYTES) invalid(`submission is ${size} bytes, over ${MAX_BYTES}`);
-  const text = files["manifest.json"];
-  const code = files["transform.js"];
-  if (text === undefined || code === undefined) invalid("manifest.json and transform.js are required");
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text as string);
-  } catch (e) {
-    invalid(`manifest.json: ${(e as Error).message}`);
-  }
-  const m = ManifestShape.safeParse(raw);
-  if (!m.success) invalid(`manifest.json: ${z.prettifyError(m.error)}`, m.error.issues);
-  const manifest = m.data as Manifest;
-  if (manifest.name !== name) invalid(`manifest.json names ${manifest.name}, not ${name}`);
+interface Failure {
+  file: string;
+  diff: string;
+}
 
-  const tests = Object.keys(files)
-    .filter((f) => f.startsWith("tests/"))
-    .sort();
-  if (!tests.length) invalid("at least one tests/<x>.json is required");
-  if (tests.length > MAX_TESTS) invalid(`${tests.length} tests, over ${MAX_TESTS}`);
-  const failures: { file: string; diff: string }[] = [];
-  // the first failure ends the run: a looping transform costs one deadline, not one per test; and a transform that
-  // spends just under the deadline on each call (64 of them) is stopped by the total, not after 6 s of hortusd's thread
-  const t0 = Date.now();
+interface TestRun {
+  name: string;
+  code: string;
+  files: Record<string, string>;
+  tests: string[];
+}
+
+function runTests({ name, code, files, tests }: TestRun): Failure[] {
+  const failures: Failure[] = [];
+  // the first failure ends the run: a looping transform costs one deadline, not one per test
   for (const file of tests) {
     if (failures.length) break;
-    if (Date.now() - t0 > TESTS_MS) {
-      failures.push({ file, diff: `the tests ran over ${TESTS_MS} ms in total` });
-      break;
-    }
     let c: z.infer<typeof Test>;
     try {
       const t = Test.safeParse(JSON.parse(files[file] ?? ""));
@@ -173,6 +155,68 @@ export function validate({ name, files }: Submission): { manifest: Manifest; tes
       failures.push({ file, diff: (e as Error).message });
     }
   }
+  return failures;
+}
+
+let testing = false;
+
+/**
+ * `runTests` on a thread of its own, this file its entry. A submission's code has met no owner yet, and QuickJS polls
+ * its deadline only between operations: one native call (`s.indexOf(needle)`, n × m on a 32 MiB heap) held hortusd's
+ * whole loop for minutes to hours, and only a terminate ends it. One at a time: a Worker cannot stack cores.
+ */
+async function inThread(run: TestRun): Promise<Failure[]> {
+  if (testing) invalid("another submission's tests are running: submit again in a moment");
+  testing = true;
+  const thread = new Worker(new URL(import.meta.url), { workerData: { submitted: run } });
+  thread.unref();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await new Promise<Failure[]>((resolve) => {
+      const failed = (diff: string) => resolve([{ file: "tests/", diff }]);
+      thread.once("message", resolve);
+      thread.once("error", (e: Error) => failed(e.message));
+      timer = setTimeout(() => failed(`the tests ran over ${TESTS.ms} ms in total`), TESTS.ms);
+    });
+  } finally {
+    clearTimeout(timer);
+    await thread.terminate();
+    testing = false;
+  }
+}
+
+if (!isMainThread && workerData?.submitted) {
+  await transforms.load([]);
+  parentPort?.postMessage(runTests(workerData.submitted as TestRun));
+}
+
+/** Steps 1–2: the manifest and the tests. Returns the parsed manifest and the test count; throws `invalid`. */
+export async function validate({ name, files }: Submission): Promise<{ manifest: Manifest; tests: number }> {
+  const bad = Object.keys(files).filter((f) => !FILE.test(f));
+  if (bad.length)
+    invalid(`unexpected files: ${bad.join(", ")} (manifest.json, transform.js, tests/<x>.json, README.md)`);
+  const size = Object.values(files).reduce((n, s) => n + Buffer.byteLength(s), 0);
+  if (size > MAX_BYTES) invalid(`submission is ${size} bytes, over ${MAX_BYTES}`);
+  const text = files["manifest.json"];
+  const code = files["transform.js"];
+  if (text === undefined || code === undefined) invalid("manifest.json and transform.js are required");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text as string);
+  } catch (e) {
+    invalid(`manifest.json: ${(e as Error).message}`);
+  }
+  const m = ManifestShape.safeParse(raw);
+  if (!m.success) invalid(`manifest.json: ${z.prettifyError(m.error)}`, m.error.issues);
+  const manifest = m.data as Manifest;
+  if (manifest.name !== name) invalid(`manifest.json names ${manifest.name}, not ${name}`);
+
+  const tests = Object.keys(files)
+    .filter((f) => f.startsWith("tests/"))
+    .sort();
+  if (!tests.length) invalid("at least one tests/<x>.json is required");
+  if (tests.length > MAX_TESTS) invalid(`${tests.length} tests, over ${MAX_TESTS}`);
+  const failures = await inThread({ name, code: code as string, files, tests });
   if (failures.length)
     invalid(`tests failed:\n${failures.map((f) => `${f.file}: ${f.diff}`).join("\n")}`, { failures });
   return { manifest, tests: tests.length };
@@ -195,10 +239,10 @@ function changedLines(a: string, b: string): number {
   return x.length + y.length - 2 * (head + tail);
 }
 
-export function submit(s: Submission, caller: Caller): SubmitResult {
+export async function submit(s: Submission, caller: Caller): Promise<SubmitResult> {
   // a shipped transform changes with a hortus release, never by a Worker (the entry could not show its code)
   if (existsSync(join(transforms.shippedDir(), s.name))) invalid(`${s.name} ships with hortus and cannot be replaced`);
-  const { manifest, tests } = validate(s);
+  const { manifest, tests } = await validate(s);
   // a host belongs to one transform: a second one listing it would run on its traffic instead (byHost picks one)
   for (const c of Object.values(manifest.credentials))
     for (const host of c.hosts) {
