@@ -154,6 +154,9 @@ function serve(tls: boolean, proxyAddress: string) {
   const server = tls
     ? https.createServer({ SNICallback: sniCallback, ALPNProtocols: ["http/1.1"] }, onRequest)
     : http.createServer(onRequest);
+  // Node cuts a request not fully received in 5 minutes: a 50 MB pack to an upstream under 1.4 Mbit/s, or any long
+  // upload. What a held request costs is bounded by MAX_INFLIGHT and BODY_BUDGET, and it ends with its session
+  server.requestTimeout = 0;
   server.on("upgrade", onUpgrade);
   server.on("clientError", (_e, s) => s.destroy());
   server.on("tlsClientError", () => {});

@@ -178,17 +178,34 @@ export function mainMoved(name: string, main: string, except?: number): void {
 }
 
 /**
+ * A task on `name` is about to start (host: prepareClone; VM: the guest clones the origin itself). A failed sync (main
+ * rewritten in the checkout, the path gone) goes on `note`, the card: the merge is refused much later and only the log
+ * said why. With no main in the origin there is nothing to work on: it throws, and the task waits with the reason.
+ */
+export async function startSync(name: string, note: (text: string) => void): Promise<void> {
+  await sync(name).catch(async (e) => {
+    log.error("sync at task start failed", e, { project: name });
+    if (!(await revParse(paths.project(name), `refs/heads/${project(name).main}`))) throw e;
+    note(`project sync failed, working from the last synced main: ${(e as Error).message}`);
+  });
+}
+
+/**
  * Before an unattended host task on a project starts (the Landlock profile grants rw on `clones/<id>` only if it
  * exists, so hortusd pre-clones; v7): sync, then on first start `git clone --no-local --reference <checkout>` of the
  * origin on `hortus/<id>`, `origin` set to `clone_url`. `loopback` (HORTUS_NO_NET only): the session's alias, given
  * its own listener so git reaches hortusd.internal with the task's identity.
  */
-export async function prepareClone(task: TaskJson, loopback?: string): Promise<void> {
+export async function prepareClone(
+  task: TaskJson,
+  loopback?: string,
+  note: (text: string) => void = () => {},
+): Promise<void> {
   const name = task.scope.project;
   const dir = task.paths.clone;
   if (!name || !dir) return;
   const p = project(name);
-  await sync(name).catch((e) => log.error("sync at task start failed", e, { task: task.id, project: name }));
+  await startSync(name, note);
   if (!existsSync(dir)) {
     const ref = isGit(p) ? ["--reference", resolve(p.path)] : [];
     await git(["clone", "-q", "--no-local", ...ref, paths.project(name), dir]);

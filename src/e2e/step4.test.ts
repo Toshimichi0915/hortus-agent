@@ -13,7 +13,7 @@ import { request } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { openDb, taintOf } from "../db.ts";
+import { openDb, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
@@ -648,6 +648,31 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
       (c.worker as { budget: { tokens: number } }).budget.tokens = 2e6;
     });
   }
+});
+
+test("a stranger's event taints the batch anyway: a tainted task's result rides along, no extra batch", {
+  skip,
+}, async () => {
+  planner(IGNORE_ALL);
+  const id = "tainted-result";
+  const t = new Date().toISOString();
+  db((d) => {
+    d.prepare(
+      "INSERT INTO tasks(id, kind, title, brief, status, scope, usage, runtime, event_keys, created, updated, hours) VALUES (?, 'unattended', 't', 'b', 'waiting', '{}', '{}', 'host', '[]', ?, ?, 0)",
+    ).run(id, t, t);
+    taint(d, id, "test");
+    d.prepare("INSERT INTO outbox(task_id, seq, body, created) VALUES (?, 1, ?, ?)").run(
+      id,
+      JSON.stringify({ seq: 1, type: "result", text: "the tainted result", ts: t }),
+      t,
+    );
+  });
+  const count = batches().length;
+  slack.post("C1", { user: "U2", text: "a stranger says hi" });
+  const b = await nextBatch(count);
+  assert.match(batchText(b), /a stranger says hi/);
+  assert.match(batchText(b), /the tainted result/);
+  db((d) => d.prepare("DELETE FROM tasks WHERE id = ?").run(id));
 });
 
 test("task_close refuses a chat task and a task waiting on its timers", { skip }, async () => {

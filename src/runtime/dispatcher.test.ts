@@ -12,6 +12,9 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir, until } from "../test/until.ts";
+import { plannerModule, renderBatch } from "../planner/planner.ts";
+import "../planner/tools.ts";
+import { call } from "../rpc.ts";
 import { dispatcherModule, readOutbox, runPlanner } from "./dispatcher.ts";
 import * as tasks from "./tasks.ts";
 
@@ -105,6 +108,65 @@ test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch
   }
 });
 
+test("a failed task: the owner's acts and its one-shot timer start it again, whatever only passes by waits", async () => {
+  const ctx: Ctx = {
+    config: Config.parse({ dofs: { slack: { type: "slack", owner: "U1" } }, worker: { provider: "fake", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  tasks.bind(ctx); // no dispatcher: `queued` stays queued
+  await plannerModule.start(ctx);
+  const failed = () => {
+    const { id } = tasks.create({ kind: "unattended", title: "t", brief: "b", runtime: "host" });
+    tasks.setStatus(id, "waiting", { error: "boom\nthe last line" });
+    return id;
+  };
+  let key = 0;
+  const event = (author: string, trusted: number) =>
+    `e${
+      ctx.db
+        .prepare("INSERT INTO events(dof, key, author, trusted, consumed) VALUES ('slack', ?, ?, ?, 1)")
+        .run(`k${++key}`, author, trusted).lastInsertRowid
+    }`;
+  const planner = { role: "planner" as const, task: "planner-1" };
+  const attach = (id: string, author: string, trusted: number) =>
+    call("task_attach", { task_id: id, event_ids: [event(author, trusted)] }, planner);
+  const msg = (id: string, from: string, data?: unknown) =>
+    tasks.inboxWrite(id, { from, trusted: from !== "planner", text: "x", ...(data ? { data } : {}) });
+  try {
+    // the owner's DM on the thread comes through the Planner: `from` is the thread's ref, not "owner"
+    let id = failed();
+    await attach(id, "U2", 0);
+    await attach(id, "U2", 1);
+    assert.equal(tasks.get(id).status, "waiting", "someone else's message");
+    await attach(id, "U1", 1);
+    assert.equal(tasks.get(id).status, "queued", "the owner's message through the Planner");
+
+    id = failed();
+    msg(id, "approval", { decision: "rejected" });
+    msg(id, "approval", { decision: "expired" });
+    msg(id, "planner");
+    msg(id, "rebase");
+    msg(id, "cookies");
+    assert.equal(tasks.get(id).status, "waiting");
+    msg(id, "approval", { decision: "approved" });
+    assert.equal(tasks.get(id).status, "queued", "the owner approved: the card told it to retry");
+
+    id = failed();
+    msg(id, "schedule:7");
+    assert.equal(tasks.get(id).status, "queued", "a one-shot timer fires once, and nothing else would run it");
+
+    // the Planner sees why a note will not start it
+    id = failed();
+    const open = renderBatch(ctx, [], []);
+    assert.match(open, new RegExp(`- ${id} .*waiting.* — failed, only the owner starts it again: "the last line"`));
+  } finally {
+    await plannerModule.stop();
+  }
+});
+
 test("a task that cannot start fails once: approvals and notes from others wait in its inbox, the owner restarts it", async () => {
   // review round 8: worker.provider names no vault credential; every approval decided re-ran the failed start
   writeFileSync(paths.vault(), "{}", { mode: 0o600 });
@@ -124,7 +186,7 @@ test("a task that cannot start fails once: approvals and notes from others wait 
       ).length;
     await until(() => tasks.get(t.id).status === "waiting" && errors() === 1, 3000, "the failed start");
     assert.match(tasks.get(t.id).error ?? "", /worker\.provider ghost is not a credential in vault\.json/);
-    for (const from of ["approval", "planner", "merge", "schedule:s1"])
+    for (const from of ["approval", "planner", "merge", "rebase"])
       tasks.inboxWrite(t.id, { from, trusted: from !== "planner", text: "x" });
     await new Promise((r) => setTimeout(r, 1500)); // more than one tick
     assert.equal(tasks.get(t.id).status, "waiting");

@@ -7,7 +7,7 @@ Spec: v6 › Planner, Gateway (wake), Config (`owner.notify`, `planner`). Depend
 ### Wake and batch (`src/planner/planner.ts`)
 
 - `wake()` is called by the gateway (`mirror.wake && !bot`), by the dispatcher on a non-chat `result` / `budget_exceeded`, and after recovery. Debounced 2 s; one batch at a time; `PAUSED` → skip; `planner_usage[today] ≥ daily_tokens` → skip and log once an hour.
-- A batch: `SELECT … FROM events WHERE consumed = 0 ORDER BY id LIMIT batch_max` plus unconsumed outbox rows (`result`, `budget_exceeded`) of non-chat tasks; nothing → return. With events waiting, results of tainted tasks wait for the next batch, of their own (events wait for that one): a tainted result taints every task its batch creates (v7 › Review round 8). Mark them `consumed = 1` with the batch id before the run (a crashed batch is not re-run: the events stay routed as "consumed" and the next event brings the open cards again; v6: no persistent context, the Planner can `dof search` anything it missed. Trade-off noted in the prompt: "events in earlier batches may have been lost; cards are authoritative").
+- A batch: `SELECT … FROM events WHERE consumed = 0 ORDER BY id LIMIT batch_max` plus unconsumed outbox rows (`result`, `budget_exceeded`) of non-chat tasks; nothing → return. With only trusted events waiting, results of tainted tasks wait for the next batch, of their own (events wait for that one; a stranger's event taints the batch anyway, so they ride along, round 9): a tainted result taints every task its batch creates (v7 › Review round 8). Mark them `consumed = 1` with the batch id before the run (a crashed batch is not re-run: the events stay routed as "consumed" and the next event brings the open cards again; v6: no persistent context, the Planner can `dof search` anything it missed. Trade-off noted in the prompt: "events in earlier batches may have been lost; cards are authoritative").
 - Input (one user message): the fixed system prompt (byte-identical: role, the three verdicts, the tools, the rules: untrusted never starts a task, bot events never appear, closed tasks are in `logs`, reply routing by refs), then:
 
 ```
@@ -18,6 +18,7 @@ Spec: v6 › Planner, Gateway (wake), Config (`owner.notify`, `planner`). Depend
 - [t_abc] result: <summary.md excerpt>
 ## Open tasks
 - t_abc "Fix crash" (running, host, project foo, 1.2M tokens, refs: slack:C0123:…) — summary "<latest summary 300 chars, one line, a JSON string>"
+- t_def "Report" (waiting, vm, 3k tokens) — failed, only the owner starts it again: "<the card's error line, a JSON string>"
 ```
 
 Non-owner text quoted (v7 Chat format); the owner's own text is not quoted but still labelled.

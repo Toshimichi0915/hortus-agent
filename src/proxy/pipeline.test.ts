@@ -11,7 +11,7 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, mock, test } from "node:test";
 import { gzipSync } from "node:zlib";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -28,7 +28,7 @@ import type { InboxMsg } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { read as readVault, write as writeVault } from "../vault/vault.ts";
-import { coreFetch, links, listen, proxyModule } from "./index.ts";
+import { coreFetch, links, listen, proxyModule, unlisten } from "./index.ts";
 import { egress, hashTemplate } from "./pipeline.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-proxy-");
@@ -416,6 +416,44 @@ test("SSE: events arrive unbuffered and a token straddling chunks is scrubbed", 
   for (let i = 1; i < 3; i++)
     assert.ok(Math.abs(gap(arrivals, i) - gap(sseSent, i)) < 150, `${arrivals} vs ${sseSent}`);
   assert.ok(gap(arrivals, 1) < gap(sseSent, 2), "event 2 arrived before event 3 was sent (not held back)");
+});
+
+test("uploads: no 5-minute cap on receiving a request (a pack to a slow upstream outlives Node's default)", async () => {
+  const servers = [mock.method(http, "createServer"), mock.method(https, "createServer")];
+  await listen("127.0.0.9", { https: 0, http: 0, dns: 0 });
+  await unlisten("127.0.0.9");
+  for (const m of servers) {
+    assert.equal((m.mock.calls[0]?.result as http.Server | undefined)?.requestTimeout, 0);
+    m.mock.restore();
+  }
+});
+
+test("rpc: a declared body over 1 MB is refused at once (uncharged by the byte budget, it must not buffer)", async () => {
+  const status = new Promise<number>((resolve, reject) => {
+    const r = http.request(
+      {
+        host: "127.0.0.1",
+        port: ports.http,
+        method: "POST",
+        path: "/rpc/t.whoami",
+        headers: { host: "hortusd.internal", "content-length": 2_000_000 },
+        localAddress: "127.0.0.2",
+        agent: false,
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+        r.destroy();
+      },
+    );
+    r.on("error", () => {});
+    r.write(Buffer.alloc(1000)); // and holds the rest: it would sit in readUpTo, up to 1 MB of it, for free
+    setTimeout(() => {
+      reject(new Error("still buffering"));
+      r.destroy();
+    }, 1000).unref();
+  });
+  assert.equal(await status, 413);
 });
 
 test("x-git-receive-pack: a 5 MB body streams; the transform sees body null, stream true", async () => {

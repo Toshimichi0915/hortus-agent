@@ -16,7 +16,7 @@ import { now } from "../db.ts";
 import { appendText, MAX_ENTRIES, MAX_LINE, readCapped, readDir } from "../hostile.ts";
 import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
-import { prepareClone, sync } from "../projects/origin.ts";
+import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
@@ -193,12 +193,12 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
     try {
       const task = tasks.taskJson(c, row);
       tasks.prepare(c, task);
-      if (note) reply(row.id, { type: "status", text: note });
+      const say = (text: string) => reply(row.id, { type: "status", text });
+      if (note) say(note);
       if (vm) {
         // round 8: the guest clones the origin itself, so sync it first (a host task's prepareClone does); without
         // it a VM task cloned an empty origin (or a stale main) and its merge was refused as "not based on main"
-        if (task.scope.project && task.paths.clone)
-          await sync(task.scope.project).catch((e) => log().error("sync at task start failed", e, { task: row.id }));
+        if (task.scope.project && task.paths.clone) await startSync(task.scope.project, say);
         const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
         const child = await startVm({ task, config: c, deadlineMs });
         entry.child = child;
@@ -218,7 +218,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
       env.PATH = `${join(paths.ctl(row.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
       // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
-      await prepareClone(task, env.HORTUS_RPC_LOCAL);
+      await prepareClone(task, env.HORTUS_RPC_LOCAL, say);
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
       // the Landlock profile walk and the spawn are ~8 ms of hortusd's thread each: 20 chats opened at once ran them
       // back to back (180 ms, the console's p95 150 ms); one per loop turn, in line with the Workers' requests
@@ -331,11 +331,16 @@ async function finish(
   // the Worker gave up (its model calls failed 4 times: `result` "failed: …"): on the card too, so only the owner
   // starts it again (tasks.inboxWrite), not every approval or note re-running the failure
   const gaveUp = msgs.find((m) => m.type === "result" && m.text.startsWith("failed: "))?.text;
-  const error = overBudget
-    ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
-    : failed
-      ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
-      : (gaveUp?.slice(0, 2000) ?? null);
+  // a session hortusd or the owner ended (shutdown, close) did not fail: killed, it exits non-zero with no result, and
+  // the card said so; after a restart that error also stopped approvals starting the chat (tasks.ts › restarts)
+  const error =
+    stopping || tasks.closing.has(id)
+      ? null
+      : overBudget
+        ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
+        : failed
+          ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
+          : (gaveUp?.slice(0, 2000) ?? null);
   const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
     n: number;
   };
