@@ -651,10 +651,48 @@ test("'*' egress: IPv4-mapped IPv6 spellings of private addresses are private to
     const t = await egress({ role: "worker", task: "T" }, host, false, undefined);
     assert.ok("status" in t && t.status === 403, host);
   }
+  // IPv6 forms that carry or reach a private address, and numeric IPv4 spellings getaddrinfo accepts
+  for (const host of [
+    "::",
+    "::1",
+    "::127.0.0.1",
+    "fd00::1",
+    "fe80::1",
+    "ff02::1",
+    "::ffff:0:7f00:1",
+    "2002:7f00:1::1",
+    "2001:0:7f00:1::1",
+    "64:ff9b:1::a00:1",
+    "2130706433",
+    "0x7f.1",
+    "017700000001",
+    "0177.0.0.1",
+    "169.254.169.254",
+  ]) {
+    const t = await egress({ role: "worker", task: "T" }, host, false, undefined);
+    assert.ok("status" in t && t.status === 403, host);
+  }
   // and a public address stays public (no IPv4 caught by an IPv6 range)
-  for (const host of ["93.184.216.34", "::ffff:5db8:d822"]) {
+  for (const host of ["93.184.216.34", "::ffff:5db8:d822", "2606:4700::1111"]) {
     const t = await egress({ role: "worker", task: "T" }, host, false, undefined);
     assert.ok(!("status" in t), host);
+  }
+});
+
+test("listed origins: a listed name that resolves private is refused too (rebinding); chat.allow admits it", async () => {
+  const prev = ctx.config;
+  ctx.config = Config.parse({ ...prev, origins: ["localhost", "registry.npmjs.org"] });
+  try {
+    const t = await egress({ role: "worker", task: "T" }, "localhost", false, undefined);
+    assert.ok("status" in t && t.status === 403 && /private address/.test(String(t.body)), JSON.stringify(t));
+    ctx.config = Config.parse({ ...ctx.config, chat: { allow: ["127.0.0.0/8", "::1"] } });
+    const ok = await egress({ role: "worker", task: "T" }, "localhost", false, undefined);
+    assert.ok(!("status" in ok) && ["127.0.0.1", "::1"].includes(ok.address), JSON.stringify(ok));
+    // role core (hortusd's own connectors) is the owner: not held to it
+    ctx.config = Config.parse({ ...prev, origins: ["localhost"] });
+    assert.ok(!("status" in (await egress({ role: "core" }, "localhost", false, undefined))));
+  } finally {
+    ctx.config = prev;
   }
 });
 

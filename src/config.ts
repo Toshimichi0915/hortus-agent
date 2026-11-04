@@ -72,6 +72,8 @@ export const Config = z.looseObject({
       cpus: z.number().int().positive().default(2),
       mem_mb: z.number().int().positive().default(4096),
       max_concurrent: z.number().int().positive().default(4),
+      /** the guest's hortus-agent must write out/booted this long after QEMU starts, else the VM is killed (v7) */
+      boot_timeout_s: z.number().positive().default(120),
       /** image missing: run VM-destined tasks as unattended host sessions (true) or keep them queued (v7) */
       fallback_host: z.boolean().default(true),
     })

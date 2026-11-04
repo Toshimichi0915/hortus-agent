@@ -11,7 +11,7 @@ process.env.HORTUS_HOME = tempDir("hortus-config-");
 test("missing file → defaults", () => {
   const c = load(join(paths.home(), "absent.json"));
   assert.equal(c.origins, "*");
-  assert.deepEqual(c.vm, { cpus: 2, mem_mb: 4096, max_concurrent: 4, fallback_host: true });
+  assert.deepEqual(c.vm, { cpus: 2, mem_mb: 4096, max_concurrent: 4, fallback_host: true, boot_timeout_s: 120 });
   assert.deepEqual(c.chat.allow, []);
   assert.deepEqual(c.policy, { "*": "human" });
   assert.equal(c.planner.batch_max, 50);

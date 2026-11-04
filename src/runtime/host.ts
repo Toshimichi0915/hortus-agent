@@ -33,6 +33,8 @@ export interface SpawnOpts {
 export interface Exit {
   code: number | null;
   signal: NodeJS.Signals | null;
+  /** hortusd's own reason for ending it (a VM boot timeout), shown as the task's error */
+  error?: string;
 }
 
 export interface Child {

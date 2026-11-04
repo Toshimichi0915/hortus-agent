@@ -73,7 +73,7 @@ Client registry: `links` rows cached in memory: `address → { role, task, kind 
 handle(client, req: IncomingRequest): Response
  1. host = SNI (TLS) / Host (plain); none → 400 "no host"
  2. host == hortusd.internal → internal(client, req) with X-Hortus-Role / X-Hortus-Task from `client` (client-sent copies dropped)
- 3. task = client.task ? tasks row : null; origins = merged(config.origins, task.origins); host not allowed → 403 page "host not in origins" (final, v6 Browser › Origins). "*" resolves the host and refuses loopback/private/link-local addresses unless in chat.allow.
+ 3. task = client.task ? tasks row : null; origins = merged(config.origins, task.origins); host not allowed → 403 page "host not in origins" (final, v6 Browser › Origins). The host is resolved and refused when any address is loopback/private/link-local (IPv6 forms that embed one included) unless in chat.allow, `"*"` and listed hosts alike (round 5: a listed name can be rebound); role core is unchecked; the connection goes to the checked address.
  4. tf = transforms.byHost(host); raw = read request (body buffered up to 1 MB unless streaming types → body null, stream true)
  5. refuse if any raw secret value appears anywhere in the request (headers, URL, body) → 403 "raw credential"
  6. template = tf ? transforms.request(tf.name, raw, { now, nonce }) : raw

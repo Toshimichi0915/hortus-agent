@@ -24,10 +24,11 @@ Spec: v6 › Security › VM, Process › Network (VM links), Worker (runtimes),
 - The Worker inside reads `/task/ctl/task.json` with VM paths (`paths.dof = /dof` etc.; the dispatcher writes a VM variant of `task.json`).
 - Exit: QEMU exits on poweroff (`-no-reboot`); the dispatcher's exit handling is the host one (outbox, log, status). `kill()` = `cgroup.kill` (QEMU and virtiofsd), then the tap and rules are removed. `hours` → kill at the budget (`hortusd` kills QEMU when the task's hours run out, v6).
 - `max_concurrent` enforced by the dispatcher; `PAUSED` as for host tasks.
+- Boot timeout (round 5): the guest's hortus-agent writes `out/booted` at its start; without it after `vm.boot_timeout_s` (120) the VM is killed and the task waits with `boot timeout: …` and the `console.log` tail.
 
 ### Planner VM (`planner.runtime = "vm"`)
 
-Step 4's Planner batch directory is started with `vm.start` and role `planner` on its link; the same image.
+Step 4's Planner batch directory is started with `vm.start` and role `planner` on its link; the same image. It occupies a `max_concurrent` slot while it runs but never waits for one (v7).
 
 ## Functional tests
 

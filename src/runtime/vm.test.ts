@@ -11,6 +11,7 @@ import { mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { outbox, sessionFiles, setup } from "../agent/testkit.ts";
 import * as paths from "../paths.ts";
+import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import * as net from "./net.ts";
@@ -126,6 +127,39 @@ test("missingImage names the first missing file and the fix", () => {
   assert.equal(missingImage(d), null);
 });
 
+/** a QEMU that "boots" a kernel and hangs (no guest ever writes out/booted), virtiofsds that only make their socket */
+test("boot timeout: no first contact from the guest → the VM is killed, the exit names the timeout", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  // cgroup.create needs a delegated cgroup: this test re-runs alone in a user scope
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "boot timeout"), /# pass 1/);
+  const home = tempDir("hortus-boothome-");
+  process.env.HORTUS_HOME = home;
+  process.env.HORTUS_NO_NET = "1";
+  const tag = `hortus-boot-${process.pid}`;
+  fakeVm(home, tag);
+  const dir = setup({ paths: { dof: join(home, "dof"), work: "unused" } });
+  mkdirSync(join(home, "tasks"));
+  symlinkSync(dir, join(home, "tasks", "t1"));
+  mkdirSync(join(dir, "out", "booted")); // a previous guest's leftover: removed before the boot, not counted
+  const task = JSON.parse(readFileSync(join(dir, "ctl", "task.json"), "utf8")) as TaskJson;
+  const t0 = Date.now();
+  const vm = await startVm({
+    task,
+    config: { vm: { cpus: 1, mem_mb: 64, max_concurrent: 1, fallback_host: true, boot_timeout_s: 1.5 } },
+    deadlineMs: 60_000,
+  });
+  assert.ok(spawnSync("pgrep", ["-f", tag]).status === 0, "the fakes run");
+  const exit = await vm.wait();
+  const secs = (Date.now() - t0) / 1000;
+  assert.match(exit.error ?? "", /^boot timeout: no contact from the guest within 1\.5 s/);
+  assert.equal(exit.signal, "SIGKILL");
+  assert.ok(secs < 10, `${secs} s`);
+  assert.match(readFileSync(join(dir, "out", "console.log"), "utf8"), /Linux version 6\.x \(fake\): loaded/);
+  assert.notEqual(spawnSync("pgrep", ["-f", tag]).status, 0, "QEMU and the virtiofsds are gone");
+});
+
 const enabled = process.env.HORTUS_TEST_VM === "1";
 const offline = process.env.HORTUS_NO_NET === "1";
 const inner = process.env.HORTUS_TEST_VM_INNER === "1";
@@ -201,7 +235,7 @@ if (!enabled) {
     const t0 = Date.now();
     const vm = await startVm({
       task,
-      config: { vm: { cpus: 2, mem_mb: 1024, max_concurrent: 1, fallback_host: true } },
+      config: { vm: { cpus: 2, mem_mb: 1024, max_concurrent: 1, fallback_host: true, boot_timeout_s: 120 } },
       deadlineMs: 70_000,
     });
     const exit = await vm.wait();
