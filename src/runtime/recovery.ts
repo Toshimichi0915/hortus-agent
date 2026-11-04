@@ -119,4 +119,11 @@ export async function recover(c: Ctx): Promise<void> {
     ids = readdirSync(join(paths.home(), "tasks"));
   } catch {}
   for (const id of ids) rmSync(join(paths.task(id), "vfs"), { recursive: true, force: true });
+  // a close a crash cut short (round 8): the row is closed, its directory still here
+  const closed = c.db.prepare("SELECT 1 FROM tasks WHERE id = ? AND status IN ('done', 'failed')");
+  for (const id of ids)
+    if (closed.get(id)) {
+      await tasks.finishClose(id).catch((e) => log.error("finishing a close", e, { task: id }));
+      log.info("finished an interrupted close", { task: id });
+    }
 }

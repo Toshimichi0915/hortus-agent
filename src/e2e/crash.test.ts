@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { openDb } from "../db.ts";
@@ -259,4 +259,115 @@ test("schedules: SIGKILL right after a firing started its run → restart fires 
   await new Promise((r) => setTimeout(r, 1500));
   assert.equal(runs().length, 1, JSON.stringify(runs()));
   await stop();
+});
+
+// round 8: the gate's decisions, expiries and closes around a SIGKILL (dispatcher PAUSED: no Worker runs)
+const task = (id: string, status = "waiting"): void => {
+  const t = new Date().toISOString();
+  run(
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated, hours)
+     VALUES (?, 'unattended', 't', 'b', ?, '{"credentials":[],"repos":[],"dofs":[]}', '{"tokens":1000000,"hours":1}',
+       '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
+    id,
+    status,
+    t,
+    t,
+  );
+  mkdirSync(join(paths.ctl(id), "inbox"), { recursive: true });
+};
+const entry = (kind: string, taskId: string | null, payload: unknown, at = new Date().toISOString()): number => {
+  run(
+    "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES (?, 'credential:gh', ?, ?, '{}', 'pending', ?, ?)",
+    kind,
+    `h${Math.random()}`,
+    taskId,
+    at,
+    JSON.stringify(payload),
+  );
+  return sql<{ id: number }>("SELECT max(id) AS id FROM approvals")[0]?.id ?? 0;
+};
+const told = (taskId: string, id: number): string[] =>
+  sql<{ body: string }>("SELECT body FROM inbox WHERE task_id = ?", taskId)
+    .map((r) => (JSON.parse(r.body) as { text: string }).text)
+    .filter((t) => t.startsWith(`approval ${id} `));
+const status = (id: number): string | undefined =>
+  sql<{ status: string }>("SELECT status FROM approvals WHERE id = ?", id)[0]?.status;
+const cardPending = async (taskId: string): Promise<number[]> =>
+  (await call<{ approvals: { id: number }[] }>("task.get", { id: taskId })).approvals.map((a) => a.id);
+
+test("gate: SIGKILL inside a decision (a task grant, a shared grant entry) → still pending, then told once", async () => {
+  start();
+  await up();
+  await stop();
+  writeFileSync(paths.paused(), "");
+  for (const t of ["ga", "gb", "gc"]) task(t);
+  const tg = entry("request", "ga", { consequential: false, judge: "tainted: x", untrusted: ["x"] });
+  const shared = entry("grant", null, { consequential: false, task: "gb", waiting: ["gc"] });
+  const before = sql("SELECT 1 FROM approvals").length;
+  for (const [id, grant] of [
+    [tg, true],
+    [shared, false],
+  ] as const) {
+    const d = start("gate.decide.before-inbox");
+    await up();
+    await call("approval.decide", { id, decision: "approve", grant }).catch(() => {});
+    assert.equal(await exited(d), "SIGKILL");
+    assert.equal(status(id), "pending", "rolled back, not decided without its task told");
+  }
+  assert.equal(sql("SELECT 1 FROM approvals WHERE kind = 'grant' AND task_id = 'ga'").length, 0, "no half a grant");
+  start();
+  await up();
+  // the card shows what the page shows; the waiting list survived
+  assert.deepEqual(await cardPending("gc"), [shared]);
+  assert.deepEqual(await cardPending("ga"), [tg]);
+  await call("approval.decide", { id: tg, decision: "approve", grant: true });
+  await call("approval.decide", { id: shared, decision: "approve" });
+  await assert.rejects(call("approval.decide", { id: shared, decision: "approve" }), /already decided/);
+  assert.equal(told("ga", tg).length, 1);
+  assert.equal(told("gb", shared).length, 1);
+  assert.equal(told("gc", shared).length, 1);
+  assert.equal(sql("SELECT 1 FROM approvals WHERE kind = 'grant' AND task_id = 'ga'").length, 1);
+  assert.deepEqual(await cardPending("gc"), []);
+  assert.equal(sql("SELECT 1 FROM approvals").length, before + 1, "only the task grant: no entry asked again");
+  for (const t of ["ga", "gb", "gc"])
+    assert.equal(sql<{ status: string }>("SELECT status FROM tasks WHERE id = ?", t)[0]?.status, "queued");
+  await stop();
+});
+
+test("gate: SIGKILL while entries expire → restart expires them at start and tells each task once", async () => {
+  writeFileSync(paths.paused(), "");
+  for (const t of ["ea", "eb"]) task(t);
+  const old = new Date(Date.now() - 73 * 3600_000).toISOString();
+  const own = entry("request", "ea", { consequential: true }, old);
+  const shared = entry("grant", null, { consequential: false, task: "ea", waiting: ["eb"] }, old);
+  assert.equal(await exited(start("gate.expire.before-inbox")), "SIGKILL");
+  assert.equal(status(own), "pending");
+  start();
+  await up();
+  assert.equal(status(own), "expired");
+  assert.equal(status(shared), "expired");
+  assert.equal(told("ea", own).length, 1);
+  assert.equal(told("ea", shared).length, 1);
+  assert.equal(told("eb", shared).length, 1);
+  assert.deepEqual(await cardPending("eb"), []);
+  await stop();
+});
+
+test("tasks: SIGKILL inside a close → its requests already expired; restart publishes the log, removes tasks/<id>", async () => {
+  writeFileSync(paths.paused(), "");
+  task("ca");
+  const id = entry("request", "ca", { consequential: true });
+  const d = start("tasks.close.after-status");
+  await up();
+  await call("task.close", { id: "ca" }).catch(() => {});
+  assert.equal(await exited(d), "SIGKILL");
+  assert.equal(status(id), "expired", "in the same turn as the status");
+  assert.ok(existsSync(paths.task("ca")));
+  start();
+  await up();
+  assert.equal(existsSync(paths.task("ca")), false);
+  assert.ok(existsSync(join(paths.logs(), "ca", "summary.md")));
+  assert.deepEqual(await cardPending("ca"), []);
+  await stop();
+  rmSync(paths.paused(), { force: true });
 });

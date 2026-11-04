@@ -5,6 +5,7 @@
  */
 import { policyFor } from "../config.ts";
 import { bus } from "../console/events.ts";
+import { crashPoint } from "../crash.ts";
 import { taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import { type Caller, type InboxMsg, RpcError } from "../types.ts";
@@ -260,6 +261,19 @@ export function decide(
   if (grant && !grantable(row)) throw new RpcError("invalid", "this entry cannot be approved with a task grant");
   const status = decision === "approve" ? "approved" : "rejected";
   const t = new Date().toISOString();
+  atomic(() => applyDecision(row, status, t, by, extra, grant));
+}
+
+function applyDecision(
+  row: ApprovalRow,
+  status: "approved" | "rejected",
+  t: string,
+  by: "owner" | "judge",
+  extra: { reason?: string } | undefined,
+  grant: boolean | undefined,
+): void {
+  const db = ctx().db;
+  const id = row.id;
   const r = db
     .prepare(
       "UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, reason = ? WHERE id = ? AND status = 'pending'",
@@ -282,6 +296,7 @@ export function decide(
   if (row.kind === "grant" && status === "approved" && row.task_id) addToScope(row.task_id, row.category);
   log.info("approval decided", { id, status, by });
   bus.emit("approvals", { id }); // another tab, the CLI or the phone decided: every open page follows
+  crashPoint("gate.decide.before-inbox");
   for (const taskId of requesters(row))
     try {
       deps.inboxWrite(taskId, {
@@ -295,6 +310,25 @@ export function decide(
     } catch (e) {
       log.error("inbox write failed", e, { id, task: taskId });
     }
+}
+
+/**
+ * Round 8: a decision (or an expiry), its task grant and its inbox messages commit together; a crash between them
+ * left the entry decided and its tasks never told, waiting for good. A SAVEPOINT nests in a caller's transaction
+ * (submit.ts). A crash rolls it all back to pending (the owner decides again); an inbox file already renamed stays, a
+ * stale "retry" the Worker meets as a 403 pending.
+ */
+function atomic(f: () => void): void {
+  const db = ctx().db;
+  db.exec("SAVEPOINT gate");
+  try {
+    f();
+  } catch (e) {
+    db.exec("ROLLBACK TO gate");
+    throw e;
+  } finally {
+    db.exec("RELEASE gate");
+  }
 }
 
 /** A grant for `credential:<name>` adds the name to the task's scope.credentials. */
@@ -317,12 +351,21 @@ function addToScope(taskId: string, category: string): void {
  */
 export function expire(now = Date.now()): number {
   const cutoff = new Date(now - EXPIRE_MS).toISOString();
-  const rows = ctx()
-    .db.prepare(
-      "UPDATE approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ? RETURNING id, category, task_id, payload",
-    )
-    .all(new Date(now).toISOString(), cutoff) as Pick<ApprovalRow, "id" | "category" | "task_id" | "payload">[];
+  let rows: Pick<ApprovalRow, "id" | "category" | "task_id" | "payload">[] = [];
+  atomic(() => {
+    rows = ctx()
+      .db.prepare(
+        "UPDATE approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ? RETURNING id, category, task_id, payload",
+      )
+      .all(new Date(now).toISOString(), cutoff) as typeof rows;
+    if (rows.length) crashPoint("gate.expire.before-inbox");
+    tellExpired(rows);
+  });
   if (rows.length) bus.emit("approvals", {});
+  return rows.length;
+}
+
+function tellExpired(rows: Pick<ApprovalRow, "id" | "category" | "task_id" | "payload">[]): void {
   for (const a of rows)
     for (const taskId of requesters(a))
       try {
@@ -335,5 +378,4 @@ export function expire(now = Date.now()): number {
       } catch (e) {
         log.error("inbox write failed", e, { id: a.id, task: taskId });
       }
-  return rows.length;
 }

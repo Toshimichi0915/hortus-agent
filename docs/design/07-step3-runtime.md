@@ -38,6 +38,7 @@ Chat `task.open({ text, cwd })`: `create({ kind: "chat", title: first 80 chars, 
 
 - Every `running` task: `kind` chat → `waiting`; `run` kind with no assistant message in its sessions → closed `failed` (a firing runs at most once); others → `queued` (resume on the same directory; the agent adds synthetic interrupted results, F5).
 - Stale `links` rows and `hortus:` nftables rules → flushed; stale cgroups under `tasks/` → removed; pending approvals stay; login views (3h) stay as rows.
+- A closed task whose `tasks/<id>` is still there (a crash inside `close`) → `finishClose` again: log published, directories and schedules removed (its pending requests expired in the same turn as the status). Entries past 72 h expire once every module is up, before `started` (round 8).
 - Then the gateway's sync poll and (6) redelivery check run.
 
 ### Settings and `PAUSED`

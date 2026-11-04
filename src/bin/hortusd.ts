@@ -20,7 +20,7 @@ import "../planner/tools.ts";
 import { cgroup, dispatcherModule, exitHooks, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
 import { schedulesModule } from "../schedules/schedules.ts";
 import { coalesce } from "../vault/gate.ts";
-import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
+import { gate, gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
  * then the transforms DOF (ship, then load the enabled rows from its worktree: needs the mirror's commit) before the
@@ -166,6 +166,8 @@ async function main(): Promise<void> {
     started.push(m);
   }
   gateDeps.consoleUrl = `http://127.0.0.1:${consoleModule.port()}`;
+  // round 8: what expired while hortusd was down is told now (every module is up, so the inbox is), not a minute later
+  gate.expire();
   log.info("started", { home: paths.home(), modules: started.map((m) => m.name) });
 }
 
