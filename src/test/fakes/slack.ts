@@ -85,8 +85,12 @@ export class FakeSlack {
   hello = true;
   /** `debug_info.approximate_connection_time` of `hello`, in seconds */
   connectionTime = 3600;
+  /** API methods that take the request and never answer */
+  stalled = new Set<string>();
   /** caps every page (pagination tests) */
   pageSize = 1000;
+  /** the `Retry-After` of a `rateLimit` answer, in seconds */
+  retryAfter = 1;
   url = "";
   private limits = new Map<string, number>();
   private sockets = new Set<WebSocket>();
@@ -381,10 +385,11 @@ export class FakeSlack {
       Object.assign(params, json ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)));
     }
     this.calls.push({ method, params });
+    if (this.stalled.has(method)) await new Promise(() => {});
     const left = this.limits.get(method) ?? 0;
     if (left > 0) {
       this.limits.set(method, left - 1);
-      return { status: 429, body: "", headers: { "retry-after": "1" } };
+      return { status: 429, body: "", headers: { "retry-after": String(this.retryAfter) } };
     }
     const token = method === "apps.connections.open" ? this.appToken : this.botToken;
     const r = authz === `Bearer ${token}` ? this.call(method, params) : { ok: false, error: "invalid_auth" };

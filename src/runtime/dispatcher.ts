@@ -202,7 +202,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
         const child = await startVm({ task, config: c, deadlineMs });
         entry.child = child;
-        if (tasks.closing.has(row.id)) await child.kill(); // closed while it booted: hooks.kill had no child yet
+        if (stopping || tasks.closing.has(row.id)) await child.kill(); // while it booted: no child to kill yet
         const exit = await child.wait();
         // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
         // a boot timeout: the card's error says so above the serial output's tail (slice(-2000) keeps both)
@@ -254,7 +254,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         },
       });
       entry.child = child;
-      if (tasks.closing.has(row.id)) await child.kill(); // closed while it started: hooks.kill had no child yet
+      if (stopping || tasks.closing.has(row.id)) await child.kill(); // while it started: no child to kill yet
       const exit = await child.wait();
       flushThinking();
       await finish(row, exit, startedAt, lastError);
@@ -433,6 +433,7 @@ export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "h
   running.set(row.id, entry);
   try {
     entry.child = await RUNTIMES[runtime](task, (l) => appendText(consoleLog, `${l}\n`));
+    if (stopping) await entry.child.kill();
     const exit = await entry.child.wait();
     const { tokens } = scan(join(paths.out(row.id), "sessions"));
     log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });

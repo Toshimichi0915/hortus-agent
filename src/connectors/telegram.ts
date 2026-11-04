@@ -123,7 +123,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         throw new Error(`telegram ${method}: HTTP ${res.status}`);
       }
       if (res.status === 429 && i < 5) {
-        await sleep((r.parameters?.retry_after ?? 1) * 1000, signal);
+        await sleep((r.parameters?.retry_after ?? 1) * 1000, signal ?? deps.signal);
         continue;
       }
       if (!r.ok) throw new Error(`telegram ${method}: ${r.description ?? `HTTP ${res.status}`}`);

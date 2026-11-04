@@ -183,7 +183,8 @@ async function start(id: number): Promise<View> {
     void cdp.closed.then(() => (views.get(id) === v ? close(id, "the browser exited") : undefined));
     await cdp.send("Page.enable", {}, session);
     await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 }, session);
-    await cdp.send("Page.navigate", { url: e.url }, session);
+    // not awaited: a stalled page held the start, so every close (Reject, a stop) with it, until the upstream's 10 min
+    cdp.send("Page.navigate", { url: e.url }, session).catch(() => {});
     log.info("login view open", { id, task: e.task, origin: e.origin });
     return v;
   } catch (err) {
@@ -456,7 +457,7 @@ export const browserModule: Module = {
     };
   },
   async stop() {
-    await Promise.all([...views.keys()].map((id) => close(id, "hortusd stopped")));
+    await Promise.all([...views.keys(), ...opening.keys()].map((id) => close(id, "hortusd stopped")));
     if (inner) gate.deps.inboxWrite = inner;
     inner = undefined;
   },

@@ -10,7 +10,7 @@ import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
-import { createGateway, type GatewayDeps } from "./gateway.ts";
+import { createGateway, type GatewayDeps, timing } from "./gateway.ts";
 
 const home = tempDir("hortus-gateway-");
 process.env.HORTUS_HOME = home;
@@ -25,7 +25,7 @@ interface Commit {
   held?: number;
 }
 
-function harness(config: () => Config, factories: Record<string, ConnectorFactory>) {
+function harness(config: () => Config, factories: Record<string, ConnectorFactory>, fetch?: typeof fake.fetch) {
   const commits: Commit[] = [];
   const order: string[] = [];
   const log = memLog();
@@ -35,7 +35,7 @@ function harness(config: () => Config, factories: Record<string, ConnectorFactor
     config,
     log,
     connectors: factories,
-    fetch: () => fake.fetch,
+    fetch: () => fetch ?? fake.fetch,
     commit: async (dof, changes, message) => {
       order.push(`commit ${changes[0]?.path}`);
       const e = db.prepare("SELECT consumed FROM events ORDER BY id DESC LIMIT 1").get() as { consumed: number };
@@ -317,6 +317,93 @@ test("reconcile: a scope that throws keeps its cursor; the other scopes proceed"
   assert.equal(cur("good"), "9");
   assert.ok(H.log.errors.some((e) => e.includes("reconcile bad failed")));
   await H.gw.stop();
+});
+
+test("a stop during a backfill ends between its batches, the cursor at the last one", async () => {
+  const cfg = Config.parse({ dofs: { long: { type: "stub" } } });
+  let batches = 0;
+  const H = harness(() => cfg, {
+    stub: async (d) =>
+      stub(d.name, {
+        scopes: async () => ["s1", "s2"],
+        async *history() {
+          for (;;) {
+            await sleep(5);
+            yield { changes: [], cursor: String(++batches) };
+          }
+        },
+      }),
+  });
+  H.gw.start();
+  await until(() => batches > 2);
+  const t = Date.now();
+  await Promise.race([H.gw.stop(), sleep(2000)]);
+  assert.ok(Date.now() - t < 1000, `the stop took ${Date.now() - t} ms`);
+  const at = batches;
+  await sleep(30);
+  assert.equal(batches, at, "the backfill ended with the stop");
+  const row = db.prepare("SELECT cursor FROM syncs WHERE dof = 'long' AND scope = 's1'").get() as { cursor: string };
+  assert.equal(row.cursor, String(at));
+  assert.deepEqual(H.log.errors, []);
+});
+
+test("a stop cuts what its grace does not finish: a stalled call, a Retry-After, the events still queued", async () => {
+  const was = timing.graceMs;
+  timing.graceMs = 50;
+  const cfg = Config.parse({
+    dofs: { stuck: { type: "stub" }, q: { type: "stub" }, limited: { type: "slack", api: fake.api } },
+  });
+  const stalled = (url: string, init?: RequestInit) =>
+    url.includes("/api/")
+      ? fake.fetch(url, init)
+      : new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error(`cut ${url}`)));
+        });
+  let mirrors = 0;
+  const q = stub("q", {
+    mirror: async () => {
+      mirrors++;
+      await sleep(100); // past the grace, with the next event already queued
+      return { changes: [], wake: false };
+    },
+  });
+  const H = harness(
+    () => cfg,
+    {
+      ...connectors,
+      stub: async (d) =>
+        d.name === "q"
+          ? q
+          : stub(d.name, {
+              scopes: async () => ["s"],
+              async *history() {
+                await d.fetch("http://stalled.test/");
+                yield { changes: [], cursor: "never" };
+              },
+            }),
+    },
+    stalled as typeof fake.fetch,
+  );
+  try {
+    fake.retryAfter = 600;
+    fake.rateLimit("conversations.list", 1);
+    const limited = fake.calls.length;
+    H.gw.start();
+    await until(() => H.gw.connector("q") && fake.calls.slice(limited).some((c) => c.method === "conversations.list"));
+    for (const key of ["q1", "q2", "q3"]) q.push({ key });
+    await until(() => mirrors > 0);
+    const t = Date.now();
+    await Promise.race([H.gw.stop(), sleep(2000)]);
+    assert.ok(Date.now() - t < 1000, `the stop took ${Date.now() - t} ms`);
+    assert.deepEqual(
+      rows("q").map((r) => r.key),
+      ["q1"],
+      "the queued events are left for their redelivery",
+    );
+  } finally {
+    timing.graceMs = was;
+    fake.retryAfter = 1;
+  }
 });
 
 test("reload restarts only changed entries, starts added ones and stops removed ones", async () => {

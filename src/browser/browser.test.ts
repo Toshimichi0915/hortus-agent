@@ -513,7 +513,7 @@ test("a slow login page: the view takes input from its first frame, while the pa
   await ev.close();
 });
 
-test("Chromium dying: a second tab hears a start that failed; an open view closes and opens again", {
+test("Chromium dying: every tab hears it, during a navigation and after; the view opens again", {
   skip: !hasChromium,
 }, async () => {
   const r = (await call(
@@ -528,13 +528,13 @@ test("Chromium dying: a second tab hears a start that failed; an open view close
   const second = events(id); // while /slow still holds the navigation
   await sleep(100);
   kill();
-  await first.wait((e) => e.error !== undefined);
-  await second.wait((e) => e.error !== undefined);
+  await first.wait((e) => e.closed === "the browser exited");
+  await second.wait((e) => e.closed === "the browser exited");
   await first.close();
   await second.close();
 
   const again = events(id);
-  await api("login.open", { id }); // the start's end: the navigation returned
+  await api("login.open", { id });
   kill();
   await again.wait((e) => e.closed === "the browser exited");
   await again.close();

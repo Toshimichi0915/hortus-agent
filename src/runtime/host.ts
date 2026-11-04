@@ -223,6 +223,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
     pid: child.pid ?? -1,
     wait: () => done,
     kill: async () => {
+      child.kill("SIGKILL"); // just spawned, the shim may not be in its cgroup yet
       await cgroup.kill(id);
     },
   };
