@@ -261,24 +261,48 @@ export async function startVm(o: VmOpts): Promise<Child> {
       sockets,
       console: "/dev/fd/3",
     });
+    // a hostile earlier guest may have left anything here (a directory, a link): removed, never followed
+    const booted = join(out, "booted");
+    rmSync(booted, { force: true, recursive: true });
     log.info("starting", { task: id, tap: link?.tap, vm: link?.vmAddr });
     const qemu = spawn("qemu-system-x86_64", args, { stdio: ["ignore", "ignore", "pipe", logFd] });
     await attach(qemu);
+    let bootError: string | undefined;
+    const bootMs = o.config.vm.boot_timeout_s * 1000;
+    const t0 = Date.now();
+    // first contact: the guest's hortus-agent writes out/booted at its start; a kernel that loads and hangs (or a
+    // guest that never mounts out/) is killed here instead of holding the task `running` until its hours deadline
+    const boot = setInterval(
+      () => {
+        if (existsSync(booted)) return clearInterval(boot);
+        if (Date.now() - t0 < bootMs) return;
+        clearInterval(boot);
+        bootError = `boot timeout: no contact from the guest within ${o.config.vm.boot_timeout_s} s (console.log below)`;
+        log.error(bootError, undefined, { task: id });
+        void cleanup();
+      },
+      Math.min(1000, bootMs),
+    );
+    boot.unref();
     const done = new Promise<Exit>((resolve, reject) => {
-      const clear =
+      const deadlineClear =
         o.deadlineMs === undefined
           ? () => {}
           : deadline(o.deadlineMs, () => {
               log.info("hours budget reached: killing the VM", { task: id });
               void cleanup();
             });
+      const clear = () => {
+        deadlineClear();
+        clearInterval(boot);
+      };
       qemu.on("error", (e) => {
         clear();
         cleanup().then(() => reject(e), reject);
       });
       qemu.on("exit", (code, signal) => {
         clear();
-        cleanup().then(() => resolve({ code, signal }), reject);
+        cleanup().then(() => resolve({ code, signal, ...(bootError && { error: bootError }) }), reject);
       });
     });
     done.catch(() => {});

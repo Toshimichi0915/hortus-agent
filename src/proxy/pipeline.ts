@@ -128,6 +128,13 @@ for (const [net, bits] of [
   // IPv4 address against ::ffff:0:0/96)
   ["::", 96],
   ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  // IPv4-translated (RFC 2765), 6to4 and Teredo (both carry an IPv4 address a relay may reach), discard, multicast
+  ["::ffff:0:0:0", 96],
+  ["2002::", 16],
+  ["2001::", 32],
+  ["100::", 64],
+  ["ff00::", 8],
 ] as const)
   PRIVATE.addSubnet(net, bits, "ipv6");
 
@@ -191,9 +198,10 @@ export async function egress(
   } catch (e) {
     return refuse(502, `cannot resolve ${host}: ${(e as NodeJS.ErrnoException).code ?? e}`);
   }
-  // "*" never includes loopback/private/link-local unless chat.allow lists it; core (hortusd itself) is the owner
+  // no Worker reaches loopback/private/link-local unless chat.allow lists it, "*" or a listed host alike: a listed
+  // name's DNS is not the owner's (rebound to 127.0.0.1 or 169.254.169.254); core (hortusd itself) is the owner
   const pick = addresses[0];
-  if (client.role !== "core" && origins === "*") {
+  if (client.role !== "core") {
     const allow = ctx().config.chat.allow;
     const bad = addresses.find((a) => isPrivate(a.address) && !inCidrs(a.address, allow));
     if (bad) return refuse(403, `host resolves to a private address: ${host}`, { host, address: bad.address });

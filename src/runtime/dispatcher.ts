@@ -199,11 +199,12 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         if (tasks.closing.has(row.id)) await child.kill(); // closed while it booted: hooks.kill had no child yet
         const exit = await child.wait();
         // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
+        // a boot timeout: the card's error says so above the serial output's tail (slice(-2000) keeps both)
         await finish(
           row,
           exit,
           startedAt,
-          undefined,
+          exit.error && `${exit.error}\n${tail(consoleLog, 1500)}`,
           exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs,
         );
         return;
@@ -290,7 +291,7 @@ function outboxFile(id: string, name: string, f: { text: string; size: number } 
 }
 
 function tail(path: string, bytes = 2000): string {
-  return readCapped(path, bytes, true)?.text.trim() ?? "";
+  return readCapped(path, bytes, true)?.text.replace(/\r/g, "").trim() ?? ""; // a serial console ends lines with \r\n
 }
 
 async function finish(

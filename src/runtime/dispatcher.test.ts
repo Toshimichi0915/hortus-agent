@@ -4,13 +4,15 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
+import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir, until } from "../test/until.ts";
-import { dispatcherModule, readOutbox } from "./dispatcher.ts";
+import { dispatcherModule, readOutbox, runPlanner } from "./dispatcher.ts";
 import * as tasks from "./tasks.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-dispatch-");
@@ -64,4 +66,41 @@ test("inbox seq: a file left by a crash before its row is never reused", () => {
   const t = tasks.create({ kind: "unattended", title: "t", brief: "b", scope: { credentials: [] } });
   writeFileSync(join(paths.ctl(t.id), "inbox", "000001.json"), "{}"); // renamed, then the daemon died
   assert.equal(tasks.inboxWrite(t.id, { from: "owner", trusted: true, text: "x" }), 2);
+});
+
+test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch's slot (the batch never waits)", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  // startVm's cgroup.create needs a delegated cgroup: this test re-runs alone in a user scope
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "vm.max_concurrent"), /# pass 1/);
+  fakeVm(paths.home(), `hortus-slot-${process.pid}`, "exec sleep 2");
+  writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ vm: { max_concurrent: 1 }, worker: { provider: "fake", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  await dispatcherModule.start(ctx);
+  try {
+    const t = new Date().toISOString();
+    ctx.db
+      .prepare(
+        `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated,
+          started, hours) VALUES ('planner-1', 'planner', 'p', 'b', 'running', ?, ?, '{"tokens":0}', 'vm', '[]', ?, ?, ?, 0)`,
+      )
+      .run(JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1, hours: 0.5 }), t, t, t);
+    const p = tasks.get("planner-1");
+    const batch = runPlanner(p, tasks.taskJson(ctx.config, p), "vm");
+    const w = tasks.create({ kind: "unattended", title: "w", brief: "b", scope: { credentials: [] } });
+    assert.equal(w.runtime, "vm");
+    await new Promise((r) => setTimeout(r, 1500)); // more than one tick with the batch's VM up
+    assert.equal(tasks.get(w.id).status, "queued", "the Worker VM waits for the Planner's slot");
+    await batch;
+    await until(() => tasks.get(w.id).status !== "queued", 5000, "the Worker VM started after the batch");
+  } finally {
+    await dispatcherModule.stop();
+  }
 });

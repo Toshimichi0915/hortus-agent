@@ -265,7 +265,8 @@ before(async () => {
   const config: Record<string, unknown> = {
     owner: { tz: "UTC" },
     worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
-    vm: { cpus: 1, mem_mb: 1024, max_concurrent: 1 },
+    // boot to the guest's hortus-agent takes a few seconds; 30 s keeps the hung-kernel test short
+    vm: { cpus: 1, mem_mb: 1024, max_concurrent: 1, boot_timeout_s: 30 },
   };
   const vault: Record<string, unknown> = { fake: { type: "token", value: "x", transform: "fake" } };
   if (NET) {
@@ -436,6 +437,36 @@ test("a kernel that does not boot: the task waits with QEMU's error and is not r
   }
 });
 
+test("a kernel that loads and hangs (no initramfs: it panics with panic=0): boot timeout, the task waits, not restarted", {
+  skip: offline,
+}, async () => {
+  const i = join(home, "images", "initramfs.img");
+  rmSync(i);
+  writeFileSync(i, "not an initramfs\n".repeat(100));
+  try {
+    const id = vmTask([{ text: "never" }]);
+    const t = Date.now();
+    await until(() => row(id)?.status === "waiting", 90_000, "waiting");
+    const secs = (Date.now() - t) / 1000;
+    const err = row(id)?.error ?? "";
+    mark(`hung kernel: waiting after ${secs.toFixed(1)} s: ${err.slice(0, 300).replaceAll("\n", " | ")}`);
+    assert.match(err, /^boot timeout: no contact from the guest within 30 s/);
+    assert.match(err, /Kernel panic|Linux version/, "the console.log tail follows");
+    assert.ok(secs >= 25 && secs < 60, `${secs} s`);
+    await until(() => qemus().length === 0, 10_000, "QEMU gone");
+    const starts = () =>
+      logText()
+        .split("\n")
+        .filter((l) => l.includes('"msg":"starting"') && l.includes(id)).length;
+    await sleep(3000);
+    assert.equal(starts(), 1, "not restarted");
+    assert.equal(row(id)?.status, "waiting");
+  } finally {
+    rmSync(i);
+    symlinkSync(join(IMAGES, "initramfs.img"), i);
+  }
+});
+
 const nftComments = (): string[] => {
   const r = spawnSync("sudo", ["nft", "-j", "list", "table", "inet", "hortus"], { encoding: "utf8" });
   if (r.status !== 0) return [];
@@ -477,7 +508,7 @@ test("planner.runtime vm: an owner DM → a Planner batch in a VM → task_creat
 test("SIGKILL with a VM on a tap: the restart flushes the tap and its rules, the task resumes and cleans up", {
   skip: online,
 }, async () => {
-  // the previous test's Worker result wakes a second batch (a Planner VM is not held to vm.max_concurrent)
+  // the previous test's Worker result wakes a second batch (a Planner VM takes a slot but never waits for one)
   await until(
     () =>
       logText().split('"msg":"planner batch ended"').length > 2 &&
