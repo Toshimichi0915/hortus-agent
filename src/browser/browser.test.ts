@@ -491,6 +491,22 @@ test("browser.login for an origin with a stored login → a grant entry; approvi
   assert.ok(msgs.some((m) => m.from === "cookies" && m.data.some((c: { name: string }) => c.name === "auth")));
 });
 
+test("a slow login page: the view takes input from its first frame, while the page is still loading", {
+  skip: !hasChromium,
+}, async () => {
+  const r = (await call(
+    "browser.login",
+    { url: "http://idle.test/slow", why: "slow" },
+    { role: "worker", task: "T4" },
+  )) as { approval: number };
+  const ev = events(r.approval);
+  await ev.wait((e) => e.frame !== undefined);
+  await api("login.input", { id: r.approval, type: "text", text: "x" });
+  await api("login.reject", { id: r.approval });
+  await ev.wait((e) => e.closed === "rejected");
+  await ev.close();
+});
+
 test("idle: the view closes after IDLE with the entry pending; reopening (also after a module restart) streams again", {
   skip: !hasChromium,
 }, async () => {

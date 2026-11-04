@@ -55,7 +55,7 @@ export function rowOf(dof: string, path: string, text: string): Row {
 
 /** Index a commit's diff: Markdown objects only, never attachments under `files/`. */
 export function index(db: DatabaseSync, dof: string, root: string, entries: DiffEntry[]): void {
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     for (const e of entries) {
       if (!e.path.endsWith(".md") || e.path.split("/").includes("files")) continue;

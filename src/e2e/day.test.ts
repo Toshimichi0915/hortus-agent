@@ -372,7 +372,8 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
   assert.deepEqual(perScope, { '["slack"]': 25, '["github"]': 10, "[]": 5 });
   // tainted: the 25 slack readers (a stranger), the 10 chats (every DOF); the 10 github readers (owner-only: its
   // channel.md does not count) and the 5 that read no DOF stay auto-judged, also when a batch brought tainted results
-  assert.equal(tainted.length, 35);
+  const why = tainted.filter((t) => !(t.kind === "chat" || t.scope.includes("slack"))).slice(0, 3);
+  assert.equal(tainted.length, 35, JSON.stringify(why.map((t) => [t.id, t.scope, db((d) => taintOf(d, t.id, cfg))])));
   assert.ok(
     db((d) =>
       d

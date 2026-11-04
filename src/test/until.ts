@@ -1,5 +1,5 @@
 /** Test helpers. */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,32 @@ process.on("exit", () => {
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const)
   process.once(sig, () => process.exit(128 + constants.signals[sig]));
 
+const PORTS = join(tmpdir(), "hortus-ports");
+const held: string[] = [];
+process.on("exit", () => {
+  try {
+    for (const f of held) rmSync(f, { force: true });
+    rmdirSync(PORTS);
+  } catch {} // another test file still holds ports
+});
+
+/**
+ * A port is probed free and then bound later by a daemon, so test files running at once picked the same one (about one
+ * suite run in three once 30 files did: `EADDRINUSE`, a daemon without its proxy). The file claims it across processes.
+ * ponytail: a SIGKILLed test file's claims stay until /tmp is cleared; 12,000 ports to choose from.
+ */
+function reserve(port: number): boolean {
+  const f = join(PORTS, String(port));
+  try {
+    mkdirSync(PORTS, { recursive: true });
+    writeFileSync(f, "", { flag: "wx" });
+  } catch {
+    return false; // claimed, or the directory was just removed: the caller draws again
+  }
+  held.push(f);
+  return true;
+}
+
 /** `mkdtemp` under the OS temp dir, removed when the process exits (unless `KEEP` is set): the Landlock profile
  * builder enumerates `/tmp`, so leftovers slow every later sandbox spawn. */
 export function tempDir(prefix: string): string {
@@ -47,6 +73,7 @@ export function tempDir(prefix: string): string {
 export async function freePort(): Promise<number> {
   for (;;) {
     const port = 20_000 + Math.floor(Math.random() * 12_000);
+    if (!reserve(port)) continue;
     const ok = await new Promise<boolean>((resolve) => {
       const s = createServer()
         .once("error", () => resolve(false))

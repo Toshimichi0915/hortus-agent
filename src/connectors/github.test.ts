@@ -298,7 +298,7 @@ test("mirror: a PR with its diff, a review, a review comment, check suites; CI w
   assert.equal(rc.frontmatter.path, "a.txt");
   assert.equal(rc.frontmatter.line, 1);
 
-  await sleep(100);
+  for (let w = -1; w !== wakes; await sleep(300)) w = wakes; // the review comment's wake can land after its file
   const w0 = wakes;
   await fake.checkSuite("o/r", sha, { conclusion: "failure" });
   await until(() => fm(`o__r/${t}/${t}.md`)?.frontmatter.checks === "failure", 3000, "checks patch");

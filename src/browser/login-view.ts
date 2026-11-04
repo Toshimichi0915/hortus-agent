@@ -176,13 +176,17 @@ async function start(id: number): Promise<View> {
       v.last = { frame: String(p.data), w: Math.round(m.deviceWidth), h: Math.round(m.deviceHeight) };
       emit(id, { ...v.last, until: v.until });
     });
+    // open before the first frame: the owner can click on what they see while a slow page is still navigating
+    views.set(id, v);
+    touch(v);
     await cdp.send("Page.enable", {}, session);
     await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 }, session);
     await cdp.send("Page.navigate", { url: e.url }, session);
-    touch(v);
     log.info("login view open", { id, task: e.task, origin: e.origin });
     return v;
   } catch (err) {
+    clearTimeout(views.get(id)?.timer);
+    views.delete(id);
     await browser?.close();
     await net.release().catch(() => {});
     throw err;
@@ -197,7 +201,6 @@ export async function open(id: number): Promise<View> {
   if (!p) {
     p = start(id).finally(() => opening.delete(id));
     opening.set(id, p);
-    p.then((x) => views.set(id, x)).catch(() => {});
   }
   return p;
 }

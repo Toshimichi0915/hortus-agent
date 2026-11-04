@@ -19,6 +19,7 @@ Spec: v6 › Connectors › Messengers (Discord and Telegram columns), Secret Va
 - Thread: `message_thread_id` (forum topics), else the root of the `reply_to_message` chain (followed through the mirror's files, since the API does not give the chain), else the message itself. Files: `getFile` + download `/file/bot{}/…` ≤ 20 MB.
 - `history`: none (v6). `scopes()`: chats seen so far (persisted in `syncs` as cursorless rows, so a restart knows them); the owner's private chat appears when the owner messages the bot once (documented in the Sources page's hint).
 - `dm`: `sendMessage` to the owner's chat id.
+- The transform's `sendMessage` refs: the thread and the sent message itself. The bot's messages are never updates, so an answer to one is on thread `<that message>` to the connector, and files under `<chat>/<that message>/` (v7 › Review round 9 — step 4b end to end).
 - Transform `telegram`: `api.telegram.org`; location `path:/bot{}/` (`/bothortus-secret-telegram/getUpdates` → `/bot{secret:telegram}/…`); consequential: `POST api.telegram.org/bot*/deleteMessage`, `leaveChat`.
 
 ### `ws:text` in the proxy (`src/proxy/ws.ts`)

@@ -79,6 +79,7 @@ export async function fakeSite(): Promise<FakeSite> {
       if (path === "/set") return html(page("set", "cookie set"), { "set-cookie": `session=${value}; Path=/` });
       if (path === "/echo") return html(page("echo", `<pre id="c">${cookie.replace(/</g, "&lt;")}</pre>`));
       if (path === "/login" && req.method === "GET") return html(LOGIN);
+      if (path === "/slow") return void setTimeout(() => html(LOGIN), 2000);
       if (path === "/login" && req.method === "POST") {
         const f = new URLSearchParams(body);
         if (f.get("user") !== USER || f.get("hash") !== hash(PASSWORD))

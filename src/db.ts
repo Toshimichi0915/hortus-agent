@@ -208,10 +208,12 @@ export function openDb(path: string): DatabaseSync {
 
 /** One migration per transaction; the version is read under the write lock, so two openers never both apply one. */
 export function migrate(db: DatabaseSync): void {
+  const version = () => (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   for (;;) {
+    if (migrations[version()] === undefined) return; // up to date: an opener takes no write lock
     db.exec("BEGIN IMMEDIATE");
     try {
-      const { user_version: v } = db.prepare("PRAGMA user_version").get() as { user_version: number };
+      const v = version();
       const sql = migrations[v];
       if (sql === undefined) {
         db.exec("COMMIT");

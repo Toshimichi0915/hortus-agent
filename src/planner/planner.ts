@@ -225,7 +225,7 @@ async function batch(): Promise<boolean> {
       "SELECT COALESCE(MAX(m), 0) + 1 AS n FROM (SELECT MAX(consumed) AS m FROM events UNION ALL SELECT MAX(consumed) FROM outbox)",
     )
     .get() as { n: number };
-  c.db.exec("BEGIN");
+  c.db.exec("BEGIN IMMEDIATE");
   try {
     for (const e of events) c.db.prepare("UPDATE events SET consumed = ? WHERE id = ?").run(n, e.id);
     for (const r of results)

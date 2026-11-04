@@ -21,6 +21,8 @@ interface Commit {
   dof: string;
   changes: Change[];
   message: string;
+  /** the newest event's `consumed` when the mirror committed */
+  held?: number;
 }
 
 function harness(config: () => Config, factories: Record<string, ConnectorFactory>) {
@@ -36,7 +38,8 @@ function harness(config: () => Config, factories: Record<string, ConnectorFactor
     fetch: () => fake.fetch,
     commit: async (dof, changes, message) => {
       order.push(`commit ${changes[0]?.path}`);
-      commits.push({ dof, changes, message });
+      const e = db.prepare("SELECT consumed FROM events ORDER BY id DESC LIMIT 1").get() as { consumed: number };
+      commits.push({ dof, changes, message, held: e?.consumed });
       return { sha: "x" };
     },
     wake: () => {
@@ -100,6 +103,20 @@ test("an event is inserted, acked, committed, and wakes the Planner", async () =
     },
   );
   assert.equal(S.wakes(), 1);
+  // held from the Planner while mirror() runs (it may not wake: a batch must not take it), released before the wake
+  assert.equal(c.held, -2);
+  assert.equal(
+    (db.prepare("SELECT consumed FROM events ORDER BY id DESC LIMIT 1").get() as { consumed: number }).consumed,
+    0,
+  );
+  db.prepare("INSERT INTO events(dof, key, consumed) VALUES ('crashed', 'k', -2)").run();
+  harness(() => slackCfg, connectors);
+  assert.equal(
+    db.prepare("SELECT consumed FROM events WHERE dof = 'crashed'").get()?.consumed,
+    0,
+    "a restart lets it out",
+  );
+  db.prepare("DELETE FROM events WHERE dof = 'crashed'").run();
   // the ack crosses a socket to the fake: it can land after the commit (seen once under a loaded suite)
   await until(() => fake.acks.at(-1) === [...fake.sent.keys()].at(-1), 3000, "ack");
 });

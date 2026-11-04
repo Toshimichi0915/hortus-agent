@@ -335,7 +335,7 @@ export async function approveTransform(
   }
   // the decision and the task's grants commit together: a crash between them never leaves one without the other
   const now = new Date().toISOString();
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     const t = row.task_id
       ? (db.prepare("SELECT scope FROM tasks WHERE id = ?").get(row.task_id) as { scope: string | null } | undefined)
