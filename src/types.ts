@@ -178,6 +178,11 @@ export interface TaskScope {
   repos: string[];
   /** a project from `projects` */
   project?: string;
+  /**
+   * The DOFs the task can read (mounted, searchable; v7 › Review round 7). Unset in the row: every DOF (chats, Planner
+   * batches). Always set in task.json.
+   */
+  dofs?: string[];
 }
 
 export interface Cookie {

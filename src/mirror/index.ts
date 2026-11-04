@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
 import { trusted } from "../connectors/trust.ts";
-import { type DatabaseSync, taint, taintOf } from "../db.ts";
+import { type DatabaseSync, dofNames, readableOf, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { type Caller, type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
@@ -40,11 +40,12 @@ export const writeLog = (taskId: string, files: Record<string, string>, title?: 
 export const publishLog = (taskId: string, title: string, status: string, events?: string[]): Promise<void> =>
   logs.publishLog(db(), taskId, title, status, events);
 
-/** Full-text search over every DOF; an unknown `in` is `not_found`. */
-export function search(q: SearchQuery): SearchHit[] {
-  const known = new Set(["logs", "transforms", ...Object.keys(ctx?.config.dofs ?? {})]);
-  if (q.in !== undefined && !known.has(q.in)) throw new RpcError("not_found", `no DOF named ${q.in}`);
-  return fts.search(db(), q);
+/** Full-text search over every DOF, or over `only` (a task's readable DOFs); an unknown `in` is `not_found`. */
+export function search(q: SearchQuery, only?: string[]): SearchHit[] {
+  const known = only ?? dofNames(ctx?.config ?? { dofs: {} });
+  if (q.in !== undefined && !known.includes(q.in))
+    throw new RpcError("not_found", only ? `${q.in} is not in this task's scope.dofs` : `no DOF named ${q.in}`);
+  return fts.search(db(), q, only);
 }
 
 /**
@@ -60,7 +61,7 @@ function untrustedHits(hits: SearchHit[]): string[] {
     if (h.dof === "transforms") continue;
     if (h.dof === "logs") {
       const task = h.path.split("/")[0] ?? "";
-      if (taintOf(db(), task).length) out.add(`logs:${task} (tainted)`);
+      if (taintOf(db(), task, ctx?.config ?? { dofs: {} }).length) out.add(`logs:${task} (tainted)`);
       continue;
     }
     const cfg = ctx?.config.dofs[h.dof];
@@ -70,11 +71,11 @@ function untrustedHits(hits: SearchHit[]): string[] {
   return [...out];
 }
 
-/** dof.search for a caller: a Worker's task is tainted by each untrusted hit it is shown. */
+/** dof.search for a caller: a Worker sees its scope.dofs only, and its task is tainted by each untrusted hit shown. */
 function searchAs(q: SearchQuery, caller: Caller): SearchHit[] {
-  const hits = search(q);
-  if (caller.role === "worker" && caller.task)
-    for (const u of untrustedHits(hits)) taint(db(), caller.task, `searched the mirror: ${u}`);
+  const task = caller.role === "worker" ? caller.task : undefined;
+  const hits = search(q, task ? readableOf(db(), ctx?.config ?? { dofs: {} }, task) : undefined);
+  if (task) for (const u of untrustedHits(hits)) taint(db(), task, `searched the mirror: ${u}`);
   return hits;
 }
 

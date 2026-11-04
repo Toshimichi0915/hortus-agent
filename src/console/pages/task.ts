@@ -63,7 +63,7 @@ export const task: Page = (ctx, { m, q }) => {
     .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
   const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
   const open = isOpen(t.status);
-  const tainted = taintOf(ctx.db, id);
+  const tainted = taintOf(ctx.db, id, ctx.config);
   const up =
     t.runtime === "vm" && t.status === "running" && t.started
       ? ` · up ${Math.round((Date.now() - Date.parse(t.started)) / 60_000)} min`

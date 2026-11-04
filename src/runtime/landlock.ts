@@ -20,6 +20,8 @@ export interface ProfileTask {
   id: string;
   clone?: string;
   schedule?: string;
+  /** the DOFs it can read (task.json scope.dofs): only their worktrees and repos are granted, never all of dof/ */
+  dofs: string[];
   /** absolute cgroup directory the shim joins; omitted only in tests without a delegated cgroup */
   cgroup?: string;
 }
@@ -151,7 +153,10 @@ export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "pol
   const hortus = [resolve(join(homedir(), ".hortus")), resolve(paths.home())];
   const rest = deny.filter((d) => !hortus.includes(d));
   const carve: [string | undefined, Mode][] = [
-    [join(paths.home(), "dof"), "ro"],
+    ...task.dofs.flatMap((d): [string, Mode][] => [
+      [paths.dof(d), "ro"],
+      [paths.dofRepo(d), "ro"],
+    ]),
     [join(paths.home(), "repos"), "ro"],
     [paths.ctl(task.id), "ro"],
     [paths.out(task.id), "rw"],

@@ -25,7 +25,7 @@ Steps, in this order: read all lines (a line over 4096 bytes or an unknown direc
 profile(kind: "unattended" | "chat", task: { id: string; clone?: string; schedule?: string; cgroup: string }): string   // the directive text
 ```
 
-- `deny` = v7's deny set (Security) + `config.policy.deny`, as absolute existing paths; `~/.hortus` is denied as a whole with carve-outs `dof/`, `repos/`, `tasks/<id>/ctl`, `tasks/<id>/out`, `clones/<id>`, `schedules/<id>`.
+- `deny` = v7's deny set (Security) + `config.policy.deny`, as absolute existing paths; `~/.hortus` is denied as a whole with carve-outs `dof/<name>` and `dof/<name>.git` for each DOF in task.json's `scope.dofs` (v7 › Review round 7; never the DOF root), `repos/`, `tasks/<id>/ctl`, `tasks/<id>/out`, `clones/<id>`, `schedules/<id>`.
 - `grant(dir, mode)`: if no denied path lies under `dir` → one directive for `dir`; else one directive per entry of `dir` that is not itself denied, recursing into entries that contain a denied path. Applied to `/`.
 - Modes: `unattended`: everything `ro`; `rw` for the clone, `out`, the schedule dir, `/tmp`, `/dev/{null,zero,full,random,urandom,tty,ptmx,pts,shm}`, the shared caches `~/.cache`, `~/.npm/_cacache`, `~/.cargo/{registry,git}`, `~/.gradle/caches`, `~/.m2/repository` and `config.policy.cache` (`rn`; tool homes are task-local under `out/work/.cache`: v7 › Security › Host); `chat`: everything `rw` except the deny set. A carve-out under a denied directory (`~/.hortus/dof`) is granted explicitly with its mode. Both: `scope signal`, `scope abstract`.
 - Symlinks: Landlock works on the opened path, so `/bin → usr/bin` style links need no special care; a denied path given as a symlink is resolved with `realpath` first.
@@ -71,7 +71,7 @@ Shim and profiles (no capabilities; inside `systemd-run --user --scope -p Delega
 - `cgroup.kill` ends a child that forked a `sleep 1000` grandchild; `pids()` lists both before.
 - The shim refuses an unknown directive, a missing `--`, a profile over 1 MB, and runs without any `ro`/`rw` line (everything denied; `exec` of the command itself fails with EACCES — the test asserts the exit code).
 - The ABI query result is logged once at start; a mocked ENOSYS makes `spawnSandboxed` throw and the daemon log says why.
-- `profile()`: output contains no path under a denied directory except carve-outs; every emitted path exists; `~/.hortus/dof` appears as `ro` and `tasks/<id>/out` as `rw`; the chat profile has no `ro` lines except carve-outs that are read-only by design (`dof`, `repos`, `ctl`); a `policy.deny` entry that is a symlink is denied by its target.
+- `profile()`: output contains no path under a denied directory except carve-outs; every emitted path exists; each `scope.dofs` DOF (and its `.git`) appears as `ro`, the DOF root and other DOFs never and `tasks/<id>/out` as `rw`; the chat profile has no `ro` lines except carve-outs that are read-only by design (`dof`, `repos`, `ctl`); a `policy.deny` entry that is a symlink is denied by its target.
 
 Network (`HORTUS_TEST_NET=1`, under `scripts/dev-run.sh`):
 

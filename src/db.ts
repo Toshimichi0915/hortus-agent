@@ -5,6 +5,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { Config } from "./config.ts";
+import { trusted } from "./connectors/trust.ts";
 
 export type { DatabaseSync } from "node:sqlite";
 
@@ -63,6 +65,10 @@ const migrations: string[] = [
   ALTER TABLE outbox ADD COLUMN consumed INTEGER DEFAULT 0;`,
   // review round 6: why a task's context holds text the owner did not vouch for (a JSON array of reasons)
   "ALTER TABLE tasks ADD COLUMN taint TEXT;",
+  // review round 7: a DOF's authors without scanning the FTS table (untrustedDofs)
+  `ALTER TABLE search_meta ADD COLUMN author TEXT;
+  UPDATE search_meta SET author = (SELECT author FROM search WHERE search.rowid = search_meta.rowid);
+  CREATE INDEX search_meta_author ON search_meta(dof, author);`,
 ];
 
 const TAINT_MAX = 5;
@@ -83,10 +89,10 @@ export function taint(db: DatabaseSync, task: string, reason: string): void {
  * Why the task's context holds untrusted text: untrusted events routed to it (task_attach), the Planner batch it is
  * (every batch reads strangers), and what `taint()` recorded. Empty: untainted, as far as hortusd can see.
  */
-export function taintOf(db: DatabaseSync, task: string | null | undefined): string[] {
+export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pick<Config, "dofs">): string[] {
   if (!task) return [];
-  const t = db.prepare("SELECT kind, taint FROM tasks WHERE id = ?").get(task) as
-    | { kind: string | null; taint: string | null }
+  const t = db.prepare("SELECT kind, taint, scope FROM tasks WHERE id = ?").get(task) as
+    | { kind: string | null; taint: string | null; scope: string | null }
     | undefined;
   if (!t) return [];
   const authors = (
@@ -100,7 +106,61 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined): stri
     ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
     ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),
     ...(t.taint ? (JSON.parse(t.taint) as string[]) : []),
+    ...(t.kind === "planner" ? [] : untrustedDofs(db, task, readable(c, t.scope), c)),
   ];
+}
+
+/** Every DOF name: the configured connectors', `logs` and `transforms`. */
+export const dofNames = (c: Pick<Config, "dofs">): string[] => ["logs", "transforms", ...Object.keys(c.dofs)];
+
+/**
+ * The DOFs a task can read (v7 › Review round 7): its `scope.dofs` (the Planner's choice) that still exist, plus
+ * `transforms` (the owner's approved code, the examples a new transform starts from); every DOF when unset (chats,
+ * Planner batches, rows from before the field).
+ */
+export function readable(c: Pick<Config, "dofs">, scope: string | null | undefined): string[] {
+  const all = dofNames(c);
+  const dofs = (scope ? (JSON.parse(scope) as { dofs?: string[] }) : {}).dofs;
+  return dofs ? all.filter((n) => n === "transforms" || dofs.includes(n)) : all;
+}
+
+/** `readable` for a task id (an unknown one: every DOF, as for a row without the field). */
+export function readableOf(db: DatabaseSync, c: Pick<Config, "dofs">, task: string): string[] {
+  const r = db.prepare("SELECT scope FROM tasks WHERE id = ?").get(task) as { scope: string | null } | undefined;
+  return readable(c, r?.scope);
+}
+
+/**
+ * A reason per readable DOF holding text from an author its trust rule does not trust (v7 › Review round 7): a Worker
+ * can `cat` any file it can read, so the whole DOF counts, checked at every gate decision (a stranger posting later
+ * taints too). `transforms` is the owner's; `logs` counts once it holds another task's log (sessions quote what they
+ * read). Each file's author is judged as a `dof.search` hit is (mirror/index.ts › untrustedHits): an authorless file
+ * (channel.md: a topic anyone in the channel sets) and hortusd's own bot replies (they may quote what a tainted task
+ * read) are untrusted, so in practice a messenger DOF hortusd posts in always taints, and an unattended task stays
+ * auto-judgeable by not reading it (the Planner's default `dofs: []`; the brief carries the events).
+ */
+function untrustedDofs(db: DatabaseSync, task: string, dofs: string[], c: Pick<Config, "dofs">): string[] {
+  const out: string[] = [];
+  const member = db.prepare("SELECT 1 FROM events WHERE dof = ? AND author = ? AND member = 1 LIMIT 1");
+  const authors = db.prepare("SELECT DISTINCT author FROM search_meta WHERE dof = ?");
+  for (const d of dofs) {
+    if (d === "transforms") continue;
+    if (d === "logs") {
+      if (db.prepare("SELECT 1 FROM search_meta WHERE dof = 'logs' AND instr(path, ?) != 1 LIMIT 1").get(`${task}/`))
+        out.push("can read logs, which holds other tasks' sessions");
+      continue;
+    }
+    const cfg = c.dofs[d];
+    if (!cfg) continue;
+    for (const { author } of authors.iterate(d) as Iterable<{ author: string | null }>) {
+      const a = author ? { user: author, member: member.get(d, author) !== undefined } : null;
+      if (!trusted({ author: a, bot: false }, cfg)) {
+        out.push(`can read ${d}, which holds untrusted authors (${author || "?"})`);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 export function openDb(path: string): DatabaseSync {

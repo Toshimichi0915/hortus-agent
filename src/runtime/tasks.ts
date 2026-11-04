@@ -22,7 +22,7 @@ import { jar } from "../browser/jar.ts";
 import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
-import { now } from "../db.ts";
+import { now, readable } from "../db.ts";
 import { taskId } from "../ids.ts";
 import { publishLog, renderSession } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
@@ -121,6 +121,7 @@ export function create(i: CreateInput): TaskRow {
     credentials: i.scope?.credentials ?? (w.length ? w : Object.keys(readVault())),
     repos: i.scope?.repos ?? [],
     ...(i.project ? { project: i.project } : {}),
+    ...(i.scope?.dofs ? { dofs: i.scope.dofs } : {}),
   };
   const origins = i.project ? (c.config.projects[i.project]?.origins ?? null) : null;
   const { tokens, hours } = i.budget ?? c.config.worker.budget;
@@ -249,7 +250,12 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
     kind: row.kind,
     title: row.title,
     brief: row.brief,
-    scope: { credentials: scope.credentials ?? [], repos: scope.repos ?? [], ...(project ? { project } : {}) },
+    scope: {
+      credentials: scope.credentials ?? [],
+      repos: scope.repos ?? [],
+      ...(project ? { project } : {}),
+      dofs: readable(c, row.scope),
+    },
     origins: mergeOrigins(c.origins, parse<string[] | null>(row.origins, null)),
     budget: parse(row.budget, c.worker.budget),
     hours_used: row.hours ?? 0,

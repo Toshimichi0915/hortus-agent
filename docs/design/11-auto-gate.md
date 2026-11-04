@@ -17,8 +17,8 @@ if request carries a consequential pattern → per-request entry (pending → 40
 if policy human → as F3
 if policy auto:
   grant exists (durable or for this task)? no → pending grant entry (403 {approval}); the owner approves once, durable unless the entry was task-scoped
-  yes, and the task is tainted (db.ts › taintOf: an untrusted author's event routed to it, a Planner batch, or a
-    recorded tasks.taint reason)? → pending request entry, no judge call (v7 › rounds 5 and 6)
+  yes, and the task is tainted (db.ts › taintOf: an untrusted author's event routed to it, a Planner batch, a
+    recorded tasks.taint reason, or a readable DOF holding an untrusted author's file: v7 › Review round 7)? → pending request entry, no judge call (v7 › rounds 5 and 6)
   yes → judge(summary) → allow: pass (a `request` row with status "allowed", decided_by "judge", prompt_hash) | escalate: pending request entry (403)
 ```
 

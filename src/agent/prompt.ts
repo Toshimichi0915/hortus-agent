@@ -9,7 +9,7 @@ const list = (xs: string[]) => (xs.length ? xs.join(", ") : "none");
 export function prompt(task: TaskJson): string {
   const p = task.paths;
   const where = [
-    `- DOFs (mirrored sources, read-only Markdown): ${p.dof}`,
+    `- DOFs (mirrored sources, read-only Markdown): ${p.dof}; this task can read ${list(task.scope.dofs ?? [])}`,
     p.repos && `- forge repo mirrors (read-only): ${p.repos}`,
     `- your scratch directory (cwd unless told otherwise): ${p.work}`,
     p.clone && `- the project clone: ${p.clone}${task.clone_url ? ` (origin ${task.clone_url})` : ""}`,

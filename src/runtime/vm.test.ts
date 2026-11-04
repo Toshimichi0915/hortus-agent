@@ -4,7 +4,7 @@
  * with CAP_NET_ADMIN and Delegate=yes, on a test table and tap prefix; `HORTUS_NO_NET=1` boots with `-netdev user`.
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mock, test } from "node:test";
@@ -15,7 +15,7 @@ import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import * as net from "./net.ts";
-import { deadline, init, missingImage, qemuArgs, startVm, vmTaskJson } from "./vm.ts";
+import { deadline, init, missingImage, qemuArgs, shares, startVm, virtiofsd, vmTaskJson } from "./vm.ts";
 
 const host: TaskJson = {
   id: "t1",
@@ -98,6 +98,42 @@ test("qemuArgs: a comma in a path is doubled", () => {
   assert.ok(a.includes("id=root,file=/h,,x/agent.ext4,format=raw,if=none"));
   assert.ok(a.includes("socket,id=vfs0,path=/h,,x/s"));
   assert.ok(a.includes("file,id=con,path=/c,,1,append=on"));
+});
+
+test("the DOF share is a view of scope.dofs: only those worktrees are visible to virtiofsd (no VM)", () => {
+  const root = tempDir("hortus-vmview-");
+  const dof = join(root, "dof");
+  for (const d of ["slack/C1", "gh/o", "slack.git"]) mkdirSync(join(dof, d), { recursive: true });
+  writeFileSync(join(dof, "slack", "C1", "m.md"), "in scope\n");
+  writeFileSync(join(dof, "gh", "o", "i.md"), "out of scope\n");
+  const t: TaskJson = {
+    ...host,
+    scope: { ...host.scope, dofs: ["slack", "missing", ".."] },
+    paths: { dof, work: root },
+  };
+  const share = shares(t).find((s) => s.tag === "dof");
+  assert.deepEqual(share?.only, ["slack"], "an absent DOF and a path-like name are left out");
+  if (!share) return;
+  // the real wrapper (unshare + bind mounts), with a fake virtiofsd that lists what its --shared-dir holds
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "virtiofsd"),
+    '#!/bin/sh\nwhile [ "$1" != --shared-dir ]; do shift; done\nid -u\ncd "$2" && find . -name "*.md" | sort && cat slack/C1/m.md\n',
+  );
+  chmodSync(join(bin, "virtiofsd"), 0o755);
+  const view = join(root, "view");
+  for (const d of ["", "slack"]) mkdirSync(join(view, d), { recursive: true });
+  const v = virtiofsd(share, join(root, "s.sock"), view);
+  assert.equal(v.cmd, "unshare");
+  assert.ok(v.args.includes("--readonly") && v.args.at(v.args.indexOf("--shared-dir") + 1) === view);
+  const out = execFileSync(v.cmd, v.args, {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(out, `${process.getuid?.()}\n./slack/C1/m.md\nin scope\n`, "the owner's uid, slack only");
+  assert.equal(spawnSync("find", [view, "-name", "*.md"], { encoding: "utf8" }).stdout, "", "no mount on the host");
+  assert.equal(virtiofsd({ tag: "task-out", path: "/o", ro: false }, "/s", "/v").cmd, "virtiofsd");
 });
 
 test("deadline: past 2^31-1 ms it re-arms instead of firing at once; clear stops it", () => {
@@ -219,8 +255,12 @@ if (!enabled) {
       init({ links: { register: (a) => links.push(`+${a}`), release: (a) => links.push(`-${a}`) } });
     }
 
-    const dir = setup({ paths: { dof: join(home, "dof"), work: "unused" } });
+    const dir = setup({
+      scope: { credentials: [], repos: [], dofs: ["slack"] },
+      paths: { dof: join(home, "dof"), work: "unused" },
+    });
     mkdirSync(join(home, "dof", "slack"), { recursive: true });
+    mkdirSync(join(home, "dof", "github")); // out of scope: not in the guest's /dof
     writeFileSync(join(home, "dof", "slack", "hello.md"), "hi from the DOF\n");
     mkdirSync(join(home, "tasks"));
     symlinkSync(dir, join(home, "tasks", "t1"));
@@ -233,7 +273,7 @@ if (!enabled) {
       JSON.stringify([
         { calls: [bash("touch /task/ctl/x")] },
         { calls: [bash("echo kept > /task/out/work/persist.txt && echo gone > ~/gone && cat /dof/slack/hello.md")] },
-        { calls: [bash("touch /dof/x; ip -4 -o addr show eth0; systemd-analyze")] },
+        { calls: [bash("touch /dof/x; ls /dof; ip -4 -o addr show eth0; systemd-analyze")] },
         { calls: [{ name: "done", input: { summary: "booted" } }] },
       ]),
     );
@@ -264,6 +304,7 @@ if (!enabled) {
     assert.match(sessions, /touch: cannot touch '\/task\/ctl\/x': Read-only file system/);
     assert.match(sessions, /touch: cannot touch '\/dof\/x': Read-only file system/);
     assert.match(sessions, /hi from the DOF/);
+    assert.doesNotMatch(sessions, /github/, "a DOF outside scope.dofs is not in the guest's /dof");
     assert.ok(!existsSync(join(dir, "ctl", "x")));
     assert.equal(readFileSync(join(dir, "out", "work", "persist.txt"), "utf8"), "kept\n");
     assert.equal(statSync(join(images, "agent.ext4")).mtimeMs, mtime, "-snapshot: the image is untouched");

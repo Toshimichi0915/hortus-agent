@@ -99,7 +99,7 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
   if (open) return check(input);
   // a tainted task (v7 › Review round 6: untrusted messages, a web page, a stranger's search hit, a tainted batch):
   // the judge sees only the brief and the request, so the owner decides
-  const tainted = taintOf(c.db, task);
+  const tainted = taintOf(c.db, task, c.config);
   if (tainted.length) return check({ ...input, judged: { reason: `tainted: ${tainted.join("; ")}` } });
   const v = await judge(input.category, input.summary, task);
   if (v.verdict === "escalate") return check({ ...input, judged: v });
@@ -142,7 +142,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
   // ponytail: a durable grant entry pending for one task is shared; only its requester hears the decision
   const pending = rows.find((r) => r.status === "pending");
   if (pending) return { pending: pending.id };
-  const untrusted = taintOf(db, requester);
+  const untrusted = taintOf(db, requester, ctx().config);
   const r = db
     .prepare(
       "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload, prompt_hash) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",

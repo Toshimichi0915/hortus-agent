@@ -170,7 +170,13 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
 
   const text = profile(
     o.kind,
-    { id, clone: o.task.paths.clone, schedule: o.task.paths.schedule, cgroup: cgroup.path(id) },
+    {
+      id,
+      clone: o.task.paths.clone,
+      schedule: o.task.paths.schedule,
+      dofs: o.task.scope.dofs ?? [],
+      cgroup: cgroup.path(id),
+    },
     o.config,
   );
   // first: a planted link or FIFO there is replaced, and a failure leaves no cgroup, address or child behind

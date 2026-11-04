@@ -20,7 +20,9 @@ const { commit, mirrorModule, parse, publishLog, render, search, writeLog } = aw
 const { unsafe } = await import("./repo.ts");
 
 const db = openDb(paths.db());
-const config = Config.parse({ dofs: { slack: { type: "slack" }, gh: { type: "github" } } });
+const config = Config.parse({
+  dofs: { slack: { type: "slack" }, gh: { type: "github" }, quiet: { type: "slack", owner: "UOWN" } },
+});
 await mirrorModule.start({
   config,
   db,
@@ -452,8 +454,13 @@ test("publishLog: a Worker's 48 MB of user turns renders and indexes capped, in 
 });
 
 test("dof.search taints a Worker's task with each untrusted hit it is shown; owner hits, owner callers do not", async () => {
-  const add = db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES (?, 'unattended', ?, 'running')");
-  for (const id of ["W1", "W2", "W3"]) add.run(id, id);
+  const add = db.prepare("INSERT INTO tasks(id, kind, title, status, scope) VALUES (?, 'unattended', ?, 'running', ?)");
+  for (const id of ["W1", "W2"]) add.run(id, id, JSON.stringify({ dofs: ["slack"] }));
+  add.run("W0", "W0", JSON.stringify({ dofs: [] }));
+  add.run("W3", "W3", JSON.stringify({ dofs: ["logs"] }));
+  // what dof.search recorded (taintOf also says the slack these tasks can read holds a stranger: the next test)
+  const taintOf = (_db: unknown, id: string) =>
+    JSON.parse((db.prepare("SELECT taint FROM tasks WHERE id = ?").get(id) as { taint: string | null }).taint ?? "[]");
   await commit("slack", [msg("C9/T/1.md", "taintprobe from the owner", { user: "UOWN (me)" })], "owner");
   await commit("slack", [msg("C9/T/2.md", "taintprobe from a stranger", { user: "U999 (eve)" })], "stranger");
   const slack = config.dofs.slack as { owner?: string };
@@ -466,7 +473,7 @@ test("dof.search taints a Worker's task with each untrusted hit it is shown; own
     assert.deepEqual(taintOf(db, "W2"), ["searched the mirror: slack:U999 (untrusted)"]);
     // a tainted task's session log is untrusted to the next reader; an untainted one's is not
     writeLog("W2", { "session.md": "taintprobe in a log" }, "w2");
-    writeLog("W1", { "session.md": "taintprobe in a log" }, "w1");
+    writeLog("W0", { "session.md": "taintprobe in a log" }, "w0");
     await call("dof.search", { q: "taintprobe", in: "logs" }, { role: "worker", task: "W3" });
     assert.deepEqual(taintOf(db, "W3"), ["searched the mirror: logs:W2 (tainted)"]);
     for (let i = 0; i < 9; i++) taint(db, "W3", `r${i}`);
@@ -474,4 +481,44 @@ test("dof.search taints a Worker's task with each untrusted hit it is shown; own
   } finally {
     slack.owner = undefined;
   }
+});
+
+test("scope.dofs: a Worker searches only the DOFs it can read; each one holding a stranger's text taints it", async () => {
+  const add = db.prepare("INSERT INTO tasks(id, kind, title, status, scope) VALUES (?, 'unattended', ?, 'running', ?)");
+  add.run("S1", "reads quiet", JSON.stringify({ dofs: ["quiet"] }));
+  add.run("S2", "reads slack", JSON.stringify({ dofs: ["slack"] }));
+  add.run("S3", "reads nothing", JSON.stringify({ dofs: [] }));
+  add.run("S4", "row without dofs", JSON.stringify({}));
+  add.run("S5", "reads logs", JSON.stringify({ dofs: ["logs", "transforms"] }));
+  await commit("quiet", [msg("D1/T/1.md", "scopeprobe from the owner", { user: "UOWN (me)" })], "owner");
+  await commit("quiet", [msg("D1/T/2.md", "scopeprobe again", { user: "UOWN (me)" })], "owner");
+  await commit("slack", [msg("C7/T/1.md", "scopeprobe from a stranger", { user: "U777 (mallory)" })], "stranger");
+  const of = (id: string) => taintOf(db, id, config);
+  assert.deepEqual(of("S1"), [], "only the owner wrote in quiet");
+  assert.match(of("S2").join(), /^can read slack, which holds untrusted authors \(.+\)$/);
+  assert.deepEqual(of("S3"), []);
+  assert.ok(
+    of("S4").some((r) => r.startsWith("can read slack")),
+    "a row without dofs reads every DOF",
+  );
+
+  const hits = (await call("dof.search", { q: "scopeprobe" }, { role: "worker", task: "S1" })) as { dof: string }[];
+  assert.deepEqual([...new Set(hits.map((h) => h.dof))], ["quiet"]);
+  assert.equal(((await call("dof.search", { q: "scopeprobe" }, { role: "owner" })) as unknown[]).length, 3);
+  assert.deepEqual(await call("dof.search", { q: "scopeprobe" }, { role: "worker", task: "S3" }), []);
+  await assert.rejects(call("dof.search", { q: "scopeprobe", in: "slack" }, { role: "worker", task: "S1" }), /scope/);
+
+  // a stranger posting later taints the task that can read it, at the next check; so does an authorless file
+  await commit("quiet", [msg("D1/T/3.md", "scopeprobe from a guest", { user: "U888 (guest)" })], "guest");
+  assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (U888)"]);
+  db.prepare("UPDATE search_meta SET author = 'UOWN' WHERE dof = 'quiet' AND author = 'U888'").run();
+  await commit("quiet", [msg("D1/channel.md", "a topic", { user: undefined })], "meta");
+  assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (?)"]);
+
+  // logs: another task's session counts, its own does not; transforms never
+  db.prepare("DELETE FROM search_meta WHERE dof = 'logs'").run();
+  writeLog("S5", { "session.md": "own log" }, "s5");
+  assert.deepEqual(of("S5"), []);
+  writeLog("S3", { "session.md": "someone else's" }, "s3");
+  assert.deepEqual(of("S5"), ["can read logs, which holds other tasks' sessions"]);
 });
