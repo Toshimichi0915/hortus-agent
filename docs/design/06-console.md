@@ -41,7 +41,7 @@ Line-oriented client of the abstract socket (`rpc.serveSocket` frames). Commands
 hortus ping
 hortus tasks [--all | <id>]                 # table (newest 50 open and closed; --all every one) / card with replies and summary
 hortus chat [-r <id>] [<text>…]             # REPL: prints the stream (text live, tool calls as one line each), reads lines; Ctrl-D closes (task → waiting)
-hortus approvals [--all | approve|reject <id>]  # pending first (newest 50 of each; --all every one)
+hortus approvals [--all | approve [--grant]|reject <id>]  # pending first (newest 50 of each; --all every one); --grant: "Approve, and allow … for this task"
 hortus stop <id> | close <id> [failed]
 hortus search <query> [--in …] (alias of dof search)
 hortus sync --force <project>               # 3b

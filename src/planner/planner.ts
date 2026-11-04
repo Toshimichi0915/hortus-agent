@@ -12,7 +12,7 @@ import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { parse, tokens } from "../console/html.ts";
 import type { Ctx, Module } from "../ctx.ts";
-import { now } from "../db.ts";
+import { now, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { runPlanner, tasks } from "../runtime/index.ts";
@@ -29,6 +29,8 @@ let running = false;
 let again = false;
 let capLogged = 0;
 let lastBatch: string | undefined;
+/** a batch left tainted tasks' results for one of their own (`batch`) */
+let owed = false;
 
 export function pctx(): Ctx {
   if (!ctx) throw new Error("planner not started");
@@ -187,10 +189,10 @@ async function batch(): Promise<boolean> {
     log().error(`planner.runtime is vm: ${noImage}; batch skipped`);
     return false;
   }
-  const events = c.db
+  let events = c.db
     .prepare("SELECT * FROM events WHERE consumed = 0 ORDER BY id LIMIT ?")
     .all(cfg.batch_max) as unknown as (EventRow & { id: number })[];
-  const results = c.db
+  let results = c.db
     .prepare(
       `SELECT o.task_id, o.seq, o.body FROM outbox o JOIN tasks t ON t.id = o.task_id
        WHERE o.consumed = 0 AND t.kind NOT IN ('chat', 'planner')
@@ -198,6 +200,17 @@ async function batch(): Promise<boolean> {
        ORDER BY o.created`,
     )
     .all() as unknown as (ResultRow & { seq: number })[];
+  // v7 › Review round 8: a tainted task's result taints every task the batch creates (tools.ts › batchTaint), and on
+  // a busy day nearly every batch carries one; so with events waiting, those results get the next batch of their own
+  // (events wait for it, so a steady stream of events cannot hold results back for more than one batch)
+  const tainted = (r: ResultRow) => taintOf(c.db, r.task_id, c.config).length > 0;
+  if (owed) {
+    owed = false;
+    if (results.some(tainted)) events = [];
+  } else if (events.length && results.some(tainted)) {
+    results = results.filter((r) => !tainted(r));
+    owed = again = true;
+  }
   if (!events.length && !results.length) return false;
 
   // consumed before the run: a crashed batch is not re-run (cards are authoritative; 15-planner.md › Wake and batch)
