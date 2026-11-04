@@ -2,7 +2,7 @@
  * Round 8: the owner's day on a real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider, fake Slack and
  * GitHub, a fake judge endpoint behind `dev.upstreams`). Round 7 counted it in-process (gate.test "a day"); here every
  * step is the real one: the owner's DMs wake the Planner, whose scripted task_create picks `scope.dofs` from the
- * text (25 tasks read the slack DOF, where a stranger wrote; 10 read the owner-only github DOF; 5 read none), each
+ * text (25 tasks read the slack DOF, where a stranger wrote; 10 read the owner-only github DOF, 5 none: both judged), each
  * Worker's curl goes through the proxy from its loopback alias (2 posts, 1 consequential delete under `auto`), taint
  * is what `taintOf` computes, and the owner decides through the console and the CLI as the entries appear (a tainted
  * task's first post with "Approve, and allow … for this task"). 10 chats do the same. Prints `# day …`.
@@ -370,9 +370,9 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
   assert.deepEqual(errors, []);
   assert.deepEqual(wrongButton, []);
   assert.deepEqual(perScope, { '["slack"]': 25, '["github"]': 10, "[]": 5 });
-  // tainted: the 25 slack readers (a stranger), the 10 github readers (o__r/channel.md is authorless: every DOF has
-  // one), the 10 chats (every DOF); the 5 that read no DOF stay auto-judged, also when a batch brought tainted results
-  assert.equal(tainted.length, 45);
+  // tainted: the 25 slack readers (a stranger), the 10 chats (every DOF); the 10 github readers (owner-only: its
+  // channel.md does not count) and the 5 that read no DOF stay auto-judged, also when a batch brought tainted results
+  assert.equal(tainted.length, 35);
   assert.ok(
     db((d) =>
       d
@@ -387,15 +387,15 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
     const scoped = (JSON.parse(t.scope) as { dofs?: string[] }).dofs;
     assert.equal(
       tainted.includes(t),
-      t.kind === "chat" || !!scoped?.length,
+      t.kind === "chat" || !!scoped?.includes("slack"),
       `${t.id} ${t.scope} ${db((d) => taintOf(d, t.id, cfg))}`,
     );
     // a tainted task: its first post (with the task grant) and its delete; its second post passed on the grant
     assert.equal(byOwner(t.id), tainted.includes(t) ? 2 : 1, t.id);
   }
-  assert.equal(decisions, 1 + 45 + 50);
-  assert.equal(grants, 45);
-  assert.equal(judged, 5 * 2);
+  assert.equal(decisions, 1 + 35 + 50);
+  assert.equal(grants, 35);
+  assert.equal(judged, 15 * 2);
   // every call reached Slack: 2 posts and a delete per task, the placeholder swapped
   const work = slack.calls.filter((c) => c.params.channel === "C2");
   assert.equal(work.filter((c) => c.method === "chat.postMessage").length, 100);

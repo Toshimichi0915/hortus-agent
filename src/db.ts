@@ -148,6 +148,14 @@ export function readableOf(db: DatabaseSync, c: Pick<Config, "dofs">, task: stri
 }
 
 /**
+ * `<channel>/channel.md`, hortusd's rendering of the service's channel or repo record (v7 › Review round 9): the one
+ * authorless file that does not taint, or every connector DOF would. ponytail: its free text (a topic, a repo
+ * description, display names) is set by whoever the service lets, a stranger included, and is read as the owner's;
+ * upgrade: record who set it per connector (Slack's `topic.creator`; forges have nothing comparable).
+ */
+export const channelMeta = (path: string): boolean => /^[^/]+\/channel\.md$/.test(path);
+
+/**
  * A reason per readable DOF holding text from an author its trust rule does not trust (v7 › Review round 7): a Worker
  * can `cat` any file it can read, so the whole DOF counts, checked at every gate decision (a stranger posting later
  * taints too). `transforms` is the owner's; `logs` counts once it holds another task's log (sessions quote what they
@@ -159,7 +167,9 @@ export function readableOf(db: DatabaseSync, c: Pick<Config, "dofs">, task: stri
 function untrustedDofs(db: DatabaseSync, task: string, dofs: string[], c: Pick<Config, "dofs">): string[] {
   const out: string[] = [];
   const member = db.prepare("SELECT 1 FROM events WHERE dof = ? AND author = ? AND member = 1 LIMIT 1");
-  const authors = db.prepare("SELECT DISTINCT author FROM search_meta WHERE dof = ?");
+  const authors = db.prepare(
+    `SELECT DISTINCT author FROM search_meta WHERE dof = ? AND (COALESCE(author, '') != '' OR path NOT GLOB '*/channel.md' OR path GLOB '*/*/channel.md')`,
+  );
   for (const d of dofs) {
     if (d === "transforms") continue;
     if (d === "logs") {

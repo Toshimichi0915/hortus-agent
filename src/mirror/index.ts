@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
 import { trusted } from "../connectors/trust.ts";
-import { type DatabaseSync, dofNames, readableOf, taint, taintOf } from "../db.ts";
+import { channelMeta, type DatabaseSync, dofNames, readableOf, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { type Caller, type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
@@ -51,7 +51,7 @@ export function search(q: SearchQuery, only?: string[]): SearchHit[] {
 /**
  * The hits a Worker must not read as the owner's (v7 › Review round 6), as `<dof>:<author> (untrusted)`: a connector
  * DOF's author its trust rule does not trust (no author, a bot's file, a stranger), a session log of a tainted task.
- * `transforms` is the owner's (approved code). ponytail: a `members` DOF trusts an author only if an event of theirs was
+ * `transforms` is the owner's (approved code), a `channel.md` hortusd's rendering (`channelMeta`). ponytail: a `members` DOF trusts an author only if an event of theirs was
  * from a member (the index keeps no membership); the trust rule is the gateway's.
  */
 function untrustedHits(hits: SearchHit[]): string[] {
@@ -65,6 +65,7 @@ function untrustedHits(hits: SearchHit[]): string[] {
       continue;
     }
     const cfg = ctx?.config.dofs[h.dof];
+    if (cfg && !h.author && channelMeta(h.path)) continue;
     const author = h.author ? { user: h.author, member: member.get(h.dof, h.author) !== undefined } : null;
     if (!cfg || !trusted({ author, bot: false }, cfg)) out.add(`${h.dof}:${h.author || "?"} (untrusted)`);
   }

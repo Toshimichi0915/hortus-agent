@@ -526,12 +526,17 @@ test("scope.dofs: a Worker searches only the DOFs it can read; each one holding 
   assert.deepEqual(await call("dof.search", { q: "scopeprobe" }, { role: "worker", task: "S3" }), []);
   await assert.rejects(call("dof.search", { q: "scopeprobe", in: "slack" }, { role: "worker", task: "S1" }), /scope/);
 
-  // a stranger posting later taints the task that can read it, at the next check; so does an authorless file
+  // a stranger posting later taints the task that can read it, at the next check; so does an authorless message, but
+  // not a channel's channel.md (hortusd's rendering of the service's record), found by a search or not
   await commit("quiet", [msg("D1/T/3.md", "scopeprobe from a guest", { user: "U888 (guest)" })], "guest");
   assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (U888)"]);
   db.prepare("UPDATE search_meta SET author = 'UOWN' WHERE dof = 'quiet' AND author = 'U888'").run();
-  await commit("quiet", [msg("D1/channel.md", "a topic", { user: undefined })], "meta");
-  assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (?)"]);
+  await commit("quiet", [msg("D1/channel.md", "scopeprobe topic", { user: undefined })], "meta");
+  assert.deepEqual(of("S1"), []);
+  await call("dof.search", { q: "scopeprobe topic" }, { role: "worker", task: "S1" });
+  assert.deepEqual(of("S1"), [], "a search hit on channel.md does not taint either");
+  await commit("quiet", [msg("D1/T/channel.md", "no sender", { user: undefined })], "post");
+  assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (?)"], "only at <channel>/channel.md");
 
   // a DOF removed (or renamed) in the config while S2 runs stays mounted until its next start: it still taints
   const slackCfg = config.dofs.slack;

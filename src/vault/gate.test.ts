@@ -503,6 +503,38 @@ test("a task given an untrusted author's message: the owner decides (no judge ca
   }
 });
 
+test("a task scoped to a members-only channel is judged; one stranger's message there flips it to the owner", async () => {
+  setConfig({ dofs: { team: { type: "slack", owner: "U1", trust: "members" } } });
+  mode = "allow";
+  const scope = ctx.db.prepare("SELECT scope FROM tasks WHERE id = 'T4'").get() as { scope: string };
+  ctx.db
+    .prepare("UPDATE tasks SET scope = ? WHERE id = 'T4'")
+    .run(JSON.stringify({ ...JSON.parse(scope.scope), dofs: ["team"] }));
+  const meta = ctx.db.prepare("INSERT INTO search_meta(dof, path, rowid, author) VALUES ('team', ?, ?, ?)");
+  const event = ctx.db.prepare("INSERT INTO events(dof, key, author, member, trusted) VALUES ('team', ?, ?, ?, ?)");
+  meta.run("C9/channel.md", 90001, "");
+  meta.run("C9/1/1.md", 90002, "U1");
+  meta.run("C9/1/2.md", 90003, "U2");
+  event.run("m1", "U2", 1, 1);
+  try {
+    const judged = llmSeen.length;
+    assert.equal((await send({ from: "127.0.0.7" })).status, 200, "the channel's members wrote: auto-judged");
+    assert.equal(llmSeen.length, judged + 1);
+    meta.run("C9/1/3.md", 90004, "U9");
+    event.run("m2", "U9", 0, 0);
+    const id = pendingId(await send({ from: "127.0.0.7" }));
+    assert.equal(llmSeen.length, judged + 1, "not judged once a stranger wrote there");
+    assert.deepEqual((JSON.parse(row(id).payload ?? "{}") as { untrusted?: string[] }).untrusted, [
+      "can read team, which holds untrusted authors (U9)",
+    ]);
+  } finally {
+    ctx.db.prepare("UPDATE tasks SET scope = ? WHERE id = 'T4'").run(scope.scope);
+    ctx.db.prepare("DELETE FROM search_meta WHERE dof = 'team'").run();
+    ctx.db.prepare("DELETE FROM events WHERE dof = 'team'").run();
+    setConfig({});
+  }
+});
+
 /** A plain GET (no credential) from a session address. */
 function get(host: string, path: string, from: string): Promise<R> {
   return new Promise((resolve, reject) => {
