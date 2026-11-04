@@ -68,7 +68,30 @@ export function granted(category: string, task: string | null): boolean {
   return q.get(category, task) !== undefined;
 }
 
+/**
+ * A grant on the category for this task that the owner approved on an entry showing the task's taint (its payload's
+ * `untrusted`): a scope grant asked while tainted, or "Approve, and allow … for this task". A durable grant never is.
+ * ponytail: it covers taint the task gains later too (taint is for good, and the owner already chose to trust the
+ * task with the category); compare reasons if that bites.
+ */
+function taintGranted(category: string, task: string | null): boolean {
+  return (
+    ctx()
+      .db.prepare(
+        "SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ? AND task_id = ? AND status = 'approved' AND json_extract(payload, '$.untrusted') IS NOT NULL",
+      )
+      .get(category, task) !== undefined
+  );
+}
+
 const grantName = (category: string): string => category.replace(/^credential:/, "");
+
+/** The tasks an entry's decision goes to: its own, or a durable grant's opener and every task that met it since. */
+function requesters(row: Pick<ApprovalRow, "task_id" | "payload">): string[] {
+  if (row.task_id) return [row.task_id];
+  const p = (row.payload ? JSON.parse(row.payload) : {}) as { task?: string; waiting?: string[] };
+  return [...(p.task ? [p.task] : []), ...(p.waiting ?? [])];
+}
 
 /**
  * The gate for a credentialed request (pipeline step 9). Role core passes; a consequential request or a `human`
@@ -98,9 +121,13 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
     .get(input.hash, task);
   if (open) return check(input);
   // a tainted task (v7 › Review round 6: untrusted messages, a web page, a stranger's search hit, a tainted batch):
-  // the judge sees only the brief and the request, so the owner decides
+  // the judge sees only the brief and the request, so the owner decides, once per task if they grant the category
+  // to it (round 7: a task grant taken while the entry showed the taint)
   const tainted = taintOf(c.db, task);
-  if (tainted.length) return check({ ...input, judged: { reason: `tainted: ${tainted.join("; ")}` } });
+  if (tainted.length)
+    return taintGranted(input.category, task)
+      ? "pass"
+      : check({ ...input, judged: { reason: `tainted: ${tainted.join("; ")}` } });
   const v = await judge(input.category, input.summary, task);
   if (v.verdict === "escalate") return check({ ...input, judged: v });
   const t = new Date().toISOString();
@@ -129,9 +156,9 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     return "pass";
   const rows = db
     .prepare(
-      "SELECT id, status FROM approvals WHERE kind = ? AND hash = ? AND task_id IS ? AND status IN ('pending', 'approved') ORDER BY id",
+      "SELECT id, status, task_id, payload FROM approvals WHERE kind = ? AND hash = ? AND task_id IS ? AND status IN ('pending', 'approved') ORDER BY id",
     )
-    .all(kind, input.hash, task) as { id: number; status: string }[];
+    .all(kind, input.hash, task) as unknown as Pick<ApprovalRow, "id" | "status" | "task_id" | "payload">[];
   const approved = rows.find((r) => r.status === "approved");
   if (approved) {
     // a grant stays approved; a request is single use (the conditional update wins one race)
@@ -139,9 +166,17 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     const r = db.prepare("UPDATE approvals SET status = 'used' WHERE id = ? AND status = 'approved'").run(approved.id);
     if (r.changes === 1) return "pass";
   }
-  // ponytail: a durable grant entry pending for one task is shared; only its requester hears the decision
+  // a durable grant entry pending is shared: every task that met it is told the decision (payload.waiting)
   const pending = rows.find((r) => r.status === "pending");
-  if (pending) return { pending: pending.id };
+  if (pending) {
+    const told = requesters(pending);
+    if (input.durable && requester && !told.includes(requester)) {
+      const p = JSON.parse(pending.payload ?? "{}") as { waiting?: string[] };
+      p.waiting = [...(p.waiting ?? []), requester];
+      db.prepare("UPDATE approvals SET payload = ? WHERE id = ?").run(JSON.stringify(p), pending.id);
+    }
+    return { pending: pending.id };
+  }
   const untrusted = taintOf(db, requester);
   const r = db
     .prepare(
@@ -201,40 +236,65 @@ export function coalesce(send: (text: string) => void, ms = NOTIFY_MS): (text: s
   };
 }
 
+/**
+ * The entry may be approved with a task grant: an `auto` request sent to the owner only because its task is tainted
+ * (not consequential: those ask every time, v6).
+ */
+export function grantable(row: { kind: string | null; task_id: string | null; payload?: string | null }): boolean {
+  if (row.kind !== "request" || !row.task_id || !row.payload) return false;
+  const p = JSON.parse(row.payload) as { consequential?: boolean; judge?: string };
+  return !p.consequential && !!p.judge?.startsWith("tainted:");
+}
+
+/** `grant`: also approve the entry's category for its task (a `grantable` entry only), see `taintGranted`. */
 export function decide(
   id: number,
   decision: "approve" | "reject",
   by: "owner" | "judge",
-  extra?: { reason?: string },
+  extra?: { reason?: string; grant?: boolean },
 ): void {
   const db = ctx().db;
   const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as ApprovalRow | undefined;
   if (!row) throw new RpcError("not_found", `no approval ${id}`);
+  const grant = extra?.grant && decision === "approve";
+  if (grant && !grantable(row)) throw new RpcError("invalid", "this entry cannot be approved with a task grant");
   const status = decision === "approve" ? "approved" : "rejected";
+  const t = new Date().toISOString();
   const r = db
     .prepare(
       "UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, reason = ? WHERE id = ? AND status = 'pending'",
     )
-    .run(status, new Date().toISOString(), by, extra?.reason ?? null, id);
+    .run(status, t, by, extra?.reason ?? null, id);
   if (r.changes !== 1) throw new RpcError("invalid", "already decided");
+  if (grant)
+    db.prepare(
+      "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, decided_at, decided_by, payload) VALUES ('grant', ?, ?, ?, ?, 'approved', ?, ?, ?, ?)",
+    ).run(
+      row.category,
+      `grant:${grantName(row.category)}`,
+      row.task_id,
+      JSON.stringify({ grant: grantName(row.category), task: row.task_id, from: id }),
+      t,
+      t,
+      by,
+      JSON.stringify({ untrusted: taintOf(db, row.task_id) }),
+    );
   if (row.kind === "grant" && status === "approved" && row.task_id) addToScope(row.task_id, row.category);
   log.info("approval decided", { id, status, by });
   bus.emit("approvals", { id }); // another tab, the CLI or the phone decided: every open page follows
-  // a durable grant entry tells the task whose request opened it
-  const taskId = row.task_id ?? (row.payload ? (JSON.parse(row.payload) as { task?: string }).task : undefined);
-  if (!taskId) return;
-  try {
-    deps.inboxWrite(taskId, {
-      from: "approval",
-      trusted: true,
-      text: `approval ${id} ${status} (${row.category})${status === "approved" ? ": retry the request" : ""}${
-        extra?.reason ? ` — ${extra.reason}` : ""
-      }`,
-      data: { approval: id, decision: status, category: row.category, reason: extra?.reason },
-    });
-  } catch (e) {
-    log.error("inbox write failed", e, { id, task: taskId });
-  }
+  for (const taskId of requesters(row))
+    try {
+      deps.inboxWrite(taskId, {
+        from: "approval",
+        trusted: true,
+        text: `approval ${id} ${status} (${row.category})${status === "approved" ? ": retry the request" : ""}${
+          grant ? "; the owner allowed the category for this task (consequential requests still ask)" : ""
+        }${extra?.reason ? ` — ${extra.reason}` : ""}`,
+        data: { approval: id, decision: status, category: row.category, reason: extra?.reason },
+      });
+    } catch (e) {
+      log.error("inbox write failed", e, { id, task: taskId });
+    }
 }
 
 /** A grant for `credential:<name>` adds the name to the task's scope.credentials. */
@@ -250,12 +310,30 @@ function addToScope(taskId: string, category: string): void {
   db.prepare("UPDATE tasks SET scope = ? WHERE id = ?").run(JSON.stringify(scope), taskId);
 }
 
-/** Every minute: pending entries older than 72 h become `expired`; a retry then creates a fresh entry. */
+/**
+ * Every minute: pending entries older than 72 h become `expired`; a retry then creates a fresh entry. The requesting
+ * task hears it as it would a rejection (v6: "expires as rejected"): a Worker waiting on the entry was otherwise
+ * left waiting for good, with nothing pending on its card.
+ */
 export function expire(now = Date.now()): number {
   const cutoff = new Date(now - EXPIRE_MS).toISOString();
-  const r = ctx()
-    .db.prepare("UPDATE approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ?")
-    .run(new Date(now).toISOString(), cutoff);
-  if (r.changes) bus.emit("approvals", {});
-  return Number(r.changes);
+  const rows = ctx()
+    .db.prepare(
+      "UPDATE approvals SET status = 'expired', decided_at = ? WHERE status = 'pending' AND requested_at < ? RETURNING id, category, task_id, payload",
+    )
+    .all(new Date(now).toISOString(), cutoff) as Pick<ApprovalRow, "id" | "category" | "task_id" | "payload">[];
+  if (rows.length) bus.emit("approvals", {});
+  for (const a of rows)
+    for (const taskId of requesters(a))
+      try {
+        deps.inboxWrite(taskId, {
+          from: "approval",
+          trusted: true,
+          text: `approval ${a.id} expired (${a.category}): the owner did not decide within 72 h`,
+          data: { approval: a.id, decision: "expired", category: a.category },
+        });
+      } catch (e) {
+        log.error("inbox write failed", e, { id: a.id, task: taskId });
+      }
+  return rows.length;
 }

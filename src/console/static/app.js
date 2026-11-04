@@ -120,6 +120,8 @@ async function act(el, input) {
     await refresh();
   } catch (e) {
     say(e.message, true);
+    // a stale page (another tab, the CLI or the phone decided; SSE lost): show the decision instead of live buttons
+    if (/already decided/.test(e.message)) refresh();
     throw e;
   } finally {
     delete el.dataset.busy;

@@ -64,6 +64,7 @@ export const task: Page = (ctx, { m, q }) => {
   const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
   const open = isOpen(t.status);
   const tainted = taintOf(ctx.db, id);
+  const pending = pendingFor(ctx, id);
   const up =
     t.runtime === "vm" && t.status === "running" && t.started
       ? ` · up ${Math.round((Date.now() - Date.parse(t.started)) / 60_000)} min`
@@ -88,7 +89,7 @@ ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join(";
 </table>
 <p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>${log ? details("console.log", log) : ""}
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
-${pendingFor(ctx, id).map((a) => approvalEntry(a))}
+${pending.length ? h`<h2>Waiting for you</h2>${pending.map((a) => approvalEntry(a))}` : ""}
 ${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
 <h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : h`<p class="empty">none</p>`}
 <h2>Stream</h2>${replies.length ? h`<div class="stream">${replies.map((r) => h`<div class="line">${time(r.created)} ${replyLine(r)}</div>`)}</div>` : h`<p class="empty">none</p>`}

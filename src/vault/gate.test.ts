@@ -17,8 +17,9 @@ import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
 import { task as taskPage } from "../console/pages/task.ts";
 import type { Ctx } from "../ctx.ts";
-import { openDb } from "../db.ts";
+import { openDb, taint } from "../db.ts";
 import { logger } from "../log.ts";
+import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
@@ -563,4 +564,122 @@ test("round 6: a web page taints the task for good; an API response does not; a 
   } finally {
     gate.deps.notify = notify;
   }
+});
+
+/**
+ * Round 7: the owner's day under the round-6 taint rule. 40 Planner-routed tasks (25 tainted: created from batches
+ * with untrusted events) and 10 chats, each making 2 non-consequential posts and 1 consequential delete with a fresh
+ * credential under `auto`. The owner approves what is asked; on a tainted task's first non-consequential entry they
+ * take "Approve, and allow … for this task" (a task grant). Prints `# day …` with the counts.
+ */
+test("a day: a task grant keeps a tainted task's routine requests to one decision; deletes still ask", async () => {
+  setConfig({ policy: { "credential:day": "auto", "*": "human" } });
+  mode = "allow";
+  writeVault({ ...readVault(), day: { type: "token", value: "xoxb-day", transform: "slack" } });
+  const dms: string[] = [];
+  const notify = gate.deps.notify;
+  gate.deps.notify = (t) => void dms.push(t);
+  const add = ctx.db.prepare(
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, ?, ?, 'b', 'running', ?, '"*"')`,
+  );
+  const ids: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    const id = `D${i}`;
+    add.run(id, i < 40 ? "unattended" : "chat", id, JSON.stringify({ credentials: ["day"], repos: [] }));
+    if (i < 25) taint(ctx.db, id, "created from a batch with untrusted events (planner-1)");
+    links.register(`127.0.1.${i + 1}`, "worker", id, "session");
+    ids.push(id);
+  }
+  const judged = llmSeen.length;
+  let decisions = 0;
+  let grants = 0;
+  const wrongButton: number[] = [];
+  try {
+    for (const [i, id] of ids.entries()) {
+      const from = `127.0.1.${i + 1}`;
+      for (const path of ["/api/chat.postMessage", "/api/chat.postMessage", "/api/chat.delete"]) {
+        const body = JSON.stringify({ channel: "C1", text: `${id} ${path} ${++n}` });
+        for (let tries = 0; ; tries++) {
+          assert.ok(tries < 4, `${id} ${path}: asked again after approval`);
+          const r = await send({ from, path, body, cred: "day" });
+          if (r.status === 200) break;
+          const a = row(pendingId(r));
+          const p = JSON.parse(a.payload ?? "{}") as { consequential?: boolean; untrusted?: string[] };
+          decisions++;
+          if (a.kind === "grant") {
+            // tasks run at once: D30 meets the durable grant D0's request opened; both cards show it, both hear it
+            assert.equal(pendingId(await send({ from: "127.0.1.31", cred: "day" })), a.id);
+            for (const t of [id, "D30"]) {
+              const card = await taskPage(ctx, { m: ["", t], q: new URLSearchParams() });
+              assert.match(
+                card,
+                new RegExp(`Waiting for you</h2><article class="approval pending kind-grant" id="a${a.id}"`),
+              );
+            }
+            inbox.length = 0;
+            await call("approval.decide", { id: a.id, decision: "approve" }, owner);
+            assert.deepEqual(
+              inbox.map(([t]) => t),
+              [id, "D30"],
+            );
+            continue;
+          }
+          // the entry offers the task grant on exactly a tainted task's non-consequential request
+          const want = a.kind === "request" && !p.consequential && !!p.untrusted;
+          const page = await approvalsPage(ctx, { m: ["", String(a.id)], q: new URLSearchParams() });
+          if (page.includes("&quot;grant&quot;:true") !== want) wrongButton.push(a.id);
+          if (want) grants++;
+          await call("approval.decide", { id: a.id, decision: "approve", ...(want ? { grant: true } : {}) }, owner);
+        }
+      }
+    }
+    console.log(
+      `# day: ${decisions} decisions (${grants} task grants), ${dms.length} pending entries (DMs before coalescing), ${
+        llmSeen.length - judged
+      } judge calls`,
+    );
+    assert.deepEqual(wrongButton, []);
+    // 1 durable grant + one task grant per tainted task + a delete per task; untainted posts go to the judge
+    assert.equal(decisions, 1 + 25 + 50);
+    assert.equal(grants, 25);
+    assert.equal(llmSeen.length - judged, 15 * 2 + 10 * 2);
+    // a task grant covers its task's later posts, never a consequential request, never another task
+    assert.equal((await send({ from: "127.0.1.1", cred: "day" })).status, 200);
+    assert.equal((await send({ from: "127.0.1.1", cred: "day", path: "/api/chat.delete" })).status, 403);
+    taint(ctx.db, "D26", "read a web page: news.test");
+    assert.equal((await send({ from: "127.0.1.27", cred: "day" })).status, 403, "D26 tainted later asks again");
+    // the grant can only be taken on a tainted task's non-consequential request
+    const del = pendingId(await send({ from: "127.0.1.2", cred: "day", path: "/api/chat.delete" }));
+    await assert.rejects(call("approval.decide", { id: del, decision: "approve", grant: true }, owner), /grant/);
+    assert.equal(row(del).status, "pending", "a refused grant decides nothing");
+  } finally {
+    gate.deps.notify = notify;
+    setConfig({});
+  }
+});
+
+test("an entry expiring after 72 h tells its task; closing a task expires its requests but keeps its merge", async () => {
+  const ins = ctx.db.prepare(
+    "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES (?, ?, ?, ?, '{}', 'pending', ?, ?)",
+  );
+  const old = new Date(Date.now() - gate.EXPIRE_MS - 60_000).toISOString();
+  const req = Number(ins.run("request", "credential:slack", "old-1", "T3", old, "{}").lastInsertRowid);
+  const durable = Number(ins.run("grant", "credential:x", "grant:x", null, old, '{"task":"T3"}').lastInsertRowid);
+  inbox.length = 0;
+  assert.equal(gate.expire(), 2);
+  assert.deepEqual(
+    inbox.map(([t, m]) => [t, m.text]),
+    [
+      ["T3", `approval ${req} expired (credential:slack): the owner did not decide within 72 h`],
+      ["T3", `approval ${durable} expired (credential:x): the owner did not decide within 72 h`],
+    ],
+  );
+
+  const now = new Date().toISOString();
+  const open = Number(ins.run("request", "credential:slack", "close-1", "T3", now, "{}").lastInsertRowid);
+  const merge = Number(ins.run("request", "merge", "close-2", "T3", now, "{}").lastInsertRowid);
+  await mirrorModule.start(ctx); // close publishes the task's log
+  await tasks.close("T3", "done");
+  assert.deepEqual([row(open).status, row(open).reason], ["expired", "the task closed"]);
+  assert.equal(row(merge).status, "pending", "a merge outlives its task");
 });

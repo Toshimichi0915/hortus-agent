@@ -18,7 +18,9 @@ if policy human → as F3
 if policy auto:
   grant exists (durable or for this task)? no → pending grant entry (403 {approval}); the owner approves once, durable unless the entry was task-scoped
   yes, and the task is tainted (db.ts › taintOf: an untrusted author's event routed to it, a Planner batch, or a
-    recorded tasks.taint reason)? → pending request entry, no judge call (v7 › rounds 5 and 6)
+    recorded tasks.taint reason)? → no judge call (v7 › rounds 5 and 6):
+      a task grant on the category approved on an entry that showed the taint (payload.untrusted)? → pass (round 7)
+      else → pending request entry; "Approve, and allow <name> for this task" also records that task grant
   yes → judge(summary) → allow: pass (a `request` row with status "allowed", decided_by "judge", prompt_hash) | escalate: pending request entry (403)
 ```
 

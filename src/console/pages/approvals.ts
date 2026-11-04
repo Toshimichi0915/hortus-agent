@@ -1,4 +1,5 @@
 import type { Ctx } from "../../ctx.ts";
+import { grantable } from "../../vault/gate.ts";
 import { button, details, h, layout, more, PAGE, type Page, parse, type Raw, raw, skipOf, time } from "../html.ts";
 import { type TransformSummary, transformForm, transformView } from "./transform-entry.ts";
 
@@ -162,20 +163,26 @@ ${
           { cls: "bad" },
         )}</div>`
       : a.status === "pending"
-        ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${button(
-            "Reject",
-            "approval.decide",
-            { id: a.id, decision: "reject" },
-            { cls: "bad" },
-          )}</div>`
+        ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${
+            // a tainted task's routine request: one click instead of one per request (v7 › Review round 7)
+            grantable(a)
+              ? button(
+                  `Approve, and allow ${grantName(a.category, {})} for this task`,
+                  "approval.decide",
+                  { id: a.id, decision: "approve", grant: true },
+                  { cls: "ok" },
+                )
+              : ""
+          }${button("Reject", "approval.decide", { id: a.id, decision: "reject" }, { cls: "bad" })}</div>`
         : decidedLine(a)
 }</article>`;
 }
 
+/** What the task waits on: its own entries and a durable grant it opened or met (payload.task, payload.waiting). */
+export const PENDING_FOR = `SELECT * FROM approvals WHERE status = 'pending' AND (task_id = ?1 OR (task_id IS NULL AND (
+  json_extract(payload, '$.task') = ?1 OR EXISTS (SELECT 1 FROM json_each(payload, '$.waiting') WHERE value = ?1))))`;
 export const pendingFor = (ctx: Ctx, task: string): ApprovalRow[] =>
-  ctx.db
-    .prepare("SELECT * FROM approvals WHERE status = 'pending' AND task_id = ? ORDER BY id DESC")
-    .all(task) as unknown as ApprovalRow[];
+  ctx.db.prepare(`${PENDING_FOR} ORDER BY id DESC`).all(task) as unknown as ApprovalRow[];
 
 export const approvals: Page = (ctx, { m, q }) => {
   const id = m[1];
