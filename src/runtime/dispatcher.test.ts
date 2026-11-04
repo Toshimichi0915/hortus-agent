@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
@@ -185,6 +186,27 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
     );
     assert.equal(tasks.get(id).error, null);
     assert.deepEqual(told, []);
+
+    // a hostile Worker: a new `failed:` result and a clean out/ended each boot, its inbox never drained. One session
+    // per message, not one per boot until `hours`; a message that lands during a session still gets its next one
+    const FLAP = (pause: number) =>
+      `${OUT}; mkdir -p "$out/outbox"; k=$(($(ls "$out/outbox" | wc -l) + 1)); echo '{"seq":'$k',"type":"result","text":"failed: again","ts":"t"}' > "$out/outbox/$(printf %06d $k).json"; echo 0 > "$out/ended"; sleep ${pause}`;
+    const sessions = () => outbox(id).filter((m) => m.seq > 0).length;
+    fakeVm(paths.home(), `hortus-fail-${process.pid}`, FLAP(0.1));
+    await until(() => tasks.get(id).status === "waiting", 10_000, "the last session's end");
+    let before = sessions();
+    tasks.inboxWrite(id, { from: "owner", trusted: true, text: "again" });
+    await until(() => sessions() > before, 10_000, "the session");
+    await sleep(1500);
+    assert.equal(sessions(), before + 1, "no boot loop");
+    assert.equal(tasks.get(id).status, "waiting");
+    before = sessions();
+    fakeVm(paths.home(), `hortus-fail-${process.pid}`, FLAP(1));
+    tasks.inboxWrite(id, { from: "owner", trusted: true, text: "again" });
+    await until(() => tasks.get(id).status === "running", 10_000, "running");
+    await sleep(300);
+    tasks.inboxWrite(id, { from: "owner", trusted: true, text: "and this" });
+    await until(() => sessions() === before + 2, 10_000, "a second session for the second message");
   } finally {
     await dispatcherModule.stop();
   }

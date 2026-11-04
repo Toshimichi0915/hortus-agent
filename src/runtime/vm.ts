@@ -179,7 +179,9 @@ export function qemuArgs(s: QemuSpec): string[] {
     ...["-smp", String(s.cpus), "-m", `${s.memMb}M`],
     ...["-object", `memory-backend-memfd,id=mem,size=${s.memMb}M,share=on`],
     ...["-kernel", join(s.images, "vmlinuz"), "-initrd", join(s.images, "initramfs.img")],
-    ...["-append", `console=ttyS0 root=/dev/vda rw quiet reboot=t net.ifnames=0 ${ip}`],
+    // panic=1: a panicked kernel reboots, which ends QEMU (-no-reboot); the default spins, holding the task and its
+    // vm.max_concurrent slot until the hours deadline
+    ...["-append", `console=ttyS0 root=/dev/vda rw quiet reboot=t panic=1 net.ifnames=0 ${ip}`],
     ...["-drive", `id=root,file=${opt(join(s.images, "agent.ext4"))},format=raw,if=none`],
     ...["-device", "virtio-blk-device,drive=root", "-snapshot"],
     ...[
@@ -315,6 +317,17 @@ export async function startVm(o: VmOpts): Promise<Child> {
     exited.catch(() => {});
     await attach(qemu);
     let bootError: string | undefined;
+    // a guest without its shares blocks, QEMU alive, until the hours deadline. A virtiofsd also exits when QEMU does, and
+    // either exit can be heard first: a second lets QEMU's own exit (a `cleaning` by then) speak for itself
+    for (const p of procs)
+      if (p !== qemu)
+        p.once("exit", () => {
+          void sleep(1000, undefined, { ref: false }).then(() => {
+            if (cleaning) return;
+            bootError = "virtiofsd exited: the guest lost a share (console.log below)";
+            void cleanup();
+          });
+        });
     const bootMs = o.config.vm.boot_timeout_s * 1000;
     const t0 = Date.now();
     // first contact: the guest's hortus-agent writes out/booted at its start; a kernel that loads and hangs (or a
@@ -354,7 +367,7 @@ export async function startVm(o: VmOpts): Promise<Child> {
         const said = code === 0 ? readCapped(ended, 16)?.text : undefined;
         const exit: Exit =
           code !== 0
-            ? { code, signal, ...(bootError && { error: bootError }) }
+            ? { code, signal, ...(signal && { error: bootError ?? `QEMU killed by ${signal} (console.log below)` }) }
             : said === undefined
               ? { code: 1, signal, error: "guest died: the Worker ended without a result (console.log below)" }
               : { code: Number(said) || 0, signal };

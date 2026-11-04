@@ -351,10 +351,12 @@ async function finish(
           : spent !== undefined
             ? `budget_exceeded: ${spent.slice(0, 2000)}`
             : (gaveUp?.slice(0, 2000) ?? null);
-  const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
-    n: number;
-  };
   const fresh = tasks.get(id);
+  // what reached the inbox during this session: an older message a clean exit left behind is the Worker's choice (it
+  // drains at its start), and re-queueing on it let a hostile one boot again for its whole `hours`, a Planner batch each
+  const { n: inbox } = d
+    .prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ? AND created > ?")
+    .get(id, fresh.started ?? "") as { n: number };
   const current = fresh.status;
   // `runs`: tokens its schedule runs charged to this task (3c), kept on top of its own sessions' count
   const runs = (JSON.parse(fresh.usage ?? "{}") as { runs?: number }).runs ?? 0;
