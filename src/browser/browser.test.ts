@@ -5,6 +5,7 @@
  * and the login flow is driven through its SSE and `login.input` endpoints, as the page's script does.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { join } from "node:path";
@@ -60,7 +61,7 @@ before(async () => {
     "INSERT INTO tasks(id, kind, title, brief, status, scope, origins, created, updated) VALUES (?, 'unattended', ?, 'b', 'running', ?, ?, 't', 't')",
   );
   const scope = JSON.stringify({ credentials: [], repos: [] });
-  for (const id of ["T", "T3", "T4"]) insert.run(id, id, scope, null);
+  for (const id of ["T", "T3", "T4", "T5"]) insert.run(id, id, scope, null);
   insert.run("T2", "T2", scope, JSON.stringify(["fake.test"]));
   ctx.config.origins = "*";
   mkdirSync(join(fixtures, "fakesite"), { recursive: true });
@@ -505,6 +506,34 @@ test("a slow login page: the view takes input from its first frame, while the pa
   await api("login.reject", { id: r.approval });
   await ev.wait((e) => e.closed === "rejected");
   await ev.close();
+});
+
+test("Chromium dying: a second tab hears a start that failed; an open view closes and opens again", {
+  skip: !hasChromium,
+}, async () => {
+  const r = (await call(
+    "browser.login",
+    { url: "http://idle.test/slow", why: "dies" },
+    { role: "worker", task: "T5" },
+  )) as { approval: number };
+  const id = r.approval;
+  const kill = () => execFileSync("pkill", ["-KILL", "-f", `user-data-dir=${join(paths.task("T5"), "login-chrome")}`]);
+  const first = events(id);
+  await first.wait((e) => e.frame !== undefined);
+  const second = events(id); // while /slow still holds the navigation
+  await sleep(100);
+  kill();
+  await first.wait((e) => e.error !== undefined);
+  await second.wait((e) => e.error !== undefined);
+  await first.close();
+  await second.close();
+
+  const again = events(id);
+  await api("login.open", { id }); // the start's end: the navigation returned
+  kill();
+  await again.wait((e) => e.closed === "the browser exited");
+  await again.close();
+  await api("login.reject", { id });
 });
 
 test("idle: the view closes after IDLE with the entry pending; reopening (also after a module restart) streams again", {

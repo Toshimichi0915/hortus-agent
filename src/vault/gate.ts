@@ -316,7 +316,9 @@ function applyDecision(
  * Round 8: a decision (or an expiry), its task grant and its inbox messages commit together; a crash between them
  * left the entry decided and its tasks never told, waiting for good. A SAVEPOINT nests in a caller's transaction
  * (submit.ts). A crash rolls it all back to pending (the owner decides again); an inbox file already renamed stays, a
- * stale "retry" the Worker meets as a 403 pending.
+ * stale "retry" the Worker meets as a 403 pending. At depth 0 the SAVEPOINT is a deferred transaction, unlike every
+ * BEGIN IMMEDIATE here: fine while `f` writes first (both do: a write waits busy_timeout, only a read then a write fails
+ * at once).
  */
 function atomic(f: () => void): void {
   const db = ctx().db;

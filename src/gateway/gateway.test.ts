@@ -251,6 +251,45 @@ test("ack after the insert and before the commit; a mirror that throws is logged
   await H.gw.stop();
 });
 
+test("a mirror that fails: the event goes to the Planner now, Sources says so, the next success clears it", async () => {
+  let s: Stub | undefined;
+  let fail = true;
+  const cfg = Config.parse({ dofs: { sf: { type: "stub" } } });
+  const H = harness(() => cfg, {
+    stub: async () => {
+      s = stub("sf", {
+        mirror: async () => {
+          if (fail) throw new Error("mirror boom");
+          return { changes: [], wake: false };
+        },
+      });
+      return s;
+    },
+  });
+  const consumed = (key: string) =>
+    (
+      db.prepare("SELECT consumed FROM events WHERE dof = 'sf' AND key = ?").get(key) as
+        | { consumed: number }
+        | undefined
+    )?.consumed;
+  H.gw.start();
+  const st = await until(() => s);
+  st.push({ key: "owners" });
+  await until(() => H.log.errors.length === 1);
+  await until(() => H.wakes() === 1, 1000, "a wake for the failed event");
+  assert.equal(consumed("owners"), 0);
+  assert.match(H.gw.list()[0]?.error ?? "", /mirror failed: mirror boom/);
+  st.push({ key: "bots", bot: true });
+  await until(() => H.log.errors.length === 2);
+  assert.equal(H.wakes(), 1, "a bot's event never wakes");
+  assert.equal(consumed("bots"), -1);
+  fail = false;
+  st.push({ key: "next" });
+  await until(() => consumed("next") === -1);
+  await until(() => !H.gw.list()[0]?.error, 1000, "the error cleared");
+  await H.gw.stop();
+});
+
 test("reconcile: a scope that throws keeps its cursor; the other scopes proceed", async () => {
   const cfg = Config.parse({ dofs: { rc: { type: "stub" } } });
   db.prepare(

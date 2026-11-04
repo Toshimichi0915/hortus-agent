@@ -35,7 +35,7 @@ RPC `browser.login({ url, why })` (role worker): if `captured` has cookies for t
 
 - When the owner opens the entry, `hortusd` launches its own Chromium (`launch` above) in a cgroup `tasks/<task>-login` with a session address and nft rules like a host session's, `links.register(address, "login", task)`, user data dir `tasks/<id>/out/login-chrome` (deleted after). The page streams `Page.startScreencast` (JPEG, quality 60, every frame) over SSE as base64 to a `<canvas>`; mouse and key events from the canvas go back as `POST /api/login.input` → `Input.dispatchMouseEvent` / `dispatchKeyEvent` (scaled to the page size).
 - The view's traffic goes through the pipeline with role `login`: captures land in `captured` as above; the cookie placeholders are what the view's browser holds too.
-- "Done" → closes the view, approves the entry, grants `origin:<domain>` to the task, sends `cookies`; "Reject" → closes, rejects, inbox decision; 15 min idle → closed, entry stays pending (reopen restarts Chromium, v6 Recovery).
+- "Done" → closes the view, approves the entry, grants `origin:<domain>` to the task, sends `cookies`; "Reject" → closes, rejects, inbox decision; 15 min idle → closed, entry stays pending (reopen restarts Chromium, v6 Recovery). Chromium exiting closes the view the same way (`closed: the browser exited`, round 10); a second tab opened during a start shares that start, and its failure.
 - Form logins: a plain `<form>` with a password field: the Worker types `hortus-secret-<name>` and a site manifest with `form:password` swaps it (03 locations). Documented in the prompt.
 
 ### Project `origins`

@@ -128,10 +128,13 @@ export function createGateway(deps: GatewayDeps): Gateway {
             log.info(`sync(${name}): ${event.summary} +${m.changes.length}`);
             const wake = m.wake && !event.bot;
             release.run(wake ? 0 : -1, name, event.key); // reactions, deletes, joins: mirrored, not Planner input
+            r.error = undefined;
             if (wake) deps.wake();
           } catch (e) {
             log.error(`${name}: mirror failed`, e, { key: event.key });
-            release.run(0, name, event.key);
+            r.error = `mirror failed: ${message(e)}`; // the connector still says connected: Sources shows this
+            // it may be the owner's message: nothing else wakes the Planner for it (a bot's stays -1, and asleep)
+            if (release.run(0, name, event.key).changes) deps.wake();
           }
         }
       } catch (e) {
@@ -256,7 +259,8 @@ export function createGateway(deps: GatewayDeps): Gateway {
           const scopes = rows
             .filter((x) => x.dof === dof)
             .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
-          return { dof, type: cfg.type, ...s, scopes };
+          const error = s.error ?? r?.error;
+          return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
         });
     },
     async resync(dof, scope) {

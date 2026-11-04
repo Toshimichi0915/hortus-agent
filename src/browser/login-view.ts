@@ -179,6 +179,8 @@ async function start(id: number): Promise<View> {
     // open before the first frame: the owner can click on what they see while a slow page is still navigating
     views.set(id, v);
     touch(v);
+    // Chromium gone (crashed, OOM-killed): else a dead view stayed open, and each click kept it so
+    void cdp.closed.then(() => (views.get(id) === v ? close(id, "the browser exited") : undefined));
     await cdp.send("Page.enable", {}, session);
     await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1 }, session);
     await cdp.send("Page.navigate", { url: e.url }, session);
@@ -195,13 +197,13 @@ async function start(id: number): Promise<View> {
 
 /** The running view, starting it when there is none (two concurrent opens share one start). */
 export async function open(id: number): Promise<View> {
+  // starting first: a view is registered before its screencast and may yet fail, and a second tab must hear that
+  let p = opening.get(id);
+  if (p) return p;
   const v = views.get(id);
   if (v) return v;
-  let p = opening.get(id);
-  if (!p) {
-    p = start(id).finally(() => opening.delete(id));
-    opening.set(id, p);
-  }
+  p = start(id).finally(() => opening.delete(id));
+  opening.set(id, p);
   return p;
 }
 

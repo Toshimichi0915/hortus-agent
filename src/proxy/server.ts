@@ -65,6 +65,12 @@ const inflight = new Map<Client, number>();
 export const BODY_BUDGET = 16 * 1024 * 1024; // 16 × REQUEST_BUFFER, a literal: server.ts and pipeline.ts may meet in a cycle
 const bodies = new Map<Client, number>();
 
+/** No bytes either way for this long ends a client's connection: nothing else does once its headers are in. A VM killed
+ * mid-upload leaves its socket here for good (no FIN, the shared address is never unlistened), and a Worker that stops
+ * sending holds its slot until the session ends. An upstream that silent is cut as long anyway (pipeline.ts › IDLE_MS,
+ * a literal for the same cycle). An upgraded socket is exempt: Node drops the listener. Tests shorten it. */
+export const CLIENT_IDLE = { ms: 10 * 60_000 };
+
 const charge = (h: http.IncomingHttpHeaders, upgrade: boolean): number => {
   if (upgrade || h["transfer-encoding"] !== undefined) return REQUEST_BUFFER;
   const n = Number(h["content-length"] ?? 0);
@@ -155,8 +161,9 @@ function serve(tls: boolean, proxyAddress: string) {
     ? https.createServer({ SNICallback: sniCallback, ALPNProtocols: ["http/1.1"] }, onRequest)
     : http.createServer(onRequest);
   // Node cuts a request not fully received in 5 minutes: a 50 MB pack to an upstream under 1.4 Mbit/s, or any long
-  // upload. What a held request costs is bounded by MAX_INFLIGHT and BODY_BUDGET, and it ends with its session
+  // upload. What a held request costs is bounded by MAX_INFLIGHT and BODY_BUDGET; a stalled one ends at `timeout`
   server.requestTimeout = 0;
+  server.timeout = CLIENT_IDLE.ms;
   server.on("upgrade", onUpgrade);
   server.on("clientError", (_e, s) => s.destroy());
   server.on("tlsClientError", () => {});

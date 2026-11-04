@@ -5,11 +5,11 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
 import { gzipSync } from "node:zlib";
@@ -30,6 +30,7 @@ import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { read as readVault, write as writeVault } from "../vault/vault.ts";
 import { coreFetch, links, listen, proxyModule, unlisten } from "./index.ts";
 import { egress, hashTemplate } from "./pipeline.ts";
+import { CLIENT_IDLE } from "./server.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-proxy-");
 const run = promisify(execFile);
@@ -425,6 +426,49 @@ test("uploads: no 5-minute cap on receiving a request (a pack to a slow upstream
   for (const m of servers) {
     assert.equal((m.mock.calls[0]?.result as http.Server | undefined)?.requestTimeout, 0);
     m.mock.restore();
+  }
+});
+
+test("a client that stops sending is cut after CLIENT_IDLE; a slow upload is not, nor an idle WebSocket", async () => {
+  const was = CLIENT_IDLE.ms;
+  CLIENT_IDLE.ms = 300;
+  links.register("127.0.0.8", "worker", "T", "session");
+  const p = await listen("127.0.0.8", { https: 0, http: 0, dns: 0 });
+  CLIENT_IDLE.ms = was;
+  const post = (n: number) =>
+    `POST /rpc/nope HTTP/1.1\r\nhost: hortusd.internal\r\ncontent-length: ${n}\r\nconnection: close\r\n\r\n`;
+  const open = (head: string) => {
+    const s = connect(p.http, "127.0.0.8", () => s.write(head));
+    s.on("error", () => {});
+    return s;
+  };
+  try {
+    const stalled = open(`${post(100)}ab`);
+    const closed = once(stalled, "close");
+    await Promise.race([closed, sleep(3000).then(() => assert.fail("a stalled body held its socket"))]);
+
+    const slow = open(post(8));
+    let got = "";
+    slow.on("data", (c) => {
+      got += c;
+    });
+    for (let i = 0; i < 8; i++) {
+      await sleep(100); // 800 ms in all, past the idle bound
+      slow.write("x");
+    }
+    await once(slow, "close");
+    assert.match(got, /^HTTP\/1\.1 400/); // read to its end: the RPC found it is not JSON
+
+    const ws = new WebSocket(`ws://127.0.0.8:${p.http}/socket`, { headers: { host: "ws.test" } });
+    await once(ws, "open");
+    await sleep(800);
+    const echo = once(ws, "message");
+    ws.send("still here");
+    assert.equal(String((await echo)[0]), "still here");
+    ws.terminate();
+  } finally {
+    await unlisten("127.0.0.8");
+    links.release("127.0.0.8");
   }
 });
 
