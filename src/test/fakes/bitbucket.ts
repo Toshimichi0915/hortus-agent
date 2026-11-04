@@ -262,6 +262,8 @@ export class FakeBitbucket {
   ) {
     const r = this.get(full);
     const sha = await this.sha(full, o.head).catch(() => "0".repeat(40));
+    const base = o.base ?? "main";
+    const diff = o.diff ?? (await this.git.diff(full, base, o.head).catch(() => ""));
     const now = this.ts();
     const p: Pull = {
       id: r.prs.size + 1,
@@ -270,9 +272,9 @@ export class FakeBitbucket {
       state: "OPEN",
       author: this.user(o.user),
       head: o.head,
-      base: o.base ?? "main",
+      base,
       sha,
-      diff: o.diff ?? "",
+      diff,
       approvals: new Map(),
       created_on: now,
       updated_on: now,
@@ -289,6 +291,13 @@ export class FakeBitbucket {
     p.approvals.set(user, u);
     const extra = { pullrequest: this.prJson(r, p), approval: { date: this.ts(), user: u } };
     return this.send("pullrequest:approved", r, user, extra, d);
+  }
+
+  requestChanges(full: string, n: number, user: string, d?: DeliverOpts) {
+    const r = this.get(full);
+    const u = this.user(user);
+    const extra = { pullrequest: this.prJson(r, this.pr(full, n)), changes_request: { date: this.ts(), user: u } };
+    return this.send("pullrequest:changes_request_created", r, user, extra, d);
   }
 
   mergePR(full: string, n: number, by: string, d?: DeliverOpts) {
@@ -403,16 +412,13 @@ export class FakeBitbucket {
     if (rest === "/pullrequests" && M === "POST") {
       const src = body.source as { branch?: { name?: string } } | undefined;
       const dst = body.destination as { branch?: { name?: string } } | undefined;
-      const pr = await this.openPR(
-        full,
-        {
-          user: this.self,
-          title: String(body.title ?? ""),
-          head: String(src?.branch?.name),
-          base: dst?.branch?.name ?? "main",
-        },
-        { drop: true },
-      );
+      // as Bitbucket: the API's own writes fire the hooks too
+      const pr = await this.openPR(full, {
+        user: this.self,
+        title: String(body.title ?? ""),
+        head: String(src?.branch?.name),
+        base: dst?.branch?.name ?? "main",
+      });
       return json(201, this.prJson(r, this.pr(full, pr.n)));
     }
     x = rest.match(/^\/(issues|pullrequests)\/(\d+)(\/comments|\/diff)?$/);
@@ -429,11 +435,9 @@ export class FakeBitbucket {
         return void res.end();
       }
       if (x[3] === "/comments" && M === "POST") {
-        const c = this.addComment(full, n, pr, {
-          user: this.self,
-          body: String((body.content as { raw?: string })?.raw ?? ""),
-        });
-        return json(201, this.commentJson(c));
+        const o = { user: this.self, body: String((body.content as { raw?: string })?.raw ?? "") };
+        const { id } = await (pr ? this.prComment(full, n, o) : this.comment(full, n, o));
+        return json(201, this.commentJson(r.comments.find((c) => c.id === id) as Comment));
       }
       if (x[3] === "/comments")
         return page(r.comments.filter((c) => c.n === n && c.pr === pr).map((c) => this.commentJson(c)));

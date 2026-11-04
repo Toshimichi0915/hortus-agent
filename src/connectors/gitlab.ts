@@ -203,7 +203,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       b.user ?? (b.user_username ? { id: b.user_id ?? -1, username: b.user_username } : undefined);
     const own = u ? (await me())?.id === u.id : false;
     const bot = !pipeline && !!u && (own || u.bot === true || BOT_NAME.test(u.username));
-    const text = oneLine(a?.note ?? a?.title ?? b.ref);
+    const text = oneLine(a?.note ?? a?.title ?? a?.status ?? b.ref);
     return {
       dof: name,
       key,
