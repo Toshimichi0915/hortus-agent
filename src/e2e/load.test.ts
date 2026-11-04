@@ -101,7 +101,11 @@ after(async () => {
 });
 
 /** systemd-run --scope execs the command: the scope's pid is hortusd's */
-const fds = () => readdirSync(`/proc/${daemon?.pid}/fd`).length;
+/** hortusd's fds, less this test's own keep-alive connections to the console: 22 at rest, 36 after a burst, 5 s to idle */
+const fds = () => {
+  const ss = spawnSync("ss", ["-tnH", "state", "established", "sport", "=", `:${port}`], { encoding: "utf8" });
+  return readdirSync(`/proc/${daemon?.pid}/fd`).length - ss.stdout.trim().split("\n").filter(Boolean).length;
+};
 const rssMb = () => Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${daemon?.pid}/status`, "utf8"))?.[1]) / 1024;
 const cgroups = () => {
   const line =
@@ -157,7 +161,7 @@ test(`${ROUNDS} rounds of ${N} simultaneous chats: own replies, responsive conso
     await Promise.all(ids.map((id) => api("task.close", { id, outcome: "done" })));
     await until(() => cgroups() === 0, 10_000, "no task cgroups");
     const secs = (Date.now() - t0) / 1000;
-    // the low of a second: a sample on the turn sessions end counts pipes on their way out (under stress 110, 118)
+    // the low of a second: a sample on the turn sessions end counts pipes on their way out
     let open = fds();
     for (let i = 0; i < 10; i++, await sleep(100)) open = Math.min(open, fds());
     const s = { secs, fds: open, rss: rssMb(), p50: pct(lat, 0.5) ?? 0, p95: pct(lat, 0.95) ?? 0 };
