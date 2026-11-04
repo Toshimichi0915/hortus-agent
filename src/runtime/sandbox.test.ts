@@ -253,8 +253,9 @@ function suite(): void {
       denied(await shimSh(prof(), `cat ${homedir()}/.hortus/secrets.json > /dev/null`));
       denied(await shimSh(prof(), `cat ${H}/vault.json`));
       denied(await shimSh(prof(), `cat ${secret}/f`));
-      // opens the shim for writing without changing it
-      denied(await shimSh(prof(), `: >> ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`));
+      // opens the shim for writing without changing it (a shim running elsewhere makes the kernel say ETXTBSY first)
+      const w = await shimSh(prof(), `: >> ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`);
+      assert.match(w.err, /Permission denied|Text file busy/, w.err);
       ok(await shimSh(prof(), `test -r ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`));
     });
   });

@@ -16,11 +16,15 @@ export interface Row {
 
 const str = (v: unknown): string => (v === undefined || v === null ? "" : String(v));
 
+/** Characters of a body that are indexed: trigram-indexing a Worker's 255 MB session.md held hortusd ~4 s. */
+// ponytail: a hit past the first 4M characters of one file is not found; split rows per chunk if logs need it
+export const INDEXED = 4 * 1024 * 1024;
+
 export function upsert(db: DatabaseSync, r: Row): void {
   remove(db, r.dof, r.path);
   const { lastInsertRowid } = db
     .prepare("INSERT INTO search(dof, path, author, ts, title, body) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(r.dof, r.path, r.author, r.ts, r.title, r.body);
+    .run(r.dof, r.path, r.author, r.ts, r.title.slice(0, 1024), r.body.slice(0, INDEXED));
   db.prepare("INSERT INTO search_meta(dof, path, rowid) VALUES (?, ?, ?)").run(r.dof, r.path, lastInsertRowid);
 }
 
@@ -83,12 +87,29 @@ export function search(db: DatabaseSync, query: SearchQuery): SearchHit[] {
   if (query.since !== undefined) and("ts >= ?", query.since);
   // inclusive at the given precision: --until 2026-10-27 keeps the whole day
   if (query.until !== undefined) and("substr(ts, 1, ?) <= ?", query.until.length, query.until);
-  const snippet = match ? "snippet(search, 5, '[', ']', '…', 64)" : "substr(body, 1, 120)";
+  // FTS5's snippet() is quadratic in a row's hits: "the" over 300 one-MB session logs held the daemon 188 s. The
+  // window around the first hit is cut here instead, from the body's first 64K characters (ponytail: a first hit
+  // past them shows the body's head).
   const order = match ? "bm25(search), ts DESC" : "ts DESC";
   const rows = db
     .prepare(
-      `SELECT dof, path, author, ts, title, ${snippet} AS snippet FROM search WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`,
+      `SELECT dof, path, author, ts, title, substr(body, 1, ${match ? 65536 : 120}) AS snippet FROM search WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`,
     )
     .all(...args, limit) as unknown as SearchHit[];
-  return rows.map((r) => ({ ...r, title: oneLine(r.title), snippet: oneLine(r.snippet) }));
+  return rows.map((r) => ({
+    ...r,
+    title: oneLine(r.title),
+    snippet: oneLine(match ? around(r.snippet, query.q) : r.snippet),
+  }));
+}
+
+/** `…before[hit]after…` around the first case-insensitive hit of `q`, else the head. */
+function around(body: string, q: string): string {
+  const lower = body.toLowerCase();
+  const i = lower.indexOf(q.toLowerCase());
+  // a lowercasing that changes lengths (İ) would misplace the cut: the head instead
+  if (i < 0 || lower.length !== body.length) return body.slice(0, 120);
+  const a = Math.max(0, i - 60);
+  const b = i + q.length;
+  return `${a ? "…" : ""}${body.slice(a, i)}[${body.slice(i, b)}]${body.slice(b, b + 60)}${b + 60 < body.length ? "…" : ""}`;
 }

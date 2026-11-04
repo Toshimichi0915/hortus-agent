@@ -42,6 +42,7 @@ CapabilityBoundingSet=${caps}
 SupplementaryGroups=kvm
 Delegate=yes
 KillMode=mixed
+LimitNOFILE=65536
 Restart=on-failure
 # a bad hortusd.json, a corrupt or locked DB: exit 78, fix and start again (no restart loop)
 RestartPreventExitStatus=78

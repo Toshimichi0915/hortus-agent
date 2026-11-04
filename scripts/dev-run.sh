@@ -15,6 +15,6 @@ for e in "$@"; do envs="$envs -E $e"; done
 sudo systemd-run --unit "hortusd-$name" --uid "$(id -u)" --gid "$(id -g)" \
   -p "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE" \
   -p "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE" \
-  -p SupplementaryGroups=kvm -p Delegate=yes -p KillMode=mixed \
+  -p SupplementaryGroups=kvm -p Delegate=yes -p KillMode=mixed -p LimitNOFILE=65536 \
   $envs "$node" "$root/dist/bin/hortusd.js"
 echo "started hortusd-$name (HORTUS_HOME=$home); stop: sudo systemctl stop hortusd-$name"

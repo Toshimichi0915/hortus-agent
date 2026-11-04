@@ -35,6 +35,7 @@ test("install writes the unit with sudo tee, refuses a different one without --f
     "SupplementaryGroups=kvm",
     "Delegate=yes",
     "KillMode=mixed",
+    "LimitNOFILE=65536",
     "Restart=on-failure",
     "RestartPreventExitStatus=78",
   ]) {

@@ -522,6 +522,11 @@ test("tests are capped, the first failure ends the run, and a huge diff falls ba
   const loop = "export function request() { for (;;) {} }";
   await invalid(submit("spin2", files("spin2", { code: loop, tests: many(MAX_TESTS) })), /tests failed/);
   assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  // every call just under the deadline, every test passing: the total stops it (was 32 × 90 ms of hortusd's thread)
+  const slow = "export function request(r) { const t = Date.now(); while (Date.now() - t < 90) {} return r; }";
+  const t2 = Date.now();
+  await invalid(submit("spin3", files("spin3", { code: slow, tests: many(MAX_TESTS) })), /over 500 ms in total/);
+  assert.ok(Date.now() - t2 < 1000, `${Date.now() - t2} ms`);
   const big = (k: string) => Array.from({ length: 5000 }, (_, i) => `${k}${i}`).join("\n");
   const t1 = Date.now();
   assert.match(diff(big("a"), big("b")), /^\(too large for a full diff; first difference at line 1\)\n-a0\n\+b0\n$/);

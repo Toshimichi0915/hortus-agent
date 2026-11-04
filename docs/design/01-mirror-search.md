@@ -37,7 +37,7 @@ The `logs` DOF has no repo: `writeLog(taskId, files)` writes with the same temp-
 
 - `q.length >= 3` → `search MATCH ?` with the query quoted as a trigram phrase (`"` escaped), ranked by `bm25(search)`, then `ts DESC`. Shorter → `title LIKE ? OR body LIKE ?` with `%q%`.
 - Filters are `AND`ed; `since`/`until` compare the ISO `ts` strings.
-- Returns `{ dof, path, author, ts, title, snippet }`, `snippet` from `snippet(search, 5, '[', ']', '…', 12)` for MATCH, else the first 120 chars.
+- Returns `{ dof, path, author, ts, title, snippet }`, `snippet` for MATCH cut in JS around the first case-insensitive hit in the body's first 64K characters (`…before[hit]after…`, 60 chars a side; FTS5's `snippet()` is quadratic in a row's hits and held hortusd 188 s over 300 one-MB logs), else the first 120 chars. Only a body's first 4M characters (`fts.INDEXED`) and a title's first 1,024 are indexed; a rendered session.md stops at 16 MB (`MAX_RENDER`).
 
 ### `src/mirror/logs.ts`
 
