@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { newQuickJSWASMModule, type QuickJSWASMModule, shouldInterruptAfterDeadline } from "quickjs-emscripten";
+import { newQuickJSWASMModule, type QuickJSWASMModule } from "quickjs-emscripten";
 import { z } from "zod";
 import type { Manifest, Req, Res, ResponseResult, Template } from "../types.ts";
 import { ctx, read } from "./vault.ts";
@@ -125,7 +125,15 @@ export function invoke(
   if (!t || !QuickJS) throw new TransformError(`no transform ${name}`);
   const rt = QuickJS.newRuntime();
   rt.setMemoryLimit(MEMORY);
-  rt.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + DEADLINE_MS));
+  // the deadline is the thread's work, not the clock: with the CPUs full (a Worker's build) a descheduled call passed
+  // 100 ms of wall time doing nothing and answered 502. Both must pass: process CPU alone counts V8's helper threads
+  const end = Date.now() + DEADLINE_MS;
+  const cpu0 = process.cpuUsage();
+  rt.setInterruptHandler(() => {
+    if (Date.now() <= end) return false;
+    const c = process.cpuUsage(cpu0);
+    return c.user + c.system > DEADLINE_MS * 1000;
+  });
   const vm = rt.newContext();
   const unwrap = (r: ReturnType<typeof vm.evalCode>) => {
     if (r.error) {

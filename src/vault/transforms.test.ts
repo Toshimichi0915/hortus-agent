@@ -59,3 +59,15 @@ test("a streamed request keeps body null whatever the transform returns", () => 
     assert.equal(t.body, null);
   });
 });
+
+test("the transform deadline is CPU time: a call descheduled past it finishes, a spin does not", (t) => {
+  const code = "export function f() { let n = 0; for (let i = 0; i < 300000; i++) n += i; return n; }";
+  const real = Date.now;
+  let calls = 0;
+  // a thread off the CPU: the clock leaps past the deadline right after the call starts
+  t.mock.method(Date, "now", () => real() + (calls++ ? 10_000 : 0));
+  assert.equal(transforms.invoke("x", "f", [], { code }), 44999850000);
+  t.mock.restoreAll();
+  const spin = { code: "export function f() { for (;;) {} }" };
+  assert.throws(() => transforms.invoke("x", "f", [], spin), /interrupted/);
+});

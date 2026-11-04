@@ -80,6 +80,13 @@ const ctx: Ctx = { config: Config.parse(base), db: openDb(paths.db()), paths, lo
 const db = ctx.db;
 const log = memLog();
 let wakes = 0;
+/** The count once the last test's deliveries have all landed (under load a merge's later hooks trail its first wake). */
+async function quiet(): Promise<number> {
+  for (let n = -1; ; await sleep(300)) {
+    if (n === wakes) return n;
+    n = wakes;
+  }
+}
 let gw: Gateway;
 let wh: Webhooks;
 let ports: { https: number; http: number; dns: number };
@@ -615,8 +622,7 @@ for (const h of H) {
     assert.equal(rv.frontmatter.review, "approved");
     await until(() => wakes > w, 3000, "review wakes");
 
-    await sleep(100);
-    w = wakes;
+    w = await quiet();
     await h.ci(sha, "failure");
     await until(() => fm(dof, `${D}/${t}/${t}.md`)?.frontmatter.checks === "failure", 3000, "checks: failure");
     await sleep(100);
@@ -663,8 +669,7 @@ for (const h of H) {
     assert.ok(!top().checks, `no CI on the new head yet: ${top().checks}`);
 
     // a failure for the superseded commit: no checks, no wake, whichever way the forge attaches it
-    await sleep(100);
-    let w = wakes;
+    let w = await quiet();
     await h.result(A, "failure");
     assert.equal((await settled(` on ${A.slice(0, 7)}`)).consumed, -1, "not Planner input");
     await sleep(50);
@@ -750,8 +755,7 @@ for (const h of H) {
   test(`${dof}: push → the repo mirror fetches the commit, no wake`, async () => {
     const b = await h.sha("main");
     const a = await h.commit("main", "b.txt", "b\n");
-    await sleep(100);
-    const w = wakes;
+    const w = await quiet();
     assert.equal((await h.push("refs/heads/main", b, a, "toshi")).status, 200);
     const dir = repoDir(dof, P);
     assert.ok(dir.endsWith(`repos/${dof}/${D}.git`));
@@ -1062,8 +1066,7 @@ test("gitlab: a merged-results pipeline (its own merge commit) is the head's: ch
   const top = () => fm("gitlab", `g__sub__p/!${pr.n}/!${pr.n}.md`)?.frontmatter ?? {};
   await until(() => top().head_sha === sha, 3000, "the MR");
   db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`gitlab:g/sub/p:!${pr.n}`);
-  await sleep(100);
-  const w = wakes;
+  const w = await quiet();
   await gl.pipeline("g/sub/p", sha, "failed", { result: "f".repeat(40) });
   await until(() => top().checks === "failure", 3000, "checks: failure");
   await until(() => wakes === w + 1, 3000, "the wake");
