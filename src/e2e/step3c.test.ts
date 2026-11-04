@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -115,8 +115,7 @@ before(async () => {
 after(async () => {
   if (!hasScope) return;
   if (daemon && daemon.exitCode === null) {
-    daemon.kill("SIGTERM");
-    await new Promise((r) => daemon?.once("exit", r));
+    await stopped(daemon);
   }
   spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
   rmSync(home, { recursive: true, force: true });

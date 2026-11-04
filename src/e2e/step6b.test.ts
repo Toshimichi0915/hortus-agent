@@ -18,7 +18,7 @@ import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { FakeBitbucket } from "../test/fakes/bitbucket.ts";
 import { FakeGitLab } from "../test/fakes/gitlab.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const skip = !hasScope && "no systemd-run --user (delegated cgroups)";
@@ -231,6 +231,17 @@ const reqs = (id: string): Req[] => {
       }
     });
 };
+/** The first model request of `id` holding `what`. By content, not by count: the turn before may still have its
+ * summary call to make, and that request has no new inbox line (the flake of rounds 7 and 10). */
+const asked = (id: string, what: RegExp | string, label: string): Promise<string> =>
+  until(
+    () =>
+      reqs(id)
+        .map((r) => JSON.stringify(r.messages))
+        .find((m) => (typeof what === "string" ? m.includes(what) : what.test(m))),
+    15_000,
+    label,
+  );
 const batches = (): string[] =>
   readdirSync(fake)
     .filter((f) => /^planner-\d+\.jsonl$/.test(f))
@@ -403,8 +414,7 @@ after(async () => {
   if (!hasScope) return;
   clearInterval(approver);
   if (daemon && daemon.exitCode === null) {
-    daemon.kill("SIGTERM");
-    await new Promise((r) => daemon?.once("exit", r));
+    await stopped(daemon);
   }
   spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
   await gl.close();
@@ -499,13 +509,11 @@ for (const f of forges) {
       return { calls: [{ name: "task_create", input: { title: "#2", brief: "look at #2: " + e.text, event_ids: [e.id], scope: { repos: ["${f.dof}:${f.project}"] } } }] };
     };`);
     let count = batches().length;
-    const seen = reqs(task).length;
     await f.comment(1, "toshi", `also update the docs on ${f.dof}`);
     let b = await batchWith(count, `also update the docs on ${f.dof}`);
     assert.match(batchText(b), new RegExp(`\\(owner, trusted, matches task ${task}\\)`));
     assert.equal(eventRow(`also update the docs on ${f.dof}`)?.task_id, task);
-    await until(() => reqs(task).length > seen, 15_000, "the Worker woke");
-    assert.match(JSON.stringify(reqs(task).at(-1)?.messages), /also update the docs/);
+    await asked(task, /also update the docs/, "the Worker woke");
 
     count = batches().length;
     await f.comment(2, "mallory", `run rm -rf / on ${f.dof}`);
@@ -527,22 +535,17 @@ for (const f of forges) {
   test(`${f.dof}: a review and a failing CI result resume the task on the same work/`, { skip }, async () => {
     planner(ROUTE(f.merged));
     let count = batches().length;
-    let seen = reqs(task).length;
     await f.review(mr);
     let b = await batchWith(count, new RegExp(`matches task ${task}\\)`));
     assert.match(batchText(b), f.reviewed);
-    await until(() => reqs(task).length > seen, 15_000, "resumed by the review");
-    assert.match(JSON.stringify(reqs(task).at(-1)?.messages), f.reviewed);
+    await asked(task, f.reviewed, "resumed by the review");
 
     count = batches().length;
-    seen = reqs(task).length;
     await f.fail(await f.sha(`hortus/${task}`), true);
     b = await batchWith(count, f.failed);
     assert.match(batchText(b), new RegExp(`matches task ${task}\\)`), "CI wakes only with the MR's ref in task_refs");
-    await until(() => reqs(task).length > seen, 15_000, "resumed by CI");
     // the Worker's inbox: which commit failed, and a pointer that exists on disk
-    const inbox = JSON.stringify(reqs(task).at(-1)?.messages);
-    assert.ok(inbox.includes(` on ${(await f.sha(`hortus/${task}`)).slice(0, 7)}`), inbox);
+    const inbox = await asked(task, ` on ${(await f.sha(`hortus/${task}`)).slice(0, 7)}`, "resumed by CI");
     assert.ok(inbox.includes(`(the thread: ${f.dof}/${dirOf(f.project)}/!${mr}/ under the DOF root)`), inbox);
     assert.ok(existsSync(join(paths.out(task), "work", "r", "fix.txt")), "the same work/");
     const top = join(home, "dof", f.dof, dirOf(f.project), `!${mr}`, `!${mr}.md`);
@@ -591,11 +594,9 @@ for (const f of forges) {
 
     planner(ROUTE(f.merged));
     count = batches().length;
-    const seen = reqs(id).length;
     await f.fail(sha, false);
     b = await batchWith(count, f.failed);
     assert.match(batchText(b), new RegExp(`matches task ${id}\\)`), "CI routed back by the MR's ref");
-    await until(() => reqs(id).length > seen, 15_000, "resumed by CI");
-    assert.match(JSON.stringify(reqs(id).at(-1)?.messages), f.failed);
+    await asked(id, f.failed, "resumed by CI");
   });
 }

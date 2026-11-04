@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { directFetch } from "../test/direct.ts";
 import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
@@ -410,4 +411,23 @@ test("a resume host that stays down: back to the cached URL with a new session",
   );
   ac2.abort();
   await run;
+});
+
+test("a stop during GET /gateway/bot ends the connector: no connection opens after it", async () => {
+  const ac = new AbortController();
+  const direct = directFetch(["discord"]);
+  const fetch: ConnectorDeps["fetch"] = async (u, i) => {
+    const r = await direct(u, i);
+    if (String(u).includes("/gateway/bot")) ac.abort(); // the abort lands in that await
+    return r;
+  };
+  const c = await create({ ...deps(), fetch });
+  const n = fake.identifies.length;
+  const run = (async () => {
+    for await (const _ of c.events(ac.signal));
+    return "ended";
+  })();
+  const r = await Promise.race([run, sleep(3000).then(() => "still connected")]);
+  assert.equal(r, "ended");
+  assert.equal(fake.identifies.length, n);
 });

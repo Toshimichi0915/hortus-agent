@@ -89,6 +89,19 @@ that uses it and, optionally, the hosts it may go to. Values are write-only. The
 The Sources page says, per source, what is connected, what is missing, and (for forges) the webhook URL to give the
 service and how to tunnel it to the local listener.
 
+### What each service needs on its side
+
+Read from the connectors and the services' documentation, not yet tried on a real account:
+
+| Service | Set up |
+| --- | --- |
+| Slack | A Socket Mode app. App token: `connections:write`. Bot scopes: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, `im:write`, `mpim:history`, `mpim:read`, `users:read`, `chat:write`, `reactions:read`, `files:read`. Bot events: `message.channels`, `message.groups`, `message.im`, `message.mpim`, `reaction_added`, `reaction_removed`, `member_joined_channel`, `member_left_channel`, `channel_rename`, `channel_created`, `channel_archive`, `channel_unarchive`, `group_rename`, `group_archive`, `group_unarchive`. Invite the bot to each channel to mirror. |
+| Discord | A bot with the **Server Members** and **Message Content** privileged intents on (without them the gateway closes with 4014 and Sources says so), invited with View Channels, Read Message History and Send Messages (Send in Threads for threads). |
+| Telegram | A bot from `@BotFather`, with `/setprivacy` set to Disable, or in groups it only hears commands and replies to it. No webhook on it: `getUpdates` and a webhook exclude each other. |
+| GitHub | A GitHub App installed on the repos, permissions contents, issues, pull requests write; checks, actions read; administration write only if tasks create repositories (`src/vault/ops.ts › PERMISSIONS`). Events Issues, Issue comment, Pull request, Pull request review, Pull request review comment, Check suite, Push, Repository. |
+| GitLab | A token with `api` (Worker writes go through it), a project or group webhook with the Sources page's URL and the `gitlab-webhook` secret as its token; events: issues, notes, merge requests, pipelines, push. Not a signing-token-only hook (GitLab 19). |
+| Bitbucket | A workspace access token when `repos` holds globs or `trust: members` is wanted: a repository token cannot hold the `account` scope, so it can list nothing and sees nobody as a member (exact `repos` names and `trust: owner` work with it). A webhook with the secret; events: issue, pull request, push, commit status. |
+
 ## Development
 
 ```sh

@@ -20,7 +20,7 @@ import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 import { SoftAuthenticator } from "../test/webauthn.ts";
 import { caCert } from "../vault/ca.ts";
 
@@ -259,8 +259,7 @@ before(async () => {
 after(async () => {
   if (skip) return;
   if (daemon && daemon.exitCode === null) {
-    daemon.kill("SIGTERM");
-    await new Promise((r) => daemon?.once("exit", r));
+    await stopped(daemon);
   }
   spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
   await slack.close();

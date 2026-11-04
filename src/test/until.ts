@@ -1,4 +1,5 @@
 /** Test helpers. */
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { constants, tmpdir } from "node:os";
@@ -18,6 +19,21 @@ export async function until<T>(pred: () => T | Promise<T>, ms = 3000, what = "co
 }
 
 /** A Log that keeps lines instead of printing them. */
+/** SIGTERM and the exit, bounded: a daemon that ignores it fails its test, it does not hold the run. */
+export async function stopped(d: ChildProcess, ms = 30_000): Promise<void> {
+  if (d.exitCode !== null || d.signalCode !== null) return;
+  const exit = new Promise((r) => d.once("exit", r));
+  d.kill("SIGTERM");
+  let late = false;
+  const timer = setTimeout(() => {
+    late = true;
+    d.kill("SIGKILL");
+  }, ms);
+  await exit;
+  clearTimeout(timer);
+  if (late) throw new Error(`hortusd ignored SIGTERM for ${ms / 1000} s`);
+}
+
 export function memLog(): Log & { infos: string[]; errors: string[] } {
   const infos: string[] = [];
   const errors: string[] = [];

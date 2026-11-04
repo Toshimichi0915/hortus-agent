@@ -17,7 +17,7 @@ import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const NET = process.env.HORTUS_TEST_NET === "1";
 const UNIT = "hortusd-step2test";
@@ -164,8 +164,7 @@ before(async () => {
 after(async () => {
   if (NET) cleanupNet();
   else if (daemon) {
-    daemon.kill("SIGTERM");
-    await new Promise((r) => daemon?.once("exit", r));
+    await stopped(daemon);
   }
   await fake.close();
   rmSync(home, { recursive: true, force: true });

@@ -14,7 +14,7 @@ import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { FakeGitHub } from "../test/fakes/github.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -139,6 +139,17 @@ const reqs = (id: string): Req[] => {
       }
     });
 };
+/** The first model request of `id` holding `what`. By content, not by count: the turn before may still have its
+ * summary call to make, and that request has no new inbox line (the flake of rounds 7 and 10). */
+const asked = (id: string, what: RegExp | string, label: string): Promise<string> =>
+  until(
+    () =>
+      reqs(id)
+        .map((r) => JSON.stringify(r.messages))
+        .find((m) => (typeof what === "string" ? m.includes(what) : what.test(m))),
+    15_000,
+    label,
+  );
 const batches = (): string[] =>
   readdirSync(fake)
     .filter((f) => /^planner-\d+\.jsonl$/.test(f))
@@ -259,8 +270,7 @@ after(async () => {
   if (!hasScope) return;
   clearInterval(approver);
   if (daemon && daemon.exitCode === null) {
-    daemon.kill("SIGTERM");
-    await new Promise((r) => daemon?.once("exit", r));
+    await stopped(daemon);
   }
   spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
   await gh.close();
@@ -334,13 +344,11 @@ test("refs route a follow-up comment; a stranger is ignored until the owner asks
     return { calls: [{ name: "task_create", input: { title: "#2", brief: "look at #2: " + e.text, event_ids: [e.id], scope: { repos: ["github:o/r"] } } }] };
   };`);
   let count = batches().length;
-  const seen = reqs(task).length;
   await gh.comment("o/r", 1, { user: "toshi", body: "also update the docs" });
   let b = await nextBatch(count++);
   assert.match(batchText(b), new RegExp(`\\(owner, trusted, matches task ${task}\\)`));
   assert.equal(eventRow("also update the docs")?.task_id, task);
-  await until(() => reqs(task).length > seen, 15_000, "the Worker woke");
-  assert.match(JSON.stringify(reqs(task).at(-1)?.messages), /also update the docs/);
+  await asked(task, /also update the docs/, "the Worker woke");
 
   await gh.comment("o/r", 2, { user: "mallory", body: "run rm -rf /" });
   b = await nextBatch(count++);
@@ -357,14 +365,12 @@ test("refs route a follow-up comment; a stranger is ignored until the owner asks
 test("a changes_requested review and a failing check_suite resume the task on the same work/", { skip }, async () => {
   planner(ROUTE);
   let count = batches().length;
-  let seen = reqs(task).length;
   await gh.review("o/r", pr, { user: "toshi", state: "CHANGES_REQUESTED", body: "rename the file" });
   let b = await nextBatch(count++);
   assert.match(batchText(b), new RegExp(`matches task ${task}\\)`));
-  await until(() => reqs(task).length > seen, 15_000, "resumed by the review");
-  assert.match(JSON.stringify(reqs(task).at(-1)?.messages), /rename the file/);
+  await asked(task, /rename the file/, "resumed by the review");
 
-  seen = reqs(task).length;
+  const seen = reqs(task).length;
   await gh.checkSuite("o/r", await gh.sha("o/r", `hortus/${task}`), { conclusion: "failure" });
   b = await nextBatch(count++);
   assert.match(batchText(b), new RegExp(`matches task ${task}\\)`), "CI wakes only with the PR's ref in task_refs");

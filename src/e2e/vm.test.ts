@@ -25,7 +25,7 @@ import { after, before, test } from "node:test";
 import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { freePort, tempDir, until } from "../test/until.ts";
+import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const ENABLED = process.env.HORTUS_TEST_VM === "1";
 const NET = process.env.HORTUS_TEST_NET === "1";
@@ -147,8 +147,7 @@ async function stopDaemon(): Promise<void> {
   }
   const d = daemon;
   if (!d || d.exitCode !== null || d.signalCode !== null) return;
-  d.kill("SIGTERM");
-  await new Promise((r) => d.once("exit", r));
+  await stopped(d);
 }
 
 const db = <T>(f: (d: ReturnType<typeof openDb>) => T): T => {

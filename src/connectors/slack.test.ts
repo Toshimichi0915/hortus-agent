@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
@@ -322,6 +323,24 @@ test("a socket that never says hello is retried", async () => {
   assert.equal((await pending).changes[0]?.body, "after hello");
   assert.ok(log.errors.some((e) => e.includes("no hello")));
   timing.helloMs = 10_000;
+});
+
+test("a stop during apps.connections.open ends the connector: no session opens after it", async () => {
+  const ac = new AbortController();
+  const fetch: ConnectorDeps["fetch"] = async (u, i) => {
+    const r = await fake.fetch(u, i);
+    if (String(u).includes("apps.connections.open")) ac.abort(); // the abort lands in that await
+    return r;
+  };
+  const c = await create({ ...deps(), fetch });
+  const n = fake.connects;
+  const run = (async () => {
+    for await (const _ of c.events(ac.signal));
+    return "ended";
+  })();
+  const r = await Promise.race([run, sleep(3000).then(() => "still connected")]);
+  assert.equal(r, "ended");
+  assert.equal(fake.connects, n);
 });
 
 test("backoff: 1 s doubling, capped at 60 s", () => {

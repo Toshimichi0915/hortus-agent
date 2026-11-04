@@ -2,20 +2,20 @@
 /** hortusd: config → socket (fails fast if another daemon has it, before the DB is touched) → DB → modules. */
 import { mkdirSync } from "node:fs";
 import { z } from "zod";
+import { browserModule } from "../browser/login-view.ts";
 import { type Config, load } from "../config.ts";
+import { consoleModule, consoleUrl } from "../console/index.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { openDb } from "../db.ts";
-import { logger } from "../log.ts";
-import { RpcError } from "../types.ts";
-import * as paths from "../paths.ts";
-import { browserModule } from "../browser/login-view.ts";
-import { consoleModule, consoleUrl } from "../console/index.ts";
 import { gatewayModule, ownerDm, wireGateway } from "../gateway/gateway.ts";
 import { webhooksModule } from "../gateway/webhooks.ts";
+import { logger } from "../log.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
+import * as paths from "../paths.ts";
+import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
 import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
-import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
+import { RpcError } from "../types.ts";
 import "../planner/tools.ts";
 import { cgroup, dispatcherModule, exitHooks, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
 import { schedulesModule } from "../schedules/schedules.ts";
@@ -50,6 +50,9 @@ function unfixable(msg: string): never {
   log.error(msg);
   process.exit(78);
 }
+
+/** What a stop may take, whatever a module does. */
+const STOP_MS = 60_000;
 
 async function main(): Promise<void> {
   // HORTUS_NO_NET drops the nftables rules and session addresses: a test switch, never a production daemon's.
@@ -147,8 +150,16 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     log.info("stopping", { signal });
+    // no module's stop() may hold the process (a connector's socket once did, for 90 min): under systemd's 90 s, and
+    // recovery at the next start reaps what is left
+    let at = "";
+    setTimeout(() => {
+      log.error("stop timed out", undefined, { module: at });
+      process.exit(1);
+    }, STOP_MS).unref();
     server.close();
     for (const m of started.reverse()) {
+      at = m.name;
       try {
         await m.stop();
       } catch (e) {

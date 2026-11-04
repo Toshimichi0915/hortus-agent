@@ -10,7 +10,7 @@ import { after, before, test } from "node:test";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { tempDir } from "../test/until.ts";
+import { stopped, tempDir } from "../test/until.ts";
 
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const until = async (pred: () => boolean, ms = 10_000) => {
@@ -48,8 +48,7 @@ before(async () => {
 });
 
 after(async () => {
-  daemon.kill("SIGTERM");
-  await new Promise((r) => daemon.once("exit", r));
+  await stopped(daemon);
   await fake.close();
   rmSync(home, { recursive: true, force: true });
 });

@@ -271,6 +271,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
 
   /** One gateway connection: yields events until it closes; throws when neither READY nor RESUMED came. */
   async function* connect(url: string, signal: AbortSignal, onReady: () => void): AsyncGenerator<Incoming> {
+    // an abort during `GET /gateway/bot` has already fired: the listener below would never hear it
+    if (signal.aborted) return;
     const ws = open(url);
     const queue: Payload[] = [];
     let closed = false;

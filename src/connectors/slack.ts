@@ -218,6 +218,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
 
   /** One WebSocket session: yields events until it closes; throws when no `hello` came. */
   async function* session(url: string, signal: AbortSignal, onHello: () => void): AsyncGenerator<Incoming> {
+    // an abort during `apps.connections.open` has already fired: the listener below would never hear it
+    if (signal.aborted) return;
     const ws = new WebSocket(url);
     const queue: { p: Payload; ack(): Promise<void> }[] = [];
     let closed = false;

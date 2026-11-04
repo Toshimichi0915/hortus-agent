@@ -11,7 +11,7 @@ import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
-import { tempDir, until } from "../test/until.ts";
+import { stopped, tempDir, until } from "../test/until.ts";
 
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const g = (cwd: string, ...args: string[]): string =>
@@ -55,9 +55,7 @@ const exited = (d: ChildProcess): Promise<NodeJS.Signals | null> =>
     : new Promise((r) => d.once("exit", (_c, s) => r(s)));
 async function stop(): Promise<void> {
   if (!daemon || daemon.exitCode !== null || daemon.signalCode !== null) return;
-  const d = daemon;
-  d.kill("SIGTERM");
-  await exited(d);
+  await stopped(daemon);
 }
 async function call<T>(method: string, params: unknown = {}): Promise<T> {
   const rpc = rpcClient(paths.socket());
