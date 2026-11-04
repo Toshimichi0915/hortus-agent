@@ -19,7 +19,7 @@ import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
 import "../planner/tools.ts";
 import { cgroup, dispatcherModule, exitHooks, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
 import { schedulesModule } from "../schedules/schedules.ts";
-import { coalesce } from "../vault/gate.ts";
+import { coalesce, NOTIFY_MS } from "../vault/gate.ts";
 import { gate, gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
@@ -125,11 +125,19 @@ async function main(): Promise<void> {
   gateDeps.inboxWrite = (id, msg) => void tasks.inboxWrite(id, msg);
   // owner.notify: a one-line DM per new pending approval; the bot's DM is mirrored and never wakes the Planner
   // at most one a minute (gate.coalesce): a burst is its first DM and one "N more", not one DM per approval
-  gateDeps.notify = coalesce((text) => {
+  const dm = (path: string) => (text: string) => {
     const dof = ctx.config.owner.notify;
     if (!dof) return;
-    ownerDm(dof, `${text} ${consoleUrl()}/approvals`).catch((e) => log.error("owner.notify failed", e, { dof }));
-  });
+    ownerDm(dof, `${text} ${consoleUrl()}${path}`).catch((e) => log.error("owner.notify failed", e, { dof }));
+  };
+  gateDeps.notify = coalesce(dm("/approvals"));
+  // a failure nobody watched (tasks.hooks.failed): its own window, so a burst of failures is two DMs and says "failed".
+  // The text is ids and fixed words only, like an approval's: an error is a Worker's output
+  const failure = coalesce(dm("/tasks"), NOTIFY_MS, (n) => `${n} more task${n > 1 ? "s" : ""} failed`);
+  tasks.hooks.failed = (text) => {
+    failure(text);
+    wakePlanner();
+  };
   // planner.runtime = "vm" (and 3g's Worker VMs): the proxy finds a VM by its tap address
   vm.init({ links });
 

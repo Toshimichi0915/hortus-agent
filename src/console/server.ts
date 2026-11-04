@@ -135,7 +135,12 @@ function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined):
   };
 }
 
-/** `chat` replays every `replies` row after `Last-Event-ID` (or `?after=`; default: the last 1000), then follows the bus. */
+/**
+ * `/events/<names>`, comma-separated: a page's one stream (HTTP/1.1 gives an origin six connections, and an open SSE
+ * holds one; three per chat page stalled every fetch with two chats open). `approvals` and `tasks` are named SSE events;
+ * `chat` is the unnamed one: it replays every `replies` row after `Last-Event-ID` (or `?after=`; default: the last
+ * 1000), then follows the bus.
+ */
 function events(
   ctx: Ctx,
   name: string,
@@ -149,15 +154,19 @@ function events(
     return;
   }
   const taskId = q.get("task");
-  if (!["approvals", "tasks", "chat"].includes(name) || (name === "chat" && !taskId)) {
+  const names = name.split(",");
+  if (names.some((n) => !["approvals", "tasks", "chat"].includes(n)) || (names.includes("chat") && !taskId)) {
     send(res, 404, "text/plain", "no such stream");
     return;
   }
   const stop = openStream(ctx, res, session);
-  let topic: string = name;
-  let onEvent: (payload?: unknown) => void;
-  if (name === "chat" && taskId) {
-    topic = `chat:${taskId}`;
+  const subs = names
+    .filter((n) => n !== "chat")
+    .map((n): [string, (payload?: unknown) => void] => [
+      n,
+      (payload) => res.write(`event: ${n}\ndata: ${JSON.stringify(payload ?? null)}\n\n`),
+    ]);
+  if (names.includes("chat") && taskId) {
     const from = req.headers["last-event-id"] ?? q.get("after");
     let last = from === undefined || from === null || from === "" ? -1 : Number(from);
     const flush = () => {
@@ -169,13 +178,13 @@ function events(
           last = r.seq;
         }
     };
-    onEvent = flush;
+    subs.push([`chat:${taskId}`, flush]);
     flush();
-  } else onEvent = (payload) => res.write(`data: ${JSON.stringify(payload ?? null)}\n\n`);
-  bus.on(topic, onEvent);
+  }
+  for (const [topic, f] of subs) bus.on(topic, f);
   res.on("close", () => {
     stop();
-    bus.off(topic, onEvent);
+    for (const [topic, f] of subs) bus.off(topic, f);
   });
 }
 
@@ -232,7 +241,7 @@ async function handle(
   }
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "text/plain", "method not allowed");
 
-  const ev = /^\/events\/(\w+)$/.exec(path);
+  const ev = /^\/events\/([\w,]+)$/.exec(path);
   if (ev) return events(ctx, ev[1] as string, url.searchParams, req, res, caller.session);
   const st = /^\/static\/(app\.(?:js|css)|webauthn\.js)$/.exec(path);
   if (st) {

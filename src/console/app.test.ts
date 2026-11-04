@@ -206,6 +206,59 @@ test("a schedule's next fire stays relative (09-schedules.md › UI/UX); a date 
   }
 });
 
+test("open tabs never starve a fetch: one stream a page, none while hidden (HTTP/1.1: 6 connections an origin)", {
+  skip,
+}, async () => {
+  const tabs: { targetId: string; session: string }[] = [];
+  const open = async (path: string) => {
+    const { targetId } = await cdp.send<{ targetId: string }>("Target.createTarget", { url: base + path });
+    const { sessionId } = await cdp.send<{ sessionId: string }>("Target.attachToTarget", { targetId, flatten: true });
+    tabs.push({ targetId, session: sessionId });
+    return sessionId;
+  };
+  const inTab = async <T>(tab: string, expression: string) =>
+    (
+      await cdp.send<{ result: { value: T } }>(
+        "Runtime.evaluate",
+        { expression, awaitPromise: true, returnByValue: true },
+        tab,
+      )
+    ).result.value;
+  const answers = `Promise.race([fetch("/static/app.css").then((r) => r.ok), new Promise((r) => setTimeout(() => r(false), 3000))])`;
+  const hide = (hidden: boolean) =>
+    `Object.defineProperty(document, "hidden", { configurable: true, value: ${hidden} }); document.dispatchEvent(new Event("visibilitychange")); 1`;
+  try {
+    await go("/chat/t1");
+    const second = await open("/chat/t1");
+    await open("/tasks/t1");
+    await sleep(500);
+    assert.equal(await ev(answers), true, "two chats and a task card: a page's fetch still answers");
+    // more tabs than connections: the hidden ones hold none, and one coming back catches up from its cursor
+    for (const p of ["/approvals", "/", "/tasks/t1", "/approvals", "/"]) {
+      const t = await open(p);
+      await sleep(100);
+      await inTab(t, hide(true));
+    }
+    await inTab(second, hide(true));
+    await sleep(500);
+    assert.equal(await ev(answers), true, "eight tabs, six of them hidden");
+    const seq = (ctx.db.prepare("SELECT COUNT(*) AS n FROM replies WHERE task_id = 't1'").get() as { n: number }).n + 1;
+    ctx.db
+      .prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('t1', ?, ?, '')")
+      .run(seq, JSON.stringify({ type: "text", text: "while hidden" }));
+    await inTab(second, hide(false));
+    for (
+      let i = 0;
+      i < 100 && !(await inTab(second, `document.querySelector("#stream").textContent.includes("while hidden")`));
+      i++
+    )
+      await sleep(50);
+    assert.equal(await inTab(second, `document.querySelector("#stream").textContent.includes("while hidden")`), true);
+  } finally {
+    for (const t of tabs) await cdp.send("Target.closeTarget", { targetId: t.targetId });
+  }
+});
+
 test("cells carry their column name; the chat shows its stream's state", { skip }, async () => {
   await go("/");
   assert.equal(await ev(`document.querySelector('#list tbody td').dataset.label`), "Status");

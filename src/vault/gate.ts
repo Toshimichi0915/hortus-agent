@@ -215,10 +215,14 @@ export const NOTIFY_MS = 60_000;
 
 /**
  * `send` at most once per `ms`: the first text goes at once, what arrives within the window is counted and sent as one
- * "N more approvals pending" when it closes. owner.notify's DM goes through it: a burst of 200 pending approvals is two
- * DMs, not 200 into the messenger's rate limit.
+ * `more(N)` when it closes. owner.notify's DM goes through it: a burst of 200 pending approvals is two DMs, not 200 into
+ * the messenger's rate limit.
  */
-export function coalesce(send: (text: string) => void, ms = NOTIFY_MS): (text: string) => void {
+export function coalesce(
+  send: (text: string) => void,
+  ms = NOTIFY_MS,
+  more = (n: number) => `${n} more approval${n > 1 ? "s" : ""} pending`,
+): (text: string) => void {
   let held = 0;
   let window: NodeJS.Timeout | undefined;
   const fire = (text: string): void => {
@@ -227,7 +231,7 @@ export function coalesce(send: (text: string) => void, ms = NOTIFY_MS): (text: s
       window = undefined;
       const n = held;
       held = 0;
-      if (n) fire(`${n} more approval${n > 1 ? "s" : ""} pending`);
+      if (n) fire(more(n));
     }, ms);
     window.unref();
   };

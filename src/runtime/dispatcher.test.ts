@@ -9,6 +9,7 @@ import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
+import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir, until } from "../test/until.ts";
@@ -108,6 +109,87 @@ test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch
   }
 });
 
+test("VM failures: a boot timeout, the hours deadline, a Worker dead in the guest; a clean exit is none", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "VM failures"), /# pass 1/);
+  writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ vm: { boot_timeout_s: 1 }, worker: { provider: "fake", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  const told: string[] = [];
+  tasks.hooks.failed = (t) => void told.push(t);
+  const outbox = (id: string) =>
+    (ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ? ORDER BY seq").all(id) as { body: string }[]).map(
+      (r) => JSON.parse(r.body) as { seq: number; type: string; text: string },
+    );
+  const run = async (guest: string, budget = { tokens: 1000, hours: 1 }) => {
+    fakeVm(paths.home(), `hortus-fail-${process.pid}`, guest);
+    const { id } = tasks.create({ kind: "unattended", title: "t", brief: "b", scope: { credentials: [] }, budget });
+    await until(() => tasks.get(id).status === "waiting", 10_000, "the session's end");
+    return id;
+  };
+  const OUT = 'out=$(ls -dt "$HORTUS_HOME"/tasks/*/out | head -1); touch "$out/booted"';
+  await mirrorModule.start(ctx);
+  await dispatcherModule.start(ctx);
+  try {
+    let id = await run("exec sleep 600");
+    assert.match(tasks.get(id).error ?? "", /^boot timeout: /);
+    assert.deepEqual(told, [`task ${id} failed`]);
+    assert.deepEqual(
+      outbox(id).map((m) => [m.seq, m.type]),
+      [[-1, "result"]],
+    );
+    assert.match(outbox(id)[0]?.text ?? "", /^failed: boot timeout: /);
+
+    told.length = 0;
+    id = await run(`${OUT}; exec sleep 600`, { tokens: 1000, hours: 0.0005 });
+    assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the VM was stopped/);
+    assert.deepEqual(told, [`task ${id} is over budget`]);
+    assert.deepEqual(
+      outbox(id).map((m) => [m.seq, m.type]),
+      [[-1, "budget_exceeded"]],
+    );
+
+    // a QEMU gone before startVm listens: ESRCH or a dead guest, not a task `running` for good
+    told.length = 0;
+    id = await run("exit 0");
+    assert.deepEqual(told, [`task ${id} failed`]);
+
+    // QEMU exits 0 however the guest's Worker ended
+    told.length = 0;
+    id = await run(`${OUT}; sleep 0.3`);
+    assert.match(tasks.get(id).error ?? "", /^guest died: /);
+    assert.deepEqual(told, [`task ${id} failed`]);
+
+    // the owner starts it again: the Worker's seq 1 is read past the row hortusd wrote, and the exit is clean
+    told.length = 0;
+    fakeVm(
+      paths.home(),
+      `hortus-fail-${process.pid}`,
+      `${OUT}; mkdir -p "$out/outbox"; echo '{"seq":1,"type":"result","text":"fine","ts":"t"}' > "$out/outbox/000001.json"; echo 0 > "$out/ended"; sleep 0.3`,
+    );
+    tasks.inboxWrite(id, { from: "owner", trusted: true, text: "again" });
+    await until(() => outbox(id).length === 2, 10_000, "the Worker's result");
+    assert.deepEqual(
+      outbox(id).map((m) => [m.seq, m.text.slice(0, 11)]),
+      [
+        [-1, "failed: gue"],
+        [1, "fine"],
+      ],
+    );
+    assert.equal(tasks.get(id).error, null);
+    assert.deepEqual(told, []);
+  } finally {
+    await dispatcherModule.stop();
+  }
+});
+
 test("a failed task: the owner's acts and its one-shot timer start it again, whatever only passes by waits", async () => {
   const ctx: Ctx = {
     config: Config.parse({ dofs: { slack: { type: "slack", owner: "U1" } }, worker: { provider: "fake", model: "m" } }),
@@ -194,7 +276,22 @@ test("a task that cannot start fails once: approvals and notes from others wait 
     tasks.inboxWrite(t.id, { from: "owner", trusted: true, text: "try again" });
     await until(() => errors() === 2, 3000, "the owner's message starts it again");
     await until(() => tasks.get(t.id).status === "waiting", 3000, "waiting again");
+
+    // unattended, the same start fails loud; closed while it fails, or a chat as above, it does not
+    const told: string[] = [];
+    tasks.hooks.failed = (x) => void told.push(x);
+    const u = tasks.create({ kind: "unattended", title: "u", brief: "b", runtime: "host", scope: { credentials: [] } });
+    await until(() => tasks.get(u.id).status === "waiting", 3000, "the failed start");
+    assert.deepEqual(told, [`task ${u.id} failed`]);
+    const row = ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ?").all(u.id) as {
+      seq: number;
+      body: string;
+    }[];
+    assert.equal(row.length, 1);
+    assert.equal(row[0]?.seq, -1);
+    assert.match(row[0]?.body ?? "", /"type":"result","text":"failed: worker\.provider ghost/);
   } finally {
+    tasks.hooks.failed = () => {};
     await dispatcherModule.stop();
   }
 });

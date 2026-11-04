@@ -79,11 +79,15 @@ export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project
   return "vm";
 }
 
-/** What the dispatcher registers: wake (a task became queued), stop (kill after 30 s), kill (close: end it now). */
+/**
+ * What the dispatcher registers: wake (a task became queued), stop (kill after 30 s), kill (close: end it now). `failed`
+ * is hortusd's: `text` to the owner's DM (owner.notify, coalesced) and a Planner wake for the row of `failureRow`.
+ */
 export const hooks = {
   wake(): void {},
   stop(_id: string): void {},
   async kill(_id: string): Promise<void> {},
+  failed(_text: string): void {},
 };
 
 let bound: Ctx | undefined;
@@ -199,6 +203,25 @@ export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">, owner 
 /** Called after every inbox write (3c: a non-schedule message extends the task's schedule rows). */
 export const inboxHooks: ((task: TaskRow, msg: InboxMsg) => void)[] = [];
 
+/**
+ * A failure the Worker could not report (a crash, a VM killed at its hours, a failed start, a schedule's parent over
+ * budget) as a Planner `result`/`budget_exceeded` row, so the batch query, its taint deferral and `consumed` treat it
+ * as any other, once. Seqs below zero: the positive ones are the Worker's files (`finish` reads past MAX(seq)).
+ */
+export function failureRow(id: string, type: "result" | "budget_exceeded", text: string): void {
+  const db = ctx().db;
+  const { n } = db.prepare("SELECT MIN(0, COALESCE(MIN(seq), 0)) - 1 AS n FROM outbox WHERE task_id = ?").get(id) as {
+    n: number;
+  };
+  const ts = now();
+  db.prepare("INSERT INTO outbox(task_id, seq, body, created) VALUES (?, ?, ?, ?)").run(
+    id,
+    n,
+    json({ seq: n, type, text, ts }),
+    ts,
+  );
+}
+
 /** STOP: a queued task waits at once; a running one stops after its current tool (killed after 30 s). */
 export function stop(id: string): void {
   const t = get(id);
@@ -250,8 +273,11 @@ export const closing = new Set<string>();
 export function budget(id: string, b: { tokens?: number; hours?: number }): void {
   const t = get(id);
   const cur = parse(t.budget, ctx().config.worker.budget);
+  // the raise answers a budget_exceeded: the next overrun is a new failure, and a note may start it again
   ctx()
-    .db.prepare("UPDATE tasks SET budget = ?, updated = ? WHERE id = ?")
+    .db.prepare(
+      "UPDATE tasks SET budget = ?, updated = ?, error = CASE WHEN error LIKE 'budget_exceeded%' THEN NULL ELSE error END WHERE id = ?",
+    )
     .run(json({ tokens: b.tokens ?? cur.tokens, hours: b.hours ?? cur.hours }), now(), id);
   bus.emit("tasks", { id });
 }

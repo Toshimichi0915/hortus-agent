@@ -32,7 +32,7 @@ Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last r
 - DST: `cron "30 2 * * *"` in `America/New_York` on the spring-forward day fires next on the following day; the fall-back day fires once.
 - Expiry: a row whose task's last non-schedule inbox message is 8 days old is deleted at the tick; an owner reply extends it (the row's `expires_at` moves); `cron` rows survive.
 - Overlap: an `every: 300` row whose run takes 10 minutes skips one firing (logged) and the next starts after the run ends.
-- Budget: the parent with 100 tokens left and a run using 150 → the parent's usage exceeds, the next firing is skipped and `budget_exceeded` is recorded for the parent.
+- Budget: the parent with 100 tokens left and a run using 150 → the parent's usage exceeds, the next firing is skipped, `budget_exceeded` is recorded for the parent, the Planner gets a row for it and the owner a DM (once; `task.budget` clears it, so the next overrun is a new failure).
 - Scope: a run on a project runs unattended on the host even when the parent is a chat task; its `paths.schedule` is writable and survives across runs (a file written by run 1 is read by run 2); `work/` does not survive.
 - `unschedule` from a run acts on the parent's row; a worker calling `unschedule` on another task's row → `forbidden`.
 - Recovery: a `running` run killed before its first model call is closed `failed` at restart and not re-fired; one killed after resumes.

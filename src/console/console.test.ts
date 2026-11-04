@@ -132,6 +132,24 @@ function stream(path: string, headers: Record<string, string>, until: (t: string
   });
 }
 
+test("a chat past the replay's 1,000 lines says what it cut and where the rest is", async () => {
+  const t = new Date().toISOString();
+  ctx.db
+    .prepare(
+      "INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('long', 'chat', 'l', 'waiting', ?, ?)",
+    )
+    .run(t, t);
+  const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('long', ?, ?, ?)");
+  ins.run(1, JSON.stringify({ type: "owner", text: "the first question" }), t);
+  assert.doesNotMatch((await get("/chat/long")).body, /not shown/);
+  for (let i = 2; i <= 1500; i++) ins.run(i, JSON.stringify({ type: "text", text: `delta ${i} ` }), t);
+  const { body: page } = await get("/chat/long");
+  assert.doesNotMatch(page, /the first question/);
+  assert.match(page, /500 earlier lines not shown .*<a href="\/tasks\/long\/log"/);
+  assert.match((await get("/tasks/long")).body, /1,300 earlier lines not shown/);
+  ctx.db.exec("DELETE FROM tasks WHERE id = 'long'; DELETE FROM replies WHERE task_id = 'long'");
+});
+
 test("sse: chat honours Last-Event-ID and follows the bus; keepalives; no listener leak", async () => {
   const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('x', ?, ?, '2026-01-01')");
   for (let i = 1; i <= 10; i++) ins.run(i, JSON.stringify({ type: "text", text: `line ${i}` }));
@@ -153,6 +171,17 @@ test("sse: chat honours Last-Event-ID and follows the bus; keepalives; no listen
     [...woke.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1])),
     Array.from({ length: 2589 }, (_, i) => i + 12),
   );
+
+  // a page's one stream: its channels as named events, the chat's rows unnamed; unknown ones refused
+  const page = stream("/events/approvals,tasks,chat?task=x&after=2599", {}, (t) => t.includes("event: tasks"));
+  await sleep(30);
+  bus.emit("approvals", { id: 2 });
+  bus.emit("tasks", { id: "t" });
+  const all = await page;
+  assert.match(all, /id: 2600\ndata: \{"seq":2600/);
+  assert.match(all, /event: approvals\ndata: \{"id":2\}/);
+  assert.match(all, /event: tasks\ndata: \{"id":"t"\}/);
+  assert.equal((await get("/events/approvals,nope")).status, 404);
 
   const ka = await stream("/events/tasks", {}, (t) => t.includes(": keepalive"));
   assert.match(ka, /: keepalive/);
