@@ -365,7 +365,12 @@ before(async () => {
     db,
     config: () => ctx.config,
     log,
-    connector: (d) => gw.connector(d),
+    // no hourly check here: its first pass, 10 s in, reads back the deliveries this file dropped on purpose and wakes
+    // the Planner, wherever a slow run has got to (github.test covers it)
+    connector: (d) => {
+      const c = gw.connector(d);
+      return c && { ...c, redeliveries: undefined };
+    },
     fetchRepo: (dof, p, url) => fetchRepo(dof, p, url, coreFetch),
   });
   const port = await wh.start(0);
