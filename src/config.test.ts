@@ -79,6 +79,13 @@ test("a project name outside letters, digits, . _ - is refused by the config sch
   assert.ok(Config.parse({ projects: { "my-app.v2": { path: "/tmp" } } }).projects["my-app.v2"]);
 });
 
+test("a DOF name that is a path, another DOF's bare repo or hortusd's own DOF is refused", () => {
+  // `..` would carve HORTUS_HOME into the profile (vault.json); `x.git` is x's repo; `transforms` never taints
+  for (const n of ["..", "a/b", "", ".x", "slack.git", "logs", "transforms"])
+    assert.throws(() => Config.parse({ dofs: { [n]: { type: "slack" } } }), /a DOF name/, n);
+  assert.ok(Config.parse({ dofs: { "slack2.work": { type: "slack" }, logs2: { type: "slack" } } }).dofs.logs2);
+});
+
 test("README's example hortusd.json validates (no unknown top-level key); its provider's transform ships", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const block = /```json\n([\s\S]*?)\n```/.exec(readme)?.[1] ?? "";

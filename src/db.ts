@@ -2,11 +2,12 @@
  * The SQLite DB (node:sqlite). Timestamps are ISO strings in UTC; JSON columns hold JSON text. A new table is one
  * string appended to `migrations`; `openDb` on an older file applies the missing ones (PRAGMA user_version).
  */
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Config } from "./config.ts";
 import { trusted } from "./connectors/trust.ts";
+import * as paths from "./paths.ts";
 
 export type { DatabaseSync } from "node:sqlite";
 
@@ -106,8 +107,24 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
     ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),
     ...(t.taint ? (JSON.parse(t.taint) as string[]) : []),
-    ...(t.kind === "planner" ? [] : untrustedDofs(db, task, readable(c, t.scope), c)),
+    ...(t.kind === "planner" ? [] : untrustedDofs(db, task, mounted(c, t.scope), c)),
   ];
+}
+
+/**
+ * `readable`, plus the DOFs on disk the config no longer names that the scope did (unset: any): the host profile and
+ * the VM view are built at spawn, so a DOF removed or renamed in the config while a task runs stays readable to it.
+ */
+function mounted(c: Pick<Config, "dofs">, scope: string | null): string[] {
+  const can = readable(c, scope);
+  const dofs = (scope ? (JSON.parse(scope) as { dofs?: string[] }) : {}).dofs;
+  let gone: string[] = [];
+  try {
+    gone = readdirSync(join(paths.home(), "dof")).filter(
+      (n) => !n.endsWith(".git") && !can.includes(n) && (!dofs || dofs.includes(n)),
+    );
+  } catch {}
+  return [...can, ...gone];
 }
 
 /** Every DOF name: the configured connectors', `logs` and `transforms`. */
@@ -151,7 +168,11 @@ function untrustedDofs(db: DatabaseSync, task: string, dofs: string[], c: Pick<C
       continue;
     }
     const cfg = c.dofs[d];
-    if (!cfg) continue;
+    if (!cfg) {
+      // no trust rule left to judge its authors by: any file counts
+      if (authors.get(d)) out.push(`can read ${d}, which is no longer configured`);
+      continue;
+    }
     for (const { author } of authors.iterate(d) as Iterable<{ author: string | null }>) {
       const a = author ? { user: author, member: member.get(d, author) !== undefined } : null;
       if (!trusted({ author: a, bot: false }, cfg)) {

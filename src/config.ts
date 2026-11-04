@@ -34,6 +34,13 @@ export const ProjectConfig = z.looseObject({
 export const PROJECT_NAME = /^(?!.*\.\.)[A-Za-z0-9][\w.-]{0,63}$/;
 export const PROJECT_NAME_HINT = "a project name: letters, digits, . _ - only (no ..), starting with a letter or digit";
 
+/**
+ * A DOF name: `dof/<name>` and `dof/<name>.git` on disk, a Landlock carve-out and a `scope.dofs` entry, so no `..`, no
+ * `.git` suffix (another DOF's bare repo), and not `logs` or `transforms` (hortusd's own, with their own trust rules).
+ */
+const DOF_NAME = /^(?!.*\.\.)(?!.*\.git$)(?!(logs|transforms)$)[A-Za-z0-9][\w.-]{0,63}$/;
+const DOF_NAME_HINT = "a DOF name: letters, digits, . _ - only (no .., no .git suffix, not logs or transforms)";
+
 export const Config = z.looseObject({
   owner: z
     .looseObject({
@@ -54,7 +61,7 @@ export const Config = z.looseObject({
       notify: z.string().optional(),
     })
     .prefault({}),
-  dofs: z.record(z.string(), DofConfig).default({}),
+  dofs: z.record(z.string().regex(DOF_NAME, DOF_NAME_HINT), DofConfig).default({}),
   planner: z
     .looseObject({
       provider: z.string().optional(),

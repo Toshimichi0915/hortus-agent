@@ -533,6 +533,16 @@ test("scope.dofs: a Worker searches only the DOFs it can read; each one holding 
   await commit("quiet", [msg("D1/channel.md", "a topic", { user: undefined })], "meta");
   assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (?)"]);
 
+  // a DOF removed (or renamed) in the config while S2 runs stays mounted until its next start: it still taints
+  const slackCfg = config.dofs.slack;
+  delete config.dofs.slack;
+  try {
+    assert.deepEqual(of("S2"), ["can read slack, which is no longer configured"]);
+    assert.deepEqual(of("S1"), ["can read quiet, which holds untrusted authors (?)"], "not named by S1's scope");
+  } finally {
+    if (slackCfg) config.dofs.slack = slackCfg;
+  }
+
   // logs: another task's session counts, its own does not; transforms never
   db.prepare("DELETE FROM search_meta WHERE dof = 'logs'").run();
   writeLog("S5", { "session.md": "own log" }, "s5");
