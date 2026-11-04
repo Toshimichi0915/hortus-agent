@@ -280,10 +280,13 @@ function pktEnd(b: Buffer): number | undefined {
 function peekCommands(r: Readable): Promise<{ body: Readable; commands: string | null }> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    // a push that hangs up inside its commands: else this never settles (readUpTo's onClose)
+    const onClose = () => reject(new Error("closed before its end"));
     const done = (commands: string | null, ended: boolean) => {
       r.off("data", onData);
       r.off("end", onEnd);
       r.off("error", reject);
+      r.off("close", onClose);
       r.pause();
       const pt = new PassThrough();
       for (const c of chunks) pt.write(c);
@@ -305,6 +308,7 @@ function peekCommands(r: Readable): Promise<{ body: Readable; commands: string |
     r.on("data", onData);
     r.on("end", onEnd);
     r.on("error", reject);
+    r.on("close", onClose);
   });
 }
 

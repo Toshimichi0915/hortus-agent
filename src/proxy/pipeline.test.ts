@@ -552,6 +552,14 @@ test("hortusd.internal: /rpc/<method> with the caller from the link, client X-Ho
   const denied = await send({ host: "hortusd.internal", method: "POST", path: "/rpc/approval.decide", body: "{}" });
   assert.equal(denied.status, 403);
   assert.equal(JSON.parse(denied.body).error.code, "forbidden");
+  // the pipeline's request bound (1 MB), not 16 MB: MAX_INFLIGHT of those were 4 GB of one Worker's buffers
+  const big = await send({
+    host: "hortusd.internal",
+    method: "POST",
+    path: "/rpc/t.whoami",
+    body: `{"x":"${"a".repeat(1024 * 1024)}"}`,
+  });
+  assert.equal(big.status, 413);
 });
 
 test("WebSocket: bytes relay both ways and closing one side closes the other", async () => {

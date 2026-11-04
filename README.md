@@ -24,12 +24,13 @@ for Worker VMs; Chromium for browser tools and the login view.
 ```sh
 pnpm install
 pnpm build                 # dist/, including dist/hortus-landlock, the transforms and the console's static files
-node dist/bin/hortus.js install   # writes /etc/systemd/system/hortusd.service with sudo, then prints the next steps
+dist/bin/hortus.js install        # writes /etc/systemd/system/hortusd.service with sudo, then prints the next steps
 sudo systemctl enable --now hortusd
 ```
 
-Put `dist/bin` on `PATH` to call the bins by name (`hortus`, `hortusd`, `hortus-agent`, `dof`); the rest of this file
-does. The unit runs `hortusd` as you, with `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE` (nftables, the proxy's
+The bins are `dist/bin/{hortus,hortusd,hortus-agent,dof}.js`; to call them by name, as the rest of this file does, link
+them onto `PATH` (`for b in hortus hortusd hortus-agent dof; do ln -s "$PWD/dist/bin/$b.js" ~/.local/bin/$b; done`, or
+`pnpm link --global`). The unit runs `hortusd` as you, with `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE` (nftables, the proxy's
 addresses), `Delegate=yes` (a cgroup per task), and `RestartPreventExitStatus=78`: a start-up error a restart cannot
 fix (an invalid `hortusd.json`, a corrupt database) is one log line (`journalctl -u hortusd`) and no restart loop.
 `hortus install --force` overwrites a unit that differs; `hortus install --ca` also adds the hortus CA (made at the first
@@ -98,7 +99,8 @@ real one. Two ways to run a development daemon:
 
 - Without network rules, as the end-to-end tests do: `HORTUS_NO_NET=1` (refused unless `HORTUS_HOME` is set) skips
   nftables and session addresses, so no capabilities are needed, only a delegated cgroup:
-  `systemd-run --user --scope -p Delegate=yes env HORTUS_HOME=/tmp/hortus-dev HORTUS_NO_NET=1 node dist/bin/hortusd.js`.
+  `systemd-run --user --scope -p Delegate=yes env HORTUS_HOME=/tmp/hortus-dev HORTUS_NO_NET=1 dist/bin/hortusd.js` (the bins' shebang silences `node:sqlite`'s
+  experimental warning; `node dist/bin/hortusd.js` prints it).
   `dev.upstreams` in its `hortusd.json` points hosts at fake services.
 - With them: `scripts/dev-run.sh <name> <HORTUS_HOME> [ENV=value …]` starts it as a transient system unit with the real
   unit's capabilities (passwordless sudo); stop it with `sudo systemctl stop hortusd-<name>`, logs with

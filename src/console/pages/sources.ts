@@ -62,6 +62,15 @@ function staticForgeRows(ctx: Ctx, name: string, type: string): Raw {
   return h`<p>host: ${host} · token: ${token} · deliveries today ${today.n} · last delivery ${time(last)}</p><p class="hint">Webhook URL: <code>https://&lt;your tunnel&gt;/${name}/webhook</code>; secret: the <code>${name}-webhook</code> credential, sent as ${f.header}${secret}. No delivery log is read back: the 10-min reconcile fills what the tunnel drops. The tunnel forwards to <code>${hook()}</code>: <code>cloudflared tunnel --url ${hook()}</code> or <code>ssh -R</code>; hortus installs neither.</p>`;
 }
 
+/** A messenger's credentials as its connector names them (`<name>`; Slack's Socket Mode `<name>-app`): a missing one
+ * reached this page only as the connector's "auth.test: HTTP 403" (review round 7, a fresh install). */
+const MESSENGER_CREDS: Record<string, string[]> = { slack: ["", "-app"], discord: [""], telegram: [""] };
+function missingCreds(name: string, type: string): Raw {
+  const v = readVault();
+  const miss = (MESSENGER_CREDS[type] ?? []).map((x) => name + x).filter((n) => !Object.hasOwn(v, n));
+  return miss.length ? error(`no ${miss.join(" or ")} credential (Credentials): the connector cannot start`) : h``;
+}
+
 const sizes = new Map<string, { at: number; text: string }>();
 
 /** `du` of the mirror worktree, cached 1 min. */
@@ -106,7 +115,7 @@ export const sources: Page = async (ctx) => {
         s ? (s.connected ? "connected" : "disconnected") : "status unknown"
       } · last event ${time(s?.lastEvent)} · mirror ${await size(ctx.paths.dof(name))}</p>${
         s?.error ? h`<p class="error">${s.error}</p>` : ""
-      }${(s?.notes ?? []).map((n) => h`<p class="hint">${n}</p>`)}${
+      }${missingCreds(name, ctx.config.dofs[name]?.type ?? "")}${(s?.notes ?? []).map((n) => h`<p class="hint">${n}</p>`)}${
         ctx.config.dofs[name]?.type === "github" ? forgeRows(ctx, name) : ""
       }${staticForgeRows(ctx, name, ctx.config.dofs[name]?.type ?? "")}${
         scopes.length

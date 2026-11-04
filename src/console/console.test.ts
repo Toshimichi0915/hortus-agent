@@ -350,6 +350,13 @@ test("round 6 UI: a task's error on the list and card (a boot timeout's reason, 
   rmSync(paths.paused());
   assert.match((await get("/settings")).body, /While paused, queued tasks, schedules and the Planner wait/);
   assert.match((await get("/sources")).body, /no sources: add a messenger or forge under <code>dofs<\/code>/);
+  // round 7: a fresh install's Slack said only "auth.test: HTTP 403"; the page names the missing credentials
+  ctx.config = { ...ctx.config, dofs: { chat: { type: "slack", owner: "U1" } } } as typeof ctx.config;
+  try {
+    assert.match((await get("/sources")).body, /no chat or chat-app credential \(Credentials\)/);
+  } finally {
+    ctx.config = load();
+  }
 });
 
 test("round 6 UI: a search hit's [mark] is a <mark>, other brackets stay", () => {

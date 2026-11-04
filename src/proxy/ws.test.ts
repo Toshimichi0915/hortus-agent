@@ -190,6 +190,13 @@ test("a placeholder outside IDENTIFY's token is unmapped (1008); a worker's IDEN
   assert.deepEqual({ ...row }, { category: "credential:discord", task_id: "T" });
 });
 
+test("a client frame over 1 MB ends the relay (the pipeline's request bound, not 16 MB)", async () => {
+  const n = dc.identifies.length;
+  const r = await closeOf(JSON.stringify({ op: 2, d: { token: "x".repeat(1024 * 1024) } }));
+  assert.equal(r.code, 1006);
+  assert.equal(dc.identifies.length, n);
+});
+
 test("a client frame writing handle syntax itself is refused (1008)", async () => {
   const n = dc.identifies.length;
   const r = await closeOf(JSON.stringify({ op: 2, d: { token: "{secret:discord}" } }));

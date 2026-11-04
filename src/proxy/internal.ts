@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { call, isStream } from "../rpc.ts";
 import { RpcError } from "../types.ts";
 import { type Client, turn } from "./links.ts";
-import { type IncomingRequest, type Out, readUpTo, refuse } from "./pipeline.ts";
+import { type IncomingRequest, type Out, REQUEST_BUFFER, readUpTo, refuse } from "./pipeline.ts";
 
 interface Route {
   method: string;
@@ -19,10 +19,12 @@ const STATUS: Record<RpcError["code"], number> = { not_found: 404, forbidden: 40
 async function rpc(client: Client, req: IncomingRequest, method: string): Promise<Out> {
   let input: unknown;
   if (req.body) {
-    const r = await readUpTo(req.body, 16 * 1024 * 1024);
+    // the pipeline's own request bound: at 16 MB, a Worker's MAX_INFLIGHT RPCs buffered 4 GB (review round 7).
+    // ponytail: 256 × 1 MB per client is still buffered at once (both paths); a per-client byte budget if that bites
+    const r = await readUpTo(req.body, REQUEST_BUFFER);
     if ("rest" in r) {
       r.rest.resume();
-      return refuse(413, "rpc body over 16 MB");
+      return refuse(413, "rpc body over 1 MB");
     }
     const text = r.buf.toString("utf8").trim();
     try {
