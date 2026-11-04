@@ -193,6 +193,17 @@ function devLink(): void {
       return { address, cgroup: cg };
     },
   });
+  // dev-only too: the soak test's in-process sample (src/e2e/soak.test.ts)
+  define("dev.stats", {
+    roles: ["owner"],
+    input: z.unknown(),
+    run: async () => {
+      if (process.env.HORTUS_HOME === undefined) throw new RpcError("forbidden", "dev.stats needs HORTUS_HOME");
+      const resources: Record<string, number> = {};
+      for (const r of process.getActiveResourcesInfo()) resources[r] = (resources[r] ?? 0) + 1;
+      return { memory: process.memoryUsage(), resources };
+    },
+  });
 }
 
 main().catch((e) => {

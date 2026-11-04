@@ -36,7 +36,7 @@ Zod schema of v6 Config plus v7 additions. Defaults: `origins: "*"`, `vm: { cpus
 
 ### `db.ts`
 
-`openDb(path)` → `DatabaseSync` with `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`. Migrations by `PRAGMA user_version`, one `migrate()` with the statements in order. Schema (all timestamps are ISO strings in UTC; JSON columns hold JSON text):
+`openDb(path)` → `DatabaseSync` with `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `journal_size_limit=8 MB` (round 7). Migrations by `PRAGMA user_version`, one `migrate()` with the statements in order. Schema (all timestamps are ISO strings in UTC; JSON columns hold JSON text):
 
 ```sql
 events(id INTEGER PRIMARY KEY, dof TEXT, key TEXT, ts TEXT, author TEXT, member INTEGER, trusted INTEGER, bot INTEGER,

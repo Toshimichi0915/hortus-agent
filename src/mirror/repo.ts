@@ -27,6 +27,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 
 /** The last commit whose diff is in the search index; trails `main` only after a crash between the two. */
 const INDEXED = "refs/hortus/indexed";
+/** git's own loose-object threshold for the mirror's `gc --auto` (repos are created with `gc.auto 0`); tests lower it */
+export const gcAuto = { loose: 1000 };
 
 /** `<status>\0<path>\0…` pairs */
 function entries(z: string[]): DiffEntry[] {
@@ -182,6 +184,12 @@ async function commitNow(db: DatabaseSync | null, name: string, changes: Change[
     index(db, name, root, diff);
     await git(root, "update-ref", INDEXED, sha);
   }
+  // `gc.auto 0` left every commit's objects loose for good: ~5 a message, and the channel's tree is rewritten whole
+  // each time (round 7 soak: 1,240 messages were 43 MB loose, 1.9 MB packed). `gc --auto` packs them once ~1,000 are
+  // loose, in the chain (never detached; ~0.25 s in a child), and prunes nothing: every object is reachable from `main`.
+  const gc = [`gc.auto=${gcAuto.loose}`, "gc.autoDetach=false", "gc.pruneExpire=never"].flatMap((c) => ["-c", c]);
+  // the commit is made and indexed: a failed pack (ENOSPC) is logged, the next commit tries again
+  await git(root, ...gc, "gc", "--auto", "--quiet").catch((e) => log.error("gc failed", e, { dof: name }));
   return { sha, diff };
 }
 

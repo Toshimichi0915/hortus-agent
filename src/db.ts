@@ -106,7 +106,11 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined): stri
 export function openDb(path: string): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
+  // journal_size_limit: the auto-checkpoint keeps the WAL backfilled, but its file stays at its high-water mark, and an
+  // FTS5 segment merge grows with the index (round 7 soak: 4 → 9.5 MB in 30 min); truncated back to 8 MB after one
+  db.exec(
+    "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = 8388608;",
+  );
   migrate(db);
   return db;
 }

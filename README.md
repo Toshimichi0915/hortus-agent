@@ -111,6 +111,7 @@ Opt-in suites, skipped otherwise:
 - `HORTUS_TEST_NET=1`: nftables and session addresses (passwordless sudo; run with `--test-concurrency=1`).
 - `HORTUS_TEST_LLM=1`: live model calls (`HORTUS_TEST_MODEL` picks the model).
 - `HORTUS_TEST_VM=1`: boots Worker VMs (`HORTUS_TEST_IMAGES`, default `$HORTUS_HOME/images`; needs `/dev/kvm`).
+- `HORTUS_TEST_SOAK=1`: the soak test at full speed for `HORTUS_TEST_SOAK_MIN` minutes (default 60; the default suite runs 1.5 min of it).
 
 `KEEP=1` keeps an end-to-end test's temp directory (with its `hortusd.log`).
 
