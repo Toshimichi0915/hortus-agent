@@ -161,7 +161,14 @@ const reqs = (id: string): Req[] => {
   return readFileSync(p, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l));
+    .flatMap((l) => {
+      // the fake appends while the test reads: a line still being written is skipped
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    });
 };
 /** Planner batches so far, oldest first */
 const batches = (): string[] =>

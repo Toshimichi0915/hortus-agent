@@ -5,6 +5,9 @@
  */
 import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, rmSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
+import { logger } from "./log.ts";
+
+const log = logger("hostile");
 
 /** `out/summary.md` (as the card stores it) */
 export const MAX_SUMMARY = 64 * 1024;
@@ -105,7 +108,12 @@ export function lines(input: Readable, max: number, fn: (line: string) => void):
     const line = Buffer.concat(parts).toString("utf8");
     parts = [];
     n = 0;
-    fn(line.endsWith("\r") ? line.slice(0, -1) : line);
+    try {
+      fn(line.endsWith("\r") ? line.slice(0, -1) : line);
+    } catch (e) {
+      // the line is the Worker's: a handler choking on it (a JSON nested a million deep) loses the line, not hortusd
+      log.error("line handler failed", e);
+    }
   };
   input.on("data", (c: Buffer) => {
     for (let i = 0; i < c.length; ) {

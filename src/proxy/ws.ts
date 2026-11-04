@@ -109,26 +109,65 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
     client.destroy();
     up.destroy();
   };
-  fromClient.on("message", (data, binary) => {
-    if (binary) return toUp.send(data, { ...frame, binary, mask: true });
-    const r = frameOut(p, data.toString("utf8"));
-    if ("text" in r) return toUp.send(r.text, { ...frame, binary, mask: true });
-    log.info("frame refused", { host: p.host, why: r.refuse });
-    client.unpipe(fromClient);
-    up.unpipe(fromUp);
-    up.destroy();
-    toClient.close(1008, `hortus: ${r.refuse}`.slice(0, 120), false, () => client.end());
-  });
-  fromUp.on("message", (data, binary) =>
-    toClient.send(binary ? data : p.scrub.text(data.toString("utf8")), { ...frame, binary, mask: false }),
+  // a scrubbed control payload can outgrow its frame (a short secret, a longer placeholder): the Sender would throw
+  // inside the Receiver's write, uncaught, and end hortusd. Cut to 125 bytes (123 for a close reason), and any other
+  // throw in a handler ends this relay, not the process.
+  const ctl = (b: Buffer, max = 125) => (b.length > max ? b.subarray(0, max) : b);
+  const reason = (s: string) => ctl(Buffer.from(s), 123);
+  const safe =
+    <A extends unknown[]>(f: (...a: A) => void) =>
+    (...a: A) => {
+      try {
+        f(...a);
+      } catch (e) {
+        log.error("frame relay failed", e, { host: p.host });
+        kill();
+      }
+    };
+  fromClient.on(
+    "message",
+    safe((data: Buffer, binary: boolean) => {
+      if (binary) return toUp.send(data, { ...frame, binary, mask: true });
+      const r = frameOut(p, data.toString("utf8"));
+      if ("text" in r) return toUp.send(r.text, { ...frame, binary, mask: true });
+      log.info("frame refused", { host: p.host, why: r.refuse });
+      client.unpipe(fromClient);
+      up.unpipe(fromUp);
+      up.destroy();
+      toClient.close(1008, reason(`hortus: ${r.refuse}`), false, () => client.end());
+    }),
   );
-  fromClient.on("ping", (d) => toUp.ping(d, true));
-  fromClient.on("pong", (d) => toUp.pong(d, true));
-  fromUp.on("ping", (d) => toClient.ping(p.scrub.bytes(d), false));
-  fromUp.on("pong", (d) => toClient.pong(p.scrub.bytes(d), false));
-  fromClient.on("conclude", (code, reason) => toUp.close(code === 1005 ? undefined : code, reason, true));
-  fromUp.on("conclude", (code, reason) =>
-    toClient.close(code === 1005 ? undefined : code, p.scrub.text(reason.toString("utf8")), false),
+  fromUp.on(
+    "message",
+    safe((data: Buffer, binary: boolean) =>
+      toClient.send(binary ? data : p.scrub.text(data.toString("utf8")), { ...frame, binary, mask: false }),
+    ),
+  );
+  fromClient.on(
+    "ping",
+    safe((d: Buffer) => toUp.ping(d, true)),
+  );
+  fromClient.on(
+    "pong",
+    safe((d: Buffer) => toUp.pong(d, true)),
+  );
+  fromUp.on(
+    "ping",
+    safe((d: Buffer) => toClient.ping(ctl(p.scrub.bytes(d)), false)),
+  );
+  fromUp.on(
+    "pong",
+    safe((d: Buffer) => toClient.pong(ctl(p.scrub.bytes(d)), false)),
+  );
+  fromClient.on(
+    "conclude",
+    safe((code: number, why: Buffer) => toUp.close(code === 1005 ? undefined : code, why, true)),
+  );
+  fromUp.on(
+    "conclude",
+    safe((code: number, why: Buffer) =>
+      toClient.close(code === 1005 ? undefined : code, reason(p.scrub.text(why.toString("utf8"))), false),
+    ),
   );
   fromClient.on("error", kill);
   fromUp.on("error", kill);

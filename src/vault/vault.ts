@@ -83,8 +83,12 @@ export function captured(name: string): CapturedRow | undefined {
     | undefined;
 }
 
-/** Every secret value with the placeholder that replaces it in responses. */
-export function secretValues(): { value: string; placeholder: string }[] {
+/**
+ * Every secret value with the placeholder that replaces it in responses. Captured values (cookies, site tokens) only
+ * for `host` within their origin: any site sets any cookie, and a value like `assistant` held globally would scrub
+ * every session's model replies and refuse every request quoting it as a raw credential.
+ */
+export function secretValues(host?: string): { value: string; placeholder: string }[] {
   const out: { value: string; placeholder: string }[] = [];
   for (const [name, e] of Object.entries(read())) {
     const p = placeholder(name);
@@ -94,24 +98,37 @@ export function secretValues(): { value: string; placeholder: string }[] {
   }
   // keys are `<credential>#<cache key>`: a minted token reads back as its credential's placeholder
   for (const [key, m] of minted) out.push({ value: m.value, placeholder: placeholder(key.split("#")[0] ?? key) });
-  if (bound) {
-    for (const r of ctx().db.prepare("SELECT name, value FROM captured").all() as { name: string; value: string }[])
-      out.push({ value: r.value, placeholder: placeholder(r.name) });
+  if (bound && host) {
+    const rows = ctx()
+      .db.prepare(
+        "SELECT name, value FROM captured WHERE origin = ?1 OR substr(?1, -length(origin) - 1) = '.' || origin",
+      )
+      .all(host) as { name: string; value: string }[];
+    for (const r of rows) out.push({ value: r.value, placeholder: placeholder(r.name) });
   }
   return out;
 }
 
-let scrubCache: { key: string; s: Scrubber } | undefined;
+/** per host (captured values differ by origin); dropped whole when vault.json, `captured` or minted tokens change */
+let scrubCache: { key: string; byHost: Map<string, Scrubber> } | undefined;
 
-/** Rebuilt when vault.json, the captured table, or the minted-token cache changes. */
-export function scrubber(): Scrubber {
+/** The scrub set for traffic to `host` (none: vault and minted values only). */
+export function scrubber(host = ""): Scrubber {
   const c = bound
     ? (ctx().db.prepare("SELECT count(*) AS n, max(id) AS m FROM captured").get() as { n: number; m: number | null })
     : { n: 0, m: 0 };
   read();
   const key = `${cache?.mtime ?? 0}:${c.n}:${c.m}:${mintedVersion}`;
-  if (scrubCache?.key !== key) scrubCache = { key, s: new Scrubber(secretValues()) };
-  return scrubCache.s;
+  if (scrubCache?.key !== key) scrubCache = { key, byHost: new Map() };
+  let s = scrubCache.byHost.get(host);
+  if (!s) {
+    // ponytail: one Scrubber per host until the next change; a session picking endless hosts grows it to 4096, then
+    // it is dropped whole
+    if (scrubCache.byHost.size >= 4096) scrubCache.byHost.clear();
+    s = new Scrubber(secretValues(host));
+    scrubCache.byHost.set(host, s);
+  }
+  return s;
 }
 
 /** The credential's `hosts`, else the manifest entry of the same name, else the manifest entry of the same type (v7). */

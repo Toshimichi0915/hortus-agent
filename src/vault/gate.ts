@@ -166,6 +166,32 @@ export function check(input: CheckInput): "pass" | { pending: number } {
   return { pending: id };
 }
 
+export const NOTIFY_MS = 60_000;
+
+/**
+ * `send` at most once per `ms`: the first text goes at once, what arrives within the window is counted and sent as one
+ * "N more approvals pending" when it closes. owner.notify's DM goes through it: a burst of 200 pending approvals is two
+ * DMs, not 200 into the messenger's rate limit.
+ */
+export function coalesce(send: (text: string) => void, ms = NOTIFY_MS): (text: string) => void {
+  let held = 0;
+  let window: NodeJS.Timeout | undefined;
+  const fire = (text: string): void => {
+    send(text);
+    window = setTimeout(() => {
+      window = undefined;
+      const n = held;
+      held = 0;
+      if (n) fire(`${n} more approval${n > 1 ? "s" : ""} pending`);
+    }, ms);
+    window.unref();
+  };
+  return (text) => {
+    if (window) held++;
+    else fire(text);
+  };
+}
+
 export function decide(
   id: number,
   decision: "approve" | "reject",

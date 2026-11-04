@@ -11,6 +11,15 @@ export interface ReplyRow {
 
 /** One stdout line (StdoutLine JSON in `replies.body`) as HTML; also what the chat SSE sends. */
 export function replyLine(r: ReplyRow): Raw {
+  try {
+    return line(r);
+  } catch {
+    // the row is the Worker's line: one whose JSON cannot be re-serialized (nested too deep) shows as its text
+    return h`<div class="r text">${r.body.slice(0, 64 * 1024)}</div>`;
+  }
+}
+
+function line(r: ReplyRow): Raw {
   const l = parse<Record<string, unknown>>(r.body);
   const text = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v ?? ""));
   if (!l || typeof l !== "object") return h`<div class="r text">${r.body}</div>`;

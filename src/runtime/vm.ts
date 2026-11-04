@@ -10,8 +10,8 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Config } from "../config.ts";
-import { logger } from "../log.ts";
 import { openAppend } from "../hostile.ts";
+import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import type { Role, TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
@@ -228,6 +228,10 @@ export async function startVm(o: VmOpts): Promise<Child> {
         "--shared-dir",
         s.path,
         ...(s.ro ? ["--readonly"] : []),
+        // its INFO/WARN lines (file handles, rlimits, "client connected") filled the console.log tail a failed
+        // boot's card shows, hiding QEMU's own error
+        "--log-level",
+        "error",
       ];
       await attach(spawn("virtiofsd", args, { stdio: ["ignore", "ignore", "pipe"] }));
       sockets.push({ tag: s.tag, sock });

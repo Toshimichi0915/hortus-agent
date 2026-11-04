@@ -19,6 +19,7 @@ import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
 import "../planner/tools.ts";
 import { cgroup, dispatcherModule, exitHooks, runtimeModule, sessionNet, tasks, vm } from "../runtime/index.ts";
 import { schedulesModule } from "../schedules/schedules.ts";
+import { coalesce } from "../vault/gate.ts";
 import { gateDeps, transformsDofModule, vaultModule } from "../vault/index.ts";
 
 /** Start order: the mirror (commit, dof.search) before the gateway that writes it; the vault (CA, shipped transforms),
@@ -105,11 +106,12 @@ async function main(): Promise<void> {
   // approval decisions (and later merge/rebase notes) reach the task's inbox, which re-queues a waiting task
   gateDeps.inboxWrite = (id, msg) => void tasks.inboxWrite(id, msg);
   // owner.notify: a one-line DM per new pending approval; the bot's DM is mirrored and never wakes the Planner
-  gateDeps.notify = (text) => {
+  // at most one a minute (gate.coalesce): a burst is its first DM and one "N more", not one DM per approval
+  gateDeps.notify = coalesce((text) => {
     const dof = ctx.config.owner.notify;
     if (!dof) return;
     ownerDm(dof, `${text} ${consoleUrl()}/approvals`).catch((e) => log.error("owner.notify failed", e, { dof }));
-  };
+  });
   // planner.runtime = "vm" (and 3g's Worker VMs): the proxy finds a VM by its tap address
   vm.init({ links });
 

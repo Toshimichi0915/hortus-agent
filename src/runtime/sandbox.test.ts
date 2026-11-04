@@ -197,7 +197,11 @@ function suite(): void {
         .filter((l) => l.startsWith("rn ") && l.slice(3).startsWith(`${h}/`))
         .map((l) => l.slice(3));
       const allowed = RW_HOME.map((p) => realpathSync.native(existsSync(join(h, p)) ? join(h, p) : h));
-      for (const p of rn) assert.ok(allowed.some((a) => p === a || p.startsWith(`${a}/`)), p);
+      for (const p of rn)
+        assert.ok(
+          allowed.some((a) => p === a || p.startsWith(`${a}/`)),
+          p,
+        );
       for (const p of [".cargo", ".cargo/bin", ".pyenv", ".rustup", ".local/share/pnpm", ".gradle", ".npm"])
         assert.ok(!rn.includes(join(h, p)), p);
     });
@@ -217,6 +221,21 @@ function suite(): void {
       symlinkSync(evil, join(out, "work"));
       caches(out);
       assert.deepEqual(readdirSync(evil), []);
+    });
+    test("a link planted in a writable tree never extends the next session's write access (/tmp/x → ~/.bashrc)", async () => {
+      // a deny path inside the writable tree makes the builder walk it entry by entry, as HORTUS_HOME under /tmp does
+      const tree = join(root, "rwtree");
+      const victim = join(root, "victim");
+      mkdirSync(join(tree, "secret"), { recursive: true });
+      mkdirSync(victim);
+      writeFileSync(join(tree, "y"), "");
+      symlinkSync(victim, join(tree, "link"));
+      const c = Config.parse({ policy: { deny: [join(tree, "secret")], cache: [tree] } });
+      const p = profile("unattended", task, c);
+      assert.ok(!p.split("\n").includes(`rn ${tree}/link`));
+      denied(await shimSh(p, `touch ${tree}/link/x`));
+      denied(await shimSh(p, `touch ${victim}/x`));
+      ok(await shimSh(p, `echo >> ${tree}/y`));
     });
     test("a file created in a denied directory after spawn stays unreachable", async () => {
       const p = shimSh(prof(), `sleep 0.3; cat ${H}/late.txt`);
@@ -311,6 +330,9 @@ function suite(): void {
         config,
         onStdout() {},
       });
+      // killed before the shim joined, the shim finds its cgroup gone and exits on its own (code, not signal)
+      for (let i = 0; i < 100 && (await cgroup.pids("T")).length === 0; i++)
+        await new Promise((r) => setTimeout(r, 20));
       await k.kill();
       assert.equal((await k.wait()).signal, "SIGKILL");
       assert.ok(!existsSync(cgroup.path("T")));

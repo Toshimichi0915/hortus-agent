@@ -136,7 +136,14 @@ const reqs = (id: string): { messages: { role: string; content?: string; text?: 
   return readFileSync(p, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l))
+    .flatMap((l) => {
+      // the fake appends while the test reads: a line still being written is skipped
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    })
     .filter((r) => r.tools.length);
 };
 const texts = (c: Card) => c.replies.map((r) => r.body.text ?? r.body.message ?? "").join("\n");

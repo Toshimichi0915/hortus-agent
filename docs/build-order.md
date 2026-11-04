@@ -74,11 +74,13 @@ Solid arrows are hard dependencies; dotted ones improve the done-when (no click 
 | 3d | Remote console | as v6 step 3d | 3b, 3c, 3e–3h | done (software authenticator; a real phone passkey untested) |
 | 3e | (v6 step 7) gate `auto`, `grant` records, `scope.credentials`, `judge_notes`, `prompt_hash` | as v6 step 7 | 3b–3d, 3f–3h | done; the live judge opt-in (`HORTUS_TEST_LLM=1`) |
 | 3f | (v6 step 8) transforms DOF, test runner, manifest approval with the credential form, `aws-sigv4` | as v6 step 8 | 3b–3e, 3g, 3h | done |
-| 3g | (v6 step 5) Worker VM: image, initramfs, boot, virtiofs, taps, `console.log`, kill on `hours`, Planner VM runtime | as v6 step 5 | 3b–3f, 3h | partial: VM boot tested only in the 3g agent's run (`HORTUS_TEST_VM=1`, needs the image and `/dev/kvm`); `planner.runtime: vm` untested |
+| 3g | (v6 step 5) Worker VM: image, initramfs, boot, virtiofs, taps, `console.log`, kill on `hours`, Planner VM runtime | as v6 step 5 | 3b–3f, 3h | done, opt-in (`HORTUS_TEST_VM=1`, needs a current image and `/dev/kvm`): boot (`src/runtime/vm.test.ts`); SIGKILL during start and mid-run with orphan reaping, the deadline across a restart, `vm.max_concurrent`, a kernel QEMU refuses (`src/e2e/vm.test.ts`); taps and the Planner VM with `HORTUS_TEST_NET=1`. Unverified: a kernel that loads and then hangs (no boot timeout: it runs to the `hours` deadline) |
 | 3h | (v6 step 9) browser tools, `cookie` transform, project `origins`, `browser_login`, login view | as v6 step 9 | 3b–3g | done |
-| 4 | Planner: batch loop, tools, `scope.project`, `owner.notify`, guards, `planner.runtime` | as v6 step 4 | 4b | done with a scripted Planner (`src/e2e/step4.test.ts`); live Planner opt-in (`step4live`); the Planner VM path untested |
+| 4 | Planner: batch loop, tools, `scope.project`, `owner.notify`, guards, `planner.runtime` | as v6 step 4 | 4b | done with a scripted Planner (`src/e2e/step4.test.ts`); live Planner opt-in (`step4live`); the Planner VM end to end over taps opt-in (`src/e2e/vm.test.ts`, `HORTUS_TEST_VM=1 HORTUS_TEST_NET=1`); the Planner VM is not held to `vm.max_concurrent` |
 | 4b | `discord`, `telegram`, `ws:text` | as v6 step 4b | 4 | done against fake Discord/Telegram; real services pending credentials |
 | 6 | Forge interface, `github` | as v6 step 6 | — | done against the fake GitHub (`src/e2e/step6.test.ts`, Planner-routed); a real GitHub App pending credentials |
 | 6b | `gitlab`, `bitbucket`, `equals`, `host` | as v6 step 6b | — | done against fake GitLab/Bitbucket (`src/connectors/forges.test.ts`, parameterized over the three forges); real services pending credentials |
 
 Critical path: F0 → {F1, F2} → 1 → 2 → 3 → 4 → 6. Everything in wave 3b–3h is off it.
+
+Across steps: `src/e2e/fuzz.test.ts` (default suite) feeds every hostile reader random and adversarial input (v7 › Testing); `src/e2e/load.test.ts`, `src/mirror/load.test.ts` and the approvals burst in `src/console/app.test.ts` cover concurrency and load (default suite; numbers in v7 › Testing).

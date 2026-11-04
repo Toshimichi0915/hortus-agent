@@ -116,7 +116,10 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
       grant(p, mode, deny, out);
       continue;
     }
-    // The shim follows links: grant a link only when its whole target is clear of the deny set.
+    // The shim follows links: a writable grant never does (a session writes /tmp, the caches and out/: a link it plants
+    // there, `/tmp/x → ~/.bashrc`, would hand the next session rw on the target); its target's own path is walked from
+    // `/` anyway. A read-only one only when the whole target is clear of the deny set.
+    if (mode !== "ro") continue;
     const real = resolve(p);
     if (existsSync(real) && !deny.some((d) => under(real, d) || under(d, real)) && !p.includes("\n"))
       out.push(`${mode} ${p}`);

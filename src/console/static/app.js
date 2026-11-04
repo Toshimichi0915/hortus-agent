@@ -36,8 +36,35 @@ function localTimes(root = document) {
 }
 localTimes();
 
+/**
+ * `f` once at a time: calls while it runs fold into one more run after it, so a burst of 200 approvals is two page
+ * fetches, not 200 racing ones (an older response landing last). Resolves after a run that started after the call.
+ */
+function single(f) {
+  let running = null;
+  let queued = null;
+  const run = () => {
+    if (!running) {
+      running = f().finally(() => {
+        running = null;
+      });
+      return running;
+    }
+    queued ??= running
+      .catch(() => {})
+      .then(() => {
+        queued = null;
+        return run();
+      });
+    return queued;
+  };
+  return run;
+}
+const refreshNav = single(navBadge);
+const refresh = single(rerender);
+
 /** Only the nav's approvals badge (pages without approvals on them are not re-fetched). */
-async function refreshNav() {
+async function navBadge() {
   const n = (await post("approval.list", { status: "pending", limit: 500 }).catch(() => null))?.length;
   const a = $('nav a[href="/approvals"]');
   if (n === undefined || !a) return;
@@ -47,7 +74,7 @@ async function refreshNav() {
 }
 
 /** Re-fetch this page and swap every [data-refresh] container (and the nav badge); textareas outside stay. */
-async function refresh() {
+async function rerender() {
   const doc = new DOMParser().parseFromString(await (await fetch(location.href)).text(), "text/html");
   // the focused control is about to be replaced: focus its twin after (keyboard users keep their place)
   const active = document.activeElement;

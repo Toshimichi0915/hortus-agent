@@ -502,7 +502,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const llmCall = llm !== undefined && llmEntry !== undefined && (llmEntry.transform ?? llm) === tf?.name;
 
   // 5. raw secrets anywhere
-  const scrub = scrubber();
+  const scrub = scrubber(host);
   for (const s of everything(raw)) {
     const hit = scrub.find(s);
     if (hit) return refuse(403, "raw credential", { host, placeholder: hit });
@@ -680,7 +680,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     }
   }
   // a token minted just now must be in the set that scrubs this very response
-  const s = tokens.size ? scrubber() : scrub;
+  const s = tokens.size ? scrubber(host) : scrub;
   return {
     client,
     host,
@@ -865,7 +865,7 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
       const r = transforms.response(COOKIE, { status, headers: joined(headers), body: null }, p.raw);
       if (r.capture?.length) {
         store(p, r.capture);
-        scrub = scrubber();
+        scrub = scrubber(p.host);
         headers = scrub.headers(flatHeaders(res.headers));
       }
     } catch (e) {
@@ -928,7 +928,7 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   }
   if (capture.length) {
     store(p, capture);
-    scrub = scrubber();
+    scrub = scrubber(p.host);
   }
   addRefs(p, result.refs, result.repos);
   headers = {};

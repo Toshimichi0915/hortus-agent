@@ -38,7 +38,11 @@ export async function pids(id: string): Promise<number[]> {
 
 /** SIGKILL everything in the cgroup, wait (≤ 5 s) until it is empty, remove it. Missing cgroup → no-op. */
 export async function kill(id: string): Promise<void> {
-  const p = path(id);
+  return killPath(path(id));
+}
+
+/** `kill` by directory (recovery: a task cgroup an earlier hortusd left in its own, older scope). */
+export async function killPath(p: string): Promise<void> {
   try {
     await writeFile(join(p, "cgroup.kill"), "1");
   } catch (e) {

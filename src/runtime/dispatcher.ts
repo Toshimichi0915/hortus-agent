@@ -9,17 +9,17 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { scan } from "../agent/loop.ts";
+import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { now } from "../db.ts";
-import { publishLog } from "../mirror/index.ts";
-import { prepareClone } from "../projects/origin.ts";
 import { appendText, MAX_ENTRIES, MAX_LINE, readCapped, readDir } from "../hostile.ts";
+import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
+import { prepareClone } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
-import type { Config } from "../config.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
-import { type Child, type Exit, agentCmd, type Loopback, spawnSandboxed } from "./host.ts";
+import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
@@ -57,6 +57,20 @@ interface Running {
   child?: Child;
   done: Promise<void>;
   stopTimer?: NodeJS.Timeout;
+  /** a Worker session's `hours` so far (its row's at start + the time since), persisted by the tick */
+  hours?: () => number;
+}
+
+/** how often the tick writes a running session's `hours`: a hortusd killed mid-run loses at most this much of it,
+ * where it lost the whole run (and its VM got the full remaining budget again after the restart) */
+const HOURS_EVERY_MS = 5000;
+let hoursSaved = 0;
+
+function saveHours(): void {
+  if (Date.now() - hoursSaved < HOURS_EVERY_MS) return;
+  hoursSaved = Date.now();
+  const q = db().prepare("UPDATE tasks SET hours = ? WHERE id = ? AND status = 'running'");
+  for (const [id, r] of running) if (r.hours) q.run(r.hours(), id);
 }
 
 const running = new Map<string, Running>();
@@ -79,6 +93,7 @@ function tick(): void {
   if (!ctx || ticking || stopping) return;
   ticking = true;
   try {
+    saveHours();
     if (existsSync(paths.paused())) return;
     const rows = db()
       .prepare("SELECT * FROM tasks WHERE status = 'queued' AND kind != 'planner' ORDER BY updated")
@@ -138,7 +153,7 @@ async function loopbackLink(
   );
   let address: string | undefined;
   for (let n = 2; n <= 254 && !address; n++) if (!taken.has(`127.0.0.${n}`)) address = `127.0.0.${n}`;
-  if (!address) return { env: {} };
+  if (!address) throw new Error("no loopback alias free"); // as sessionNet.open: no session without its address
   links.register(address, role, id, "session");
   const { http } = await listen("127.0.0.1", listenOpts(ctx));
   // a listener on the alias itself, for git (forge clones; prepareClone reuses it for the project origin)
@@ -162,7 +177,8 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
   const kind = KINDS[row.kind] ?? KINDS.unattended;
   const startedAt = Date.now();
   tasks.setStatus(row.id, "running", { started: now(), error: null });
-  const entry: Running = { vm, done: Promise.resolve() };
+  // finish adds to row.hours (the value at start), so the tick's writes in between are never counted twice
+  const entry: Running = { vm, done: Promise.resolve(), hours: () => row.hours + (Date.now() - startedAt) / 3.6e6 };
   running.set(row.id, entry);
   let lastError: string | undefined;
   let thinking = "";
@@ -219,9 +235,10 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
             return;
           }
           flushThinking();
-          if (kind.chat) reply(row.id, line ?? l);
+          // the line as the Worker wrote it: re-serializing its JSON throws on one nested a million deep
+          if (kind.chat) reply(row.id, l);
           else {
-            if (line?.type === "error" || line?.type === "status") reply(row.id, line);
+            if (line?.type === "error" || line?.type === "status") reply(row.id, l);
             appendText(consoleLog, `${l}\n`);
           }
         },

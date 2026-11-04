@@ -4,13 +4,13 @@ import { z } from "zod";
 import { Config, save } from "../config.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { define } from "../rpc.ts";
+import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
 import { bus } from "./events.ts";
 import { parse } from "./html.ts";
 import { lastReplies } from "./pages/chat.ts";
 import { CLOSED_SQL, OPEN_SQL, type TaskRow } from "./pages/tasks.ts";
 import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
-import { localConsole } from "../runtime/net.ts";
 import { type Console, startServer } from "./server.ts";
 
 export { bus } from "./events.ts";
@@ -47,6 +47,18 @@ define("task.list", {
   },
 });
 
+/** A `replies` body (the Worker's stdout line) as JSON when it serializes back, else its text: a line nested a million
+ * deep parses but throws in the response's JSON.stringify, which made the task's card unreadable. */
+function line(body: string): unknown {
+  const v = parse(body);
+  try {
+    JSON.stringify(v);
+    return v ?? body;
+  } catch {
+    return body;
+  }
+}
+
 define("task.get", {
   roles: [...owner],
   input: z.object({ id: z.string() }),
@@ -58,7 +70,7 @@ define("task.get", {
     return {
       task: taskOut(t),
       summary: t.summary,
-      replies: lastReplies(current as Ctx, id).map((r) => ({ ...r, body: parse(r.body) ?? r.body })),
+      replies: lastReplies(current as Ctx, id).map((r) => ({ ...r, body: line(r.body) })),
       approvals: rows<{ summary: string }>(
         "SELECT * FROM approvals WHERE task_id = ? AND status = 'pending' ORDER BY id",
       ).map((a) => ({ ...a, summary: parse(a.summary) ?? null })),

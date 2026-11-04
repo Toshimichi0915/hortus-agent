@@ -28,10 +28,50 @@ function excerpt(output: string): string {
   return `${Buffer.from(output).subarray(0, EXCERPT).toString()}\n… (${bytes} bytes)`;
 }
 
+const CUT = Symbol("cut");
+
+/**
+ * `JSON.stringify(v, null, 2)` cut at `max` chars, at a cost bounded by `max`: the input is the Worker's, and a 6 KB
+ * line nested 3,000 deep pretty-prints to 18 MB (a session of them ran hortusd out of memory).
+ */
+export function pretty(v: unknown, max = EXCERPT): string {
+  let out = "";
+  const w = (s: string) => {
+    out += s;
+    if (out.length > max) throw CUT;
+  };
+  const go = (x: unknown, ind: string): void => {
+    if (x === null || typeof x !== "object") {
+      w(JSON.stringify(x) ?? "null");
+      return;
+    }
+    const arr = Array.isArray(x);
+    const items: [string, unknown][] = arr ? x.map((e, i) => [String(i), e]) : Object.entries(x);
+    if (!items.length) {
+      w(arr ? "[]" : "{}");
+      return;
+    }
+    w(arr ? "[\n" : "{\n");
+    items.forEach(([k, e], i) => {
+      w(`${ind}  ${arr ? "" : `${JSON.stringify(k)}: `}`);
+      go(e, `${ind}  `);
+      w(i < items.length - 1 ? ",\n" : "\n");
+    });
+    w(`${ind}${arr ? "]" : "}"}`);
+  };
+  try {
+    go(v, "");
+  } catch (e) {
+    if (e !== CUT) throw e;
+    return `${out.slice(0, max)}\n… (cut at ${max} chars)`;
+  }
+  return out;
+}
+
 function renderMessage(m: Message): string {
   if (m.role === "user") return m.content;
   if (m.role === "assistant") {
-    const calls = m.toolCalls.map((c) => fenced("json", JSON.stringify({ name: c.name, input: c.input }, null, 2)));
+    const calls = m.toolCalls.map((c) => fenced("json", pretty({ name: c.name, input: c.input })));
     return [m.text, ...calls].filter(Boolean).join("\n\n");
   }
   return m.results.map((r) => (r.image ? "[image]" : fenced("", excerpt(r.output)))).join("\n\n");

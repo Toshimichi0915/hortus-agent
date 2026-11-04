@@ -74,7 +74,12 @@ test("a Slack message is a file on main within seconds and dof search finds it",
   assert.match(text, /deploy the fix tonight/);
   const log = execFileSync("git", ["-C", paths.dofRepo("slack"), "log", "--format=%s", "main"], { encoding: "utf8" });
   assert.match(log, /^sync\(slack\)/m);
-  const hits = (await rpc.call("dof.search", { q: "deploy" })) as { path: string }[];
+  // the file lands in the worktree before its commit is indexed
+  let hits: { path: string }[] = [];
+  for (let n = 0; n < 250 && !hits.some((h) => h.path.endsWith(`${msg.ts}.md`)); n++) {
+    if (n) await new Promise((r) => setTimeout(r, 20));
+    hits = (await rpc.call("dof.search", { q: "deploy" })) as { path: string }[];
+  }
   assert.ok(
     hits.some((h) => h.path.endsWith(`${msg.ts}.md`)),
     JSON.stringify(hits),

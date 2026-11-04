@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
-import { type Browser, CHROMIUM, type Cdp, connect, launch, page } from "../browser/cdp.ts";
+import { type Browser, type Cdp, CHROMIUM, connect, launch, page } from "../browser/cdp.ts";
 import { load } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
@@ -17,6 +17,7 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { tempDir } from "../test/until.ts";
+import { bus } from "./events.ts";
 import { consoleModule } from "./index.ts";
 import { approvalEntry } from "./pages/approvals.ts";
 
@@ -122,6 +123,35 @@ test("a decided merge entry folds its patch excerpt; a pending one shows it", ()
   });
   assert.match(approvalEntry(row("replaced")).html, /<details><summary>the change<\/summary><p class="req">/);
   assert.doesNotMatch(approvalEntry(row("pending")).html, /the change/);
+});
+
+test("200 approvals in a burst: the open Approvals page re-renders a few times, not 200", { skip }, async () => {
+  await go("/approvals");
+  await sleep(300); // the stream is open
+  const fetches = `performance.getEntriesByType("resource").filter((e) => new URL(e.name).pathname === "/approvals").length`;
+  const before = await ev<number>(fetches);
+  const ins = ctx.db.prepare(
+    "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES ('request', 'credential:x', ?, 't1', ?, 'pending', ?, '{}')",
+  );
+  for (let i = 0; i < 200; i++) {
+    const r = ins.run(
+      `h${i}`,
+      JSON.stringify({ method: "POST", host: "api.example", path: `/p/${i}` }),
+      new Date().toISOString(),
+    );
+    bus.emit("approvals", { id: Number(r.lastInsertRowid), task: "t1" }); // as gate.check does
+  }
+  await until(`document.querySelectorAll('[data-call="approval.decide"]').length >= 200`, 15_000);
+  await sleep(500);
+  const n = (await ev<number>(fetches)) - before;
+  const t0 = performance.now();
+  const page = await (await fetch(`${base}/approvals`)).text();
+  const ms = performance.now() - t0;
+  console.log(
+    `# load approvals: 200 pending, page ${(page.length / 1024).toFixed(0)} KB in ${ms.toFixed(0)} ms; ${n} re-fetches`,
+  );
+  assert.ok(n <= 3, `${n} page re-fetches for one burst`);
+  assert.ok(ms < 500, `${ms} ms`);
 });
 
 test("cells carry their column name; the chat shows its stream's state", { skip }, async () => {

@@ -17,6 +17,9 @@ import type { Connector, Event, Forge, Log } from "../types.ts";
 import { connectorOf } from "./gateway.ts";
 
 export const MAX_BODY = 25 * 1024 * 1024;
+/** request bodies held at once, over every delivery in flight */
+export const MAX_INFLIGHT = 4 * MAX_BODY;
+let inflight = 0;
 export const POLL_MS = 10 * 60_000;
 export const REDELIVER_MS = 3600_000;
 /** the delivery log's retention */
@@ -93,14 +96,32 @@ export function createWebhooks(deps: WebhookDeps): Webhooks {
     if (Number(req.headers["content-length"] ?? 0) > MAX_BODY) return refuse(413);
     const chunks: Buffer[] = [];
     let n = 0;
-    for await (const c of req as AsyncIterable<Buffer>) {
-      n += c.length;
-      if (n <= MAX_BODY) chunks.push(c);
+    let held = 0;
+    let busy = false;
+    // the tunnel is the internet's way in and the signature is checked after the body: every unsigned 25 MB POST
+    // in flight is held at once, so the sum is capped (past it: 503, GitHub retries from its delivery log)
+    try {
+      for await (const c of req as AsyncIterable<Buffer>) {
+        n += c.length;
+        if (n > MAX_BODY) continue;
+        if (inflight + c.length > MAX_INFLIGHT) {
+          busy = true;
+          break;
+        }
+        inflight += c.length;
+        held += c.length;
+        chunks.push(c);
+      }
+    } finally {
+      inflight -= held;
     }
+    if (busy) return end(503);
     if (n > MAX_BODY) return end(413);
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers[k] = [v].flat().join(", ");
-    const r = await forge.webhook({ headers, body: Buffer.concat(chunks) });
+    const body = Buffer.concat(chunks);
+    chunks.length = 0;
+    const r = await forge.webhook({ headers, body });
     if (!r.ok) return end(401);
     if (r.event && !(await route(dof, forge, r.event))) return end(503);
     end(200);

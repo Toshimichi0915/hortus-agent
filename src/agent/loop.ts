@@ -26,7 +26,8 @@ export function scan(dir: string): { tokens: number; cursor: number } {
   // hortusd runs this over a Worker's directory too: no links, FIFOs, unbounded files or file counts
   let budget = MAX_SESSIONS;
   // the Worker's file: `null` lines, strings, negative or non-number usage must neither throw nor shrink the count
-  const n = (x: unknown): number => (typeof x === "number" && x > 0 && Number.isFinite(x) ? x : 0);
+  // (and 1e308 twice is Infinity: one usage is under 1e12)
+  const n = (x: unknown): number => (typeof x === "number" && x > 0 && x < 1e12 ? x : 0);
   const count = (text: string) => {
     budget -= text.length;
     // a session's first user message is the brief (or a run's text, a handoff's notes), never a drained message: a
@@ -55,7 +56,7 @@ export function scan(dir: string): { tokens: number; cursor: number } {
       for (const n of names) if (budget > 0) count(read(n, Math.min(MAX_SESSION, budget))?.text ?? "");
     },
   );
-  tokens += Math.max(0, Number(readCapped(join(dirname(dir), AUX_TOKENS), 32)?.text) || 0);
+  tokens += n(Number(readCapped(join(dirname(dir), AUX_TOKENS), 32)?.text));
   return { tokens, cursor };
 }
 

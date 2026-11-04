@@ -11,7 +11,7 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, mock, test } from "node:test";
 import { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
@@ -445,4 +445,21 @@ test("Credentials page marks durable grants as enabled", async () => {
   const html = await credentials(ctx, { m: [], q: new URLSearchParams() });
   assert.match(html, /<td>slack<\/td>(<td>[^<]*<\/td>){3}<td>enabled<\/td>/);
   assert.match(html, /<td>llm<\/td>(<td>[^<]*<\/td>){3}<td><\/td>/);
+});
+
+test("coalesce (owner.notify): a burst of pending approvals is one DM, then one 'N more' when the minute is up", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const sent: string[] = [];
+  const notify = gate.coalesce((t) => void sent.push(t));
+  try {
+    for (let i = 1; i <= 200; i++) notify(`approval ${i} pending (credential:x)`);
+    assert.deepEqual(sent, ["approval 1 pending (credential:x)"]);
+    mock.timers.tick(gate.NOTIFY_MS);
+    assert.deepEqual(sent.slice(1), ["199 more approvals pending"]);
+    mock.timers.tick(gate.NOTIFY_MS);
+    notify("approval 201 pending (credential:x)");
+    assert.equal(sent.at(-1), "approval 201 pending (credential:x)");
+  } finally {
+    mock.timers.reset();
+  }
 });

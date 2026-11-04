@@ -150,7 +150,14 @@ const reqs = (id: string): { messages: { role: string; content?: string }[] }[] 
   return readFileSync(p, "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l))
+    .flatMap((l) => {
+      // the fake appends while the test reads: a line still being written is skipped
+      try {
+        return [JSON.parse(l)];
+      } catch {
+        return [];
+      }
+    })
     .filter((r) => r.tools.length);
 };
 /** a read-write handle on the daemon's DB (WAL): the test's clock is a row's fire_at */
