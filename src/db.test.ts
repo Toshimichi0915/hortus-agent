@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
 import { test } from "node:test";
 import { openDb } from "./db.ts";
 import * as paths from "./paths.ts";
@@ -68,4 +69,20 @@ test("ON DELETE CASCADE removes task_refs and schedules", () => {
   db.prepare("DELETE FROM tasks WHERE id = 't1'").run();
   assert.equal((db.prepare("SELECT count(*) n FROM task_refs").get() as { n: number }).n, 0);
   assert.equal((db.prepare("SELECT count(*) n FROM schedules").get() as { n: number }).n, 0);
+});
+
+test("the WAL file shrinks back to journal_size_limit after a big transaction is checkpointed", () => {
+  const file = `${tempDir("hortus-wal-")}/db.sqlite`;
+  const db = openDb(file);
+  const wal = () => statSync(`${file}-wal`).size;
+  db.exec("CREATE TABLE big(b BLOB)");
+  db.exec("BEGIN");
+  for (let i = 0; i < 400; i++) db.prepare("INSERT INTO big VALUES (?)").run(Buffer.alloc(64 * 1024, i));
+  db.exec("COMMIT");
+  assert.ok(wal() > 20 * 1024 * 1024, `wal ${wal()}`);
+  // the auto-checkpoint backfills it; the next write resets the WAL and truncates the file to the limit
+  db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  db.prepare("INSERT INTO big VALUES (?)").run(Buffer.alloc(16));
+  assert.ok(wal() <= 8 * 1024 * 1024, `wal ${wal()}`);
+  db.close();
 });

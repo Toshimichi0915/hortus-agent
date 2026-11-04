@@ -17,7 +17,7 @@ const { logger } = await import("../log.ts");
 const paths = await import("../paths.ts");
 const { call, serveSocket } = await import("../rpc.ts");
 const { commit, mirrorModule, parse, publishLog, render, search, writeLog } = await import("./index.ts");
-const { unsafe } = await import("./repo.ts");
+const { gcAuto, unsafe } = await import("./repo.ts");
 
 const db = openDb(paths.db());
 const config = Config.parse({
@@ -190,6 +190,24 @@ test("50 concurrent commits on one DOF, two DOFs in parallel", async () => {
   assert.ok(results.every((r) => r !== null));
   assert.equal(Number(git("slack", "rev-list", "--count", "main")), before + 50);
   assert.equal(Number(git("gh", "rev-list", "--count", "main")), 2);
+});
+
+test("loose objects are packed past gc.auto (repos say gc.auto 0), history and the index ref kept", async () => {
+  // git samples objects/17/: past `gc.auto / 256` loose objects there it packs (round 7 soak: they were never packed)
+  gcAuto.loose = 1;
+  try {
+    const before = Number(git("gh", "rev-list", "--count", "main"));
+    let n = 0;
+    const packs = () => Number(/^packs: (\d+)/m.exec(git("gh", "count-objects", "-v"))?.[1]);
+    while (packs() === 0 && n < 2000) await commit("gh", [msg(`P/!9/c${n}.md`, `gc ${n++}`)], `gc${n}`);
+    assert.ok(packs() > 0, `no pack after ${n} commits`);
+    assert.ok(Number(/^count: (\d+)/m.exec(git("gh", "count-objects", "-v"))?.[1]) < 10, "loose objects left");
+    assert.equal(Number(git("gh", "rev-list", "--count", "main")), before + n);
+    git("gh", "fsck", "--no-progress", "--connectivity-only");
+    git("gh", "rev-parse", "--verify", "refs/hortus/indexed");
+  } finally {
+    gcAuto.loose = 1000;
+  }
 });
 
 test("index follows A/M/D; files/ and binaries make no row", async () => {

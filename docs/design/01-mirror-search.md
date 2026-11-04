@@ -16,7 +16,7 @@ export interface Change { op: "put" | "patch" | "delete"; path: string; frontmat
 
 ### `src/mirror/repo.ts`
 
-One bare repo per DOF at `dof/<name>.git`, one worktree at `dof/<name>/` (`git worktree add`, branch `main`). `init(name)` creates both with an empty root commit, `user.name hortus`, `gc.auto 0`.
+One bare repo per DOF at `dof/<name>.git`, one worktree at `dof/<name>/` (`git worktree add`, branch `main`). `init(name)` creates both with an empty root commit, `user.name hortus`, `gc.auto 0` (no detached gc); every commit then runs `gc --auto` in the chain with `gc.auto=1000` and `gc.pruneExpire=never` (round 7: without it every object stayed loose for good, and each message rewrites its channel's tree).
 
 `commit(name, changes: Change[], message): Promise<{ sha: string; diff: DiffEntry[] } | null>`:
 

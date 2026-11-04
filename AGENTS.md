@@ -13,7 +13,7 @@ pnpm lint           # biome lint
 pnpm format         # biome format --write
 ```
 
-Tests run from compiled `dist/`, so build first. One file: `pnpm build && node --test dist/db.test.js`. Tests use `node:test` + `node:assert/strict`, colocated as `*.test.ts`. End-to-end tests (`src/e2e/`) run a real `hortusd` under `HORTUS_NO_NET=1` in a delegated user scope (`systemd-run --user --scope`) with fakes behind `dev.upstreams` and a fake provider plugin; they are in the default suite. Opt-in, skipped otherwise: `HORTUS_TEST_NET=1` (nftables and session addresses; passwordless sudo), `HORTUS_TEST_LLM=1` (live model calls; `HORTUS_TEST_MODEL`), `HORTUS_TEST_VM=1` (boots a Worker VM; `HORTUS_TEST_IMAGES` = the image directory, default `$HORTUS_HOME/images`). `KEEP=1` keeps an e2e test's fake directory (its `hortusd.log`).
+Tests run from compiled `dist/`, so build first. One file: `pnpm build && node --test dist/db.test.js`. Tests use `node:test` + `node:assert/strict`, colocated as `*.test.ts`. End-to-end tests (`src/e2e/`) run a real `hortusd` under `HORTUS_NO_NET=1` in a delegated user scope (`systemd-run --user --scope`) with fakes behind `dev.upstreams` and a fake provider plugin; they are in the default suite. Opt-in, skipped otherwise: `HORTUS_TEST_NET=1` (nftables and session addresses; passwordless sudo), `HORTUS_TEST_LLM=1` (live model calls; `HORTUS_TEST_MODEL`), `HORTUS_TEST_VM=1` (boots a Worker VM; `HORTUS_TEST_IMAGES` = the image directory, default `$HORTUS_HOME/images`), `HORTUS_TEST_SOAK=1` (`src/e2e/soak.test.ts` for `HORTUS_TEST_SOAK_MIN` minutes, default 60). `KEEP=1` keeps an e2e test's fake directory (its `hortusd.log`).
 
 ## Conventions
 
