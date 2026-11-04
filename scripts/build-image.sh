@@ -58,16 +58,18 @@ cat >"$root/etc/gitconfig" <<'EOF'
 	directory = *
 EOF
 # plain `git clone https://<forge>/o/r.git` carries the forge's placeholder (as host.ts › sandboxEnv does on the host):
-# one insteadOf per github DOF in hortusd.json.
+# one insteadOf per forge DOF in hortusd.json, with the user each forge wants (connectors/forge.ts › gitOf).
 # ponytail: baked at build time; a forge added later needs `hortus image build` again (or a task.json-driven entry)
 if [ -f "$home/hortusd.json" ]; then
   node -e '
 const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).dofs ?? {};
-for (const [n, c] of Object.entries(d))
-  if (c.type === "github") {
-    const h = c.host ?? "github.com";
-    console.log(`[url "https://x-access-token:hortus-secret-${n}@${h}/"]\n\tinsteadOf = https://${h}/`);
-  }' "$home/hortusd.json" >>"$root/etc/gitconfig"
+const forges = { github: ["x-access-token", "github.com"], gitlab: ["oauth2", "gitlab.com"], bitbucket: ["x-token-auth", "bitbucket.org"] };
+for (const [n, c] of Object.entries(d)) {
+  const g = forges[c.type];
+  if (!g) continue;
+  const h = c.type === "bitbucket" ? g[1] : (c.host ?? g[1]);
+  console.log(`[url "https://${g[0]}:hortus-secret-${n}@${h}/"]\n\tinsteadOf = https://${h}/`);
+}' "$home/hortusd.json" >>"$root/etc/gitconfig"
 fi
 # eth0's address comes from the kernel's ip= argument: systemd-network-generator writes the .network file for networkd.
 mkdir -p "$root/task/ctl" "$root/task/out" "$root/dof" "$root/repos" "$root/schedule"

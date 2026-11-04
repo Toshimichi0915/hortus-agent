@@ -27,7 +27,14 @@ interface Thing {
   author_association: string;
   created_at: string;
   updated_at: string;
-  pr?: { head: { ref: string; sha: string }; base: { ref: string }; merged: boolean; diff: string };
+  pr?: {
+    head: { ref: string; sha: string };
+    base: { ref: string };
+    merged: boolean;
+    diff: string;
+    /** every head it has had */
+    shas: string[];
+  };
 }
 interface FakeComment {
   id: number;
@@ -255,7 +262,8 @@ export class FakeGitHub {
   }
   private pullJson(r: FakeRepo, t: Thing) {
     const { pr, ...rest } = t;
-    return { ...rest, ...pr, diff: undefined, html_url: `https://github.com/${r.full_name}/pull/${t.number}` };
+    const html_url = `https://github.com/${r.full_name}/pull/${t.number}`;
+    return { ...rest, ...pr, diff: undefined, shas: undefined, html_url };
   }
   private commentJson(r: FakeRepo, c: FakeComment, review = false) {
     const t = r.things.get(c.n);
@@ -359,12 +367,33 @@ export class FakeGitHub {
       author_association: this.assoc(o.user),
       created_at: now,
       updated_at: now,
-      pr: { head: { ref: o.head, sha }, base: { ref: o.base ?? "main" }, merged: false, diff: o.diff ?? "" },
+      pr: {
+        head: { ref: o.head, sha },
+        base: { ref: o.base ?? "main" },
+        merged: false,
+        diff: o.diff ?? "",
+        shas: [sha],
+      },
     };
     r.things.set(t.number, t);
     const payload = { action: "opened", number: t.number, pull_request: this.pullJson(r, t) };
     const x = await this.deliver("pull_request", { ...payload, ...this.base(r, o.user) }, d);
     return { ...x, n: t.number, sha };
+  }
+
+  /** A commit on the PR's branch: the head moves, `synchronize` fires with `before` and `after`. */
+  async pushPR(full: string, n: number, o: { user: string; file: string; diff: string }, d?: DeliverOpts) {
+    const r = this.get(full);
+    const t = r.things.get(n);
+    if (!t?.pr) throw new Error(`fake: no PR !${n}`);
+    const before = t.pr.head.sha;
+    const sha = await this.commit(full, t.pr.head.ref, o.file, `${o.file}\n`);
+    Object.assign(t.pr, { head: { ...t.pr.head, sha }, diff: o.diff });
+    t.pr.shas.push(sha);
+    t.updated_at = this.ts();
+    const payload = { action: "synchronize", number: n, before, after: sha, pull_request: this.pullJson(r, t) };
+    const x = await this.deliver("pull_request", { ...payload, ...this.base(r, o.user) }, d);
+    return { ...x, sha };
   }
 
   review(
@@ -417,7 +446,8 @@ export class FakeGitHub {
     return this.deliver("pull_request_review_comment", { ...payload, ...this.base(r, o.user) }, d);
   }
 
-  /** A completed (or running) suite on `sha`; its `pull_requests` are the open PRs whose head is `sha`. */
+  /** A completed (or running) suite on `sha`; its `pull_requests` are the open PRs that had `sha` as a head (the
+   * payload's list is the suite's, so a suite finishing after a push still names the PR). */
   checkSuite(
     full: string,
     sha: string,
@@ -433,7 +463,7 @@ export class FakeGitHub {
       latest_check_runs_count: o.runs ?? 1,
     };
     r.suites.push(s);
-    const prs = [...r.things.values()].filter((t) => t.pr && t.state === "open" && t.pr.head.sha === sha);
+    const prs = [...r.things.values()].filter((t) => t.pr && t.state === "open" && t.pr.shas.includes(sha));
     const check_suite = { ...s, pull_requests: prs.map((t) => ({ number: t.number })) };
     return this.deliver("check_suite", { action: "completed", check_suite, ...this.base(r, "github-actions[bot]") }, d);
   }
@@ -630,6 +660,15 @@ export class FakeGitHub {
         return void res.end(t.pr.diff);
       }
       return ok(this.pullJson(r, t));
+    }
+    x = at(/^\/pulls\/(\d+)\/merge$/);
+    if (x && M === "PUT") {
+      const t = r.things.get(Number(x[1]));
+      if (!t?.pr) return json(404, { message: "Not Found" });
+      if (body.sha && body.sha !== t.pr.head.sha)
+        return json(409, { message: "Head branch was modified. Review and try the merge again." });
+      await this.closeThread(r.full_name, t.number, "hortus[bot]", { merged: true }, { drop: true });
+      return ok({ merged: true, sha: t.pr.head.sha });
     }
     x = at(/^\/pulls\/(\d+)\/reviews$/);
     if (x) {

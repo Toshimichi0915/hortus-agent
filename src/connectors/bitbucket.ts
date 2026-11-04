@@ -160,7 +160,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const u = b.actor;
     const own = !!u && !!idOf(u) && idOf(await me()) === idOf(u);
     const obj = b.comment ?? b.pullrequest ?? b.issue;
-    const text = oneLine(b.comment?.content?.raw ?? b.pullrequest?.title ?? b.issue?.title ?? b.commit_status?.state);
+    const result = b.commit_status && `${b.commit_status.state} on ${hash?.slice(0, 7)}`;
+    const text = oneLine(b.comment?.content?.raw ?? b.pullrequest?.title ?? b.issue?.title ?? result);
     return {
       dof: name,
       key,
@@ -351,8 +352,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       }
       if ((action === "unapproved" || action === "changes_request_removed") && r)
         return { changes: [{ op: "delete", path: at(p, thread, `review-${safe(idOf(r.user))}`) }], wake: false };
+      // the PR as it is now: a delivery can be late or out of order, and must not move head_sha back
+      const pr = await json<Pull>(`${R(p)}/pullrequests/${b.pullrequest.id}`);
       return {
-        changes: await prTop(p, b.pullrequest, action === "created" || action === "updated"),
+        changes: await prTop(p, pr, action === "created" || action === "updated"),
         wake: ["created", "fulfilled", "rejected"].includes(action),
       };
     },

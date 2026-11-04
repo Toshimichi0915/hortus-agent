@@ -12,7 +12,7 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 - Mirror: `#iid` issues, `!iid` MRs (`head` = `source_branch`, `base` = `target_branch`, `head_sha` = `last_commit.id`, `checks` from `pipeline` status: `success`/`failed`/`running`→`pending`), notes as messages, `GET /projects/{p}/merge_requests/{iid}/changes` → `diff.patch` (assembled from `changes[].diff` as unified diff), approvals as `review: approved`.
 - History: `/projects/{p}/issues?updated_after=`, `/merge_requests?updated_after=`, `/issues/{iid}/notes`, `/merge_requests/{iid}/notes`, `/changes`, `/pipelines?ref=`; cursor = max `updated_at`.
 - `projects()`: `GET /projects?membership=true&min_access_level=30` filtered by `repos`; `clone` = `https://<host>/<p>.git` (`oauth2:hortus-secret-gitlab`); `pushed` from `push` events.
-- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`, and every REST door to a ref (`merge_requests/*/merge`, `/rebase`, `merge_trains/**`, `repository/**`).
+- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`, and every REST door to a ref (`merge_requests/*/merge`, whose `render()` shows the `sha`, `/rebase`, `merge_trains/**`, `repository/**`).
 
 ### `src/connectors/bitbucket.ts`
 
@@ -21,7 +21,7 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 - Mirror: `#id` issues, `!id` PRs (`head` = `source.branch.name`, `base` = `destination.branch.name`, `head_sha` = `source.commit.hash`, `checks` from commit statuses), comments, `GET /repositories/{p}/pullrequests/{id}/diff` → `diff.patch`.
 - History: `/repositories/{p}/issues?q=updated_on>`, `/pullrequests?q=updated_on>` (state ALL), comments, diffs, statuses; cursor `updated_on`, sent unquoted without `Z` (BBQL datetimes). The issue tracker API is gone since 2026-08 (404/410 reads as no tracker).
 - `projects()`: exact `repos` names by `GET /repositories/{w}/{r}` (all a repository access token can do); globs by `GET /repositories/{workspace}?role=member` per workspace they name; none by `GET /user/workspaces` first (`account` scope: a workspace access token). `/user/permissions/repositories` ended 2026-04-14; `clone` = `https://bitbucket.org/<w/r>.git` (`x-token-auth:hortus-secret-bitbucket`).
-- Transform `bitbucket`: hosts `api.bitbucket.org`, `bitbucket.org`; `scope` `api.bitbucket.org/2.0/repositories/{project}/**`, `bitbucket.org/{project}.git/**`; consequential `DELETE api.bitbucket.org/**`, `POST bitbucket.org/**/git-receive-pack`, `POST api.bitbucket.org/2.0/repositories/*/*` (creation), and every REST door to a ref (`pullrequests/*/merge`, `src`, `refs/**`).
+- Transform `bitbucket`: hosts `api.bitbucket.org`, `bitbucket.org`; `scope` `api.bitbucket.org/2.0/repositories/{project}/**`, `bitbucket.org/{project}.git/**`; consequential `DELETE api.bitbucket.org/**`, `POST bitbucket.org/**/git-receive-pack`, `POST api.bitbucket.org/2.0/repositories/*/*` (creation), and every REST door to a ref (`pullrequests/*/merge`, no commit to pin: `render()` says so, `src`, `refs/**`).
 
 ### `equals` op
 

@@ -154,7 +154,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       p.comment ?? p.review ?? p.pull_request ?? p.issue;
     const ci = type === "check_suite";
     const prs = ci ? (p.check_suite?.pull_requests ?? []).map((x) => ref(repo, `!${x.number}`)) : [];
-    const text = line(p.comment?.body ?? p.review?.body ?? obj?.title ?? (p as { ref?: string }).ref);
+    const s = p.check_suite;
+    const result = s && `${s.conclusion ?? s.status} on ${s.head_sha.slice(0, 7)}`;
+    const text = line(p.comment?.body ?? p.review?.body ?? obj?.title ?? result ?? (p as { ref?: string }).ref);
     return {
       dof: name,
       key,
@@ -317,8 +319,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           if (!p.pull_request) return none;
           const a = p.action ?? "";
           const diff = ["opened", "reopened", "synchronize", "edited"].includes(a);
+          // the PR as it is now: a delivery can be late or out of order, and must not move head_sha back
+          const pr = await json<Pull>(`/repos/${repo}/pulls/${p.pull_request.number}`);
           return {
-            changes: await prTop(repo, p.pull_request, diff),
+            changes: await prTop(repo, pr, diff),
             wake: ["opened", "closed", "reopened"].includes(a),
           };
         }
@@ -335,13 +339,19 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         case "check_suite": {
           const s = p.check_suite;
           if (!s?.pull_requests?.length) return none;
-          const checks = await checksOf(repo, s.head_sha, [s]);
-          const changes: Change[] = s.pull_requests.map((x) => ({
-            op: "patch",
-            path: at(repo, `!${x.number}`),
-            frontmatter: { checks },
-          }));
-          return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
+          // `checks` is the PR head's, whatever commit this suite ran on; only a result on a head wakes
+          const prs = await Promise.all(s.pull_requests.map((x) => json<Pull>(`/repos/${repo}/pulls/${x.number}`)));
+          const onHead = (pr: Pull) => pr.head.sha === s.head_sha;
+          const changes = await Promise.all(
+            prs.map(
+              async (pr): Promise<Change> => ({
+                op: "patch",
+                path: at(repo, `!${pr.number}`),
+                frontmatter: { checks: await checksOf(repo, pr.head.sha, onHead(pr) ? [s] : []) },
+              }),
+            ),
+          );
+          return { changes, wake: prs.some((pr) => onHead(pr) && deps.hasRef(ref(repo, `!${pr.number}`))) };
         }
         case "repository":
           return p.action === "created" && p.repository

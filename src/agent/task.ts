@@ -36,6 +36,7 @@ export const TaskSchema = z.object({
     schedule: z.string().optional(),
   }),
   clone_url: z.string().optional(),
+  repo_urls: z.record(z.string(), z.string()).optional(),
   projects: z
     .record(z.string(), z.object({ path: z.string(), main: z.string(), runtime: z.enum(["host", "vm"]) }))
     .optional(),

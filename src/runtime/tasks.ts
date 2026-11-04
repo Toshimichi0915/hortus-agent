@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { jar } from "../browser/jar.ts";
 import type { Config } from "../config.ts";
+import { gitOf } from "../connectors/forge.ts";
 import { bus } from "../console/events.ts";
 import { crashPoint } from "../crash.ts";
 import type { Ctx } from "../ctx.ts";
@@ -265,6 +266,20 @@ function mergeOrigins(g: Config["origins"], t: string[] | null): TaskJson["origi
   return [...new Set([...g, ...t])];
 }
 
+/**
+ * Every mirrored forge project as `<dof>:<project>`: a chat gets them all (v6 › Forge origin).
+ * ponytail: read back from the mirror's directory name, so a project with `__` in its name stays out of a chat's
+ * scope, and one mirrored later waits for the next chat; ask the connector's `projects()` if that bites.
+ */
+function mirrored(c: Config): string[] {
+  return Object.keys(c.dofs).flatMap((dof) => {
+    const dir = join(paths.home(), "repos", dof);
+    if (!existsSync(dir)) return [];
+    const bare = readdirSync(dir).filter((f) => f.endsWith(".git"));
+    return bare.map((f) => `${dof}:${f.slice(0, -4).replace(/__/g, "/")}`);
+  });
+}
+
 /** Rebuilt from the row and the current config at every start. */
 export function taskJson(c: Config, row: TaskRow): TaskJson {
   const { provider, model, effort, context_window } = c.worker;
@@ -281,6 +296,12 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
   const script = row.kind === "run" ? readOr(join(paths.ctl(row.id), "script.sh")) : undefined;
   // 3h: the placeholder jar (own captures, and logins of the origins the task holds a grant on)
   const cookies = bound ? jar(bound.db, row.id) : [];
+  const repoUrls = (scope.repos ?? []).flatMap((r) => {
+    const i = r.indexOf(":");
+    const dof = c.dofs[r.slice(0, i)];
+    const git = dof && gitOf(dof);
+    return git ? [[r, `https://${git.host}/${r.slice(i + 1)}.git`]] : [];
+  });
   return {
     id: row.id,
     kind: row.kind,
@@ -309,6 +330,7 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
     },
     ...(script ? { script } : {}),
     ...(unattendedProject ? { clone_url: `https://hortusd.internal/git/${project}` } : {}),
+    ...(repoUrls.length ? { repo_urls: Object.fromEntries(repoUrls) } : {}),
     ...(row.kind === "chat"
       ? {
           projects: Object.fromEntries(
@@ -392,7 +414,7 @@ define("task.open", {
       title: text.replace(/\s+/g, " ").trim().slice(0, 80),
       // the owner's words arrive as [inbox 1]; repeating them as the brief would say everything twice
       brief: "A chat with the owner. Their messages arrive in your inbox.",
-      scope: { credentials: Object.keys(readVault()), repos: [] },
+      scope: { credentials: Object.keys(readVault()), repos: mirrored(c) },
       ...(project ? { project } : {}),
       ...(cwd ? { cwd } : {}),
     });

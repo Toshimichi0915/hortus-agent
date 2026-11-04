@@ -25,6 +25,7 @@
     "POST api.bitbucket.org/2.0/repositories/*/*/src/**",
     "POST api.bitbucket.org/2.0/repositories/*/*/refs/**",
     "POST api.bitbucket.org/2.0/repositories/*/*",
+    "POST api.bitbucket.org/2.0/repositories/*/*/pullrequests/*/merge",
     "PUT api.bitbucket.org/2.0/repositories/*/*",
     "POST api.bitbucket.org/2.0/repositories/*/*/hooks**",
     "PUT api.bitbucket.org/2.0/repositories/*/*/hooks**",

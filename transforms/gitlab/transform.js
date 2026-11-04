@@ -111,6 +111,16 @@ export function render(t) {
       return undefined;
     }
   }
+  // the `sha` is in the approved hash and GitLab answers 409 when the head moved: what the owner approved is what lands
+  const merge = p.match(/^\/api\/v4\/projects\/([^/]+)\/merge_requests\/(\d+)\/merge$/);
+  if (merge && t.method === "PUT") {
+    let sha = t.url.match(/[?&]sha=([0-9a-f]+)/)?.[1];
+    try {
+      sha ??= JSON.parse(t.body ?? "{}").sha;
+    } catch {}
+    const what = `merge MR ${decodeURIComponent(merge[1])}!${merge[2]}`;
+    return sha ? `${what} at ${String(sha).slice(0, 7)}` : `${what}: NO sha, lands whatever the head is by then`;
+  }
   if (t.method === "DELETE") return `DELETE ${decodeURIComponent(p)}`;
   return undefined;
 }
