@@ -34,6 +34,7 @@ record("task.open", () => ({ id: "t1" }));
 record("task.send");
 record("project.sync");
 record("task.stop");
+record("task.close");
 define("task.stream", {
   roles: ["owner"],
   input: z.unknown(),
@@ -92,7 +93,7 @@ async function waitFor(get: () => string, re: RegExp): Promise<void> {
 test("hortus ping without a daemon: one line, exit 1", async () => {
   const r = await run(["ping"], { HORTUS_HOME: tempDir("hortus-none-") });
   assert.equal(r.code, 1);
-  assert.match(r.err, /^hortusd is not running \(socket \\0hortus-[0-9a-f]+\)\n$/);
+  assert.match(r.err, /^hortusd is not running \(socket \\0hortus-[0-9a-f]+\): sudo systemctl start hortusd\n$/);
 });
 
 test("hortus tasks on an empty DB", async () => {
@@ -129,6 +130,12 @@ test("hortus help: stdout, exit 0; unknown command: named, usage, exit 64; <cmd>
   const sync = await run(["sync", "--force", "web"]);
   assert.equal(sync.code, 0);
   assert.equal(sync.out, "synced web\n");
+  // the direction a sync goes, pausing said as on the console; stop and close say they did it
+  const help = (await run(["help"])).out;
+  assert.match(help, /sync \[--force\] <project> +update the project's origin from its checkout/);
+  assert.match(help, /pause +queued tasks, schedules and the Planner wait; running tasks go on\./);
+  assert.equal((await run(["stop", "t1"])).out, "stopping\n");
+  assert.equal((await run(["close", "t1"])).out, "closed t1\n");
 });
 
 test("hortus chat: first line opens with the cwd, later lines send, stream printed, Ctrl-D exits 0", async () => {

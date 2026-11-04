@@ -24,10 +24,10 @@ function sse(name, handler, q = "") {
   return es;
 }
 
-/** <time datetime> (rendered in UTC) in the browser's own time zone. */
+/** <time datetime> (rendered in UTC) in the browser's own time zone; a relative one ("in 12 min", data-rel) stays. */
 const pad = (n) => String(n).padStart(2, "0");
 function localTimes(root = document) {
-  for (const t of root.querySelectorAll("time[datetime]")) {
+  for (const t of root.querySelectorAll("time[datetime]:not([data-rel])")) {
     const d = new Date(t.dateTime);
     if (Number.isNaN(d.getTime())) continue;
     t.textContent = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;

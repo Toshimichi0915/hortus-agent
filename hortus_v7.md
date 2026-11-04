@@ -281,3 +281,15 @@ Seeded `HORTUS_HOME` (5,000 tasks, a seventh with 20 KB briefs; 5,000 approvals,
 - **The badge** is `approval.count` (a count): it fetched 500 full pending rows on every `approvals` event on every page, and said 500 past 500.
 - **RPCs**: `task.list` and `approval.list` take `limit` (≤ 500, default 50) and `skip`, applied to each of their two lists (pending was uncapped). `hortus tasks|approvals` show 50 of each list and `… hortus tasks --all for every one` when cut; `--all` pages by 500.
 - Left alone (under ~200 ms and ~1 MB): Schedules (1,000 rows, 35 ms, 610 KB), the chat (its 1,000-line replay, 893 KB), Search (95 ms, already capped at 200 hits and 64K snippet bodies), Sources (40 ms: the forge rows scan `events` by `dof` without an index; add `events(dof, created)` past ~500k events), `/tasks/:id/log` (session.md, 881 KB, capped at 16 MB in round 5), `approval.list {}` (4 MB of JSON for 100 rows with diffs: an RPC, not a page; the CLI reads it in 78 ms), SSE streams (small payloads; the chat replays ≤ 1,000 lines). `src/console/large.test.ts` asserts the caps, the lines, the links and a loose time bound.
+
+## Review round 6 — UI pass
+
+Walked every page on a real hortusd (NO_NET, fake Slack, a dead GitLab, seeded tasks, approvals and schedules) in headless Chromium at 1280 and 390 px; no page overflowed.
+
+- **A schedule's next fire is relative again** ("in 59 min", `owner.tz` on hover, 09-schedules.md › UI/UX): app.js rewrote every `<time datetime>` to an absolute local time; a `data-rel` one is left alone.
+- **A task's error is on the Tasks list**, under its title (a waiting task with a boot timeout or `budget_exceeded` looked like any idle one), and in `hortus tasks <id>`. The headline is the error's last line, except a VM boot timeout's, whose reason comes first and the serial tail after (`errorLine`).
+- **Pausing is said one way** (`PAUSED` in html.ts): "queued tasks, schedules and the Planner wait; running tasks go on" on Tasks, Settings and `hortus pause` (Settings said only the dispatcher stops, the CLI only queued tasks).
+- **`hortus sync`'s usage had the direction backwards** ("re-sync a project from its origin"): it updates the origin from the checkout; `--force` is optional.
+- **Errors say what to do**: `hortus` without a daemon adds `sudo systemctl start hortusd`; an invalid `hortusd.json` (exit 78) adds "fix the file, then start hortusd again"; the empty Sources page points at `dofs` in Settings and Credentials. `hortus stop` prints the stop message, `hortus close` "closed <id>".
+- Search: the hit is a `<mark>` (the snippet's `[hit]` read like the `[inbox 1]` brackets around it), an empty author (`logs` hits) no longer leaves "· ·", the filter fields have placeholders. Dates never wrap inside (`time { white-space: nowrap }`); the untrusted-messages line on an approval is in the warning colour.
+- `README.md` (new) is the owner's guide; `src/config.test.ts` validates its example `hortusd.json` with unknown top-level keys refused.

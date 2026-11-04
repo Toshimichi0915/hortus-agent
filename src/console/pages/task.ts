@@ -1,7 +1,21 @@
 import { join } from "node:path";
 import { taintOf } from "../../db.ts";
 import { readCapped } from "../../hostile.ts";
-import { budget, button, details, h, isOpen, layout, more, PAGE, type Page, parse, skipOf, time } from "../html.ts";
+import {
+  budget,
+  button,
+  details,
+  errorLine,
+  h,
+  isOpen,
+  layout,
+  more,
+  PAGE,
+  type Page,
+  parse,
+  skipOf,
+  time,
+} from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { lastReplies, replyLine } from "./chat.ts";
 import { type ScheduleListRow, scheduleTable } from "./schedules.ts";
@@ -60,7 +74,7 @@ export const task: Page = (ctx, { m, q }) => {
     "tasks",
     t.title || id,
     h`<div data-refresh id="card">
-${t.error ? h`<div class="r error">${t.error.split("\n").at(-1) ?? ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
+${t.error ? h`<div class="r error">${errorLine(t.error)}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 ${t.brief ? details("Brief", t.brief) : ""}
 <table class="kv">

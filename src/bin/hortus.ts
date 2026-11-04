@@ -2,7 +2,7 @@
 /** hortus: the owner's console CLI, a line-oriented client of hortusd's abstract socket. One row per command. */
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-import { tokens } from "../console/html.ts";
+import { errorLine, PAUSED, tokens } from "../console/html.ts";
 import type { ScheduleListRow } from "../console/pages/schedules.ts";
 import * as paths from "../paths.ts";
 import { type RpcClient, rpcClient } from "../rpc.ts";
@@ -93,7 +93,7 @@ function printer(): { print(ev: unknown): void; end(): void } {
 function errorText(e: unknown): string {
   const code = (e as NodeJS.ErrnoException).code;
   if (code === "ECONNREFUSED" || code === "ENOENT")
-    return `hortusd is not running (socket ${paths.socket().replace("\0", "\\0")})`;
+    return `hortusd is not running (socket ${paths.socket().replace("\0", "\\0")}): sudo systemctl start hortusd`;
   // the message says what happened; only a refusal is worth naming as one
   if (e instanceof RpcError) return e.code === "forbidden" ? `forbidden: ${e.message}` : e.message;
   return e instanceof Error ? e.message : String(e);
@@ -226,6 +226,7 @@ const commands: Record<string, Command> = {
       console.log(
         `${s(t.title) || id}\n${s(t.status)} · ${s(t.kind)}${t.project ? ` · ${s(t.project)}` : ""} · ${budget(t)}`,
       );
+      if (t.error) console.log(red(errorLine(s(t.error))));
       if (c.summary) console.log(`\n${c.summary}`);
       for (const a of c.approvals) console.log(`\npending approval #${s(a.id)} ${s(a.category)}`);
       if (c.replies.length) console.log("");
@@ -268,7 +269,8 @@ const commands: Record<string, Command> = {
   stop: {
     usage: "stop <id>                           stop a running task (it becomes waiting)",
     async run([id], rpc) {
-      await rpc.call("task.stop", { id: needId(id, "stop <id>") });
+      const r = (await rpc.call("task.stop", { id: needId(id, "stop <id>") })) as { message?: string };
+      console.log(r.message ?? "stopping");
     },
   },
   close: {
@@ -278,6 +280,7 @@ const commands: Record<string, Command> = {
         id: needId(id, "close <id> [failed]"),
         outcome: outcome === "failed" ? "failed" : "done",
       });
+      console.log(`closed ${id}`);
     },
   },
   search: {
@@ -301,14 +304,15 @@ const commands: Record<string, Command> = {
     },
   },
   sync: {
-    usage: "sync --force <project>              re-sync a project from its origin",
+    usage:
+      "sync [--force] <project>             update the project's origin from its checkout (--force: main was rewritten)",
     async run(args, rpc) {
       const { values, positionals } = parseArgs({
         args,
         options: { force: { type: "boolean" } },
         allowPositionals: true,
       });
-      const name = needId(positionals[0], "sync --force <project>");
+      const name = needId(positionals[0], "sync [--force] <project>");
       await rpc.call("project.sync", { name, force: values.force ?? false });
       console.log(`synced ${name}`);
     },
@@ -336,14 +340,14 @@ const commands: Record<string, Command> = {
     },
   },
   pause: {
-    usage: "pause                               stop starting queued tasks",
+    usage: `pause                               ${PAUSED}`,
     async run(_args, rpc) {
       await rpc.call("pause.set", { paused: true });
       console.log("paused");
     },
   },
   resume: {
-    usage: "resume                              start queued tasks again",
+    usage: "resume                              undo pause",
     async run(_args, rpc) {
       await rpc.call("pause.set", { paused: false });
       console.log("resumed");

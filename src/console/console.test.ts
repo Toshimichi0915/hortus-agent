@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -13,6 +13,7 @@ import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
 import { tempDir } from "../test/until.ts";
 import { bus, consoleModule } from "./index.ts";
+import { hit } from "./pages/search.ts";
 import { sse } from "./server.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-console-");
@@ -330,4 +331,31 @@ test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., link
   assert.match((await get("/dof/planted.git/config")).body, /<h1>Not found<\/h1>/);
   writeFileSync(join(thread, "f.png"), Buffer.from([0x89, 0x50, 0, 1, 2]));
   assert.match((await get(`${base}/f.png`)).body, /binary file, 5 bytes/);
+});
+
+test("round 6 UI: a task's error on the list and card (a boot timeout's reason, not the serial tail), pause, sources", async () => {
+  const now = new Date().toISOString();
+  const boot = "boot timeout: no contact from the guest within 120 s (console.log below)\n[ 1.2] virtiofs: mounting";
+  const ins = ctx.db.prepare(
+    "INSERT INTO tasks(id, kind, title, status, error, created, updated) VALUES (?, 'task', ?, 'waiting', ?, ?, ?)",
+  );
+  ins.run("r6boot", "r6 boot", boot, now, now);
+  ins.run("r6crash", "r6 crash", "line one\nexit 1: the last words", now, now);
+  const list = (await get("/")).body;
+  assert.match(list, /r6 boot<\/a><br><span class="error">boot timeout: no contact/);
+  assert.match(list, /r6 crash<\/a><br><span class="error">exit 1: the last words</);
+  assert.match((await get("/tasks/r6boot")).body, /<div class="r error">boot timeout: no contact[^<]*<details>/);
+  writeFileSync(paths.paused(), "");
+  assert.match((await get("/")).body, /Paused: queued tasks, schedules and the Planner wait; running tasks go on\./);
+  rmSync(paths.paused());
+  assert.match((await get("/settings")).body, /While paused, queued tasks, schedules and the Planner wait/);
+  assert.match((await get("/sources")).body, /no sources: add a messenger or forge under <code>dofs<\/code>/);
+});
+
+test("round 6 UI: a search hit's [mark] is a <mark>, other brackets stay", () => {
+  assert.equal(
+    String(hit("[inbox 1] from=owner [Hello] there", "hello")),
+    "[inbox 1] from=owner <mark>Hello</mark> there",
+  );
+  assert.equal(String(hit("no marker <b>", "x")), "no marker &lt;b&gt;");
 });

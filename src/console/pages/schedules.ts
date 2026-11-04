@@ -40,7 +40,7 @@ const inTz = (iso: string, tz: string) =>
 /** Rows by task; also used on a task's card for its own rows. */
 export function scheduleTable(rows: ScheduleListRow[], tz: string, withTask = true) {
   const next = (iso: string | null) =>
-    iso ? h`<time datetime="${iso}" title="${inTz(iso, tz)}">${relative(iso)}</time>` : time(null);
+    iso ? h`<time datetime="${iso}" data-rel title="${inTz(iso, tz)}">${relative(iso)}</time>` : time(null);
   return h`<table><thead><tr>${withTask ? h`<th>Task</th>` : ""}<th>Text</th><th>Kind</th><th>Next fire</th><th>Last run</th><th>Expires</th><th></th></tr></thead><tbody>${rows.map(
     (r) =>
       h`<tr>${withTask ? h`<td><a href="/tasks/${r.task_id}">${r.title || r.task_id}</a></td>` : ""}<td class="pre">${r.text ?? ""}</td><td>${kindOf(r)}</td><td>${next(r.fire_at)}</td><td>${time(r.last_run)}</td><td>${r.expires_at ? time(r.expires_at) : "never"}</td><td>${button(

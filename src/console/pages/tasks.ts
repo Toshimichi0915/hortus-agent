@@ -1,6 +1,21 @@
 import { existsSync } from "node:fs";
 import type { DatabaseSync } from "../../db.ts";
-import { budget, button, h, isOpen, layout, more, PAGE, type Page, type Raw, skipOf, status, time } from "../html.ts";
+import {
+  budget,
+  button,
+  errorLine,
+  h,
+  isOpen,
+  layout,
+  more,
+  PAGE,
+  PAUSED,
+  type Page,
+  type Raw,
+  skipOf,
+  status,
+  time,
+} from "../html.ts";
 
 export interface TaskRow {
   id: string;
@@ -51,14 +66,14 @@ export const tasks: Page = (ctx, { q }) => {
     "Tasks",
     h`<p><a href="/chat">New chat</a></p><div data-refresh id="list">${
       existsSync(ctx.paths.paused())
-        ? h`<p class="error">Paused: queued tasks, timers and the Planner wait. <a href="/settings">Resume in Settings</a>.</p>`
+        ? h`<p class="error">Paused: ${PAUSED} <a href="/settings">Resume in Settings</a>.</p>`
         : ""
     }
 <h2>Open</h2>${more(q, "open tasks", open.length, countTasks(ctx.db, true))}${
       open.length
         ? h`<table><thead><tr><th>Status</th><th>Title</th><th>Project</th><th>Kind</th><th>Budget</th><th>Updated</th><th></th></tr></thead><tbody>${open.map(
             (t) =>
-              h`<tr><td>${status(t.status)}</td><td>${title(t)}</td><td>${t.project ?? ""}</td><td>${t.kind ?? ""}</td><td>${budget(t)}</td><td>${time(t.updated)}</td><td class="actions">${taskActions(t)}</td></tr>`,
+              h`<tr><td>${status(t.status)}</td><td>${title(t)}${t.error ? h`<br><span class="error">${errorLine(t.error)}</span>` : ""}</td><td>${t.project ?? ""}</td><td>${t.kind ?? ""}</td><td>${budget(t)}</td><td>${time(t.updated)}</td><td class="actions">${taskActions(t)}</td></tr>`,
           )}</tbody></table>`
         : h`<p class="empty">no open tasks</p>`
     }

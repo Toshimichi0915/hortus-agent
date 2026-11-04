@@ -142,6 +142,6 @@ export const sources: Page = async (ctx) => {
     ctx,
     "sources",
     "Sources",
-    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${tfNotes}${planner}${rows.length ? rows : h`<p class="empty">no sources</p>`}</div>`,
+    h`<div data-refresh id="list">${r.ok ? "" : error(r.error)}${tfNotes}${planner}${rows.length ? rows : h`<p class="empty">no sources: add a messenger or forge under <code>dofs</code> in <a href="/settings">Settings</a> and its token in <a href="/credentials">Credentials</a></p>`}</div>`,
   );
 };

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Config, load, policyFor, save } from "./config.ts";
@@ -77,4 +77,14 @@ test("save: atomic, 0600, unknown keys survive a round trip", () => {
 test("a project name outside letters, digits, . _ - is refused by the config schema", () => {
   assert.throws(() => Config.parse({ projects: { "<b>x</b>": { path: "/tmp" } } }), /a project name: letters/);
   assert.ok(Config.parse({ projects: { "my-app.v2": { path: "/tmp" } } }).projects["my-app.v2"]);
+});
+
+test("README's example hortusd.json validates (no unknown top-level key); its provider's transform ships", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  const block = /```json\n([\s\S]*?)\n```/.exec(readme)?.[1] ?? "";
+  const c = Config.strict().parse(JSON.parse(block));
+  assert.equal(c.planner.provider, "ollama-cloud");
+  assert.deepEqual(Object.keys(c.dofs), ["slack", "github"]);
+  assert.match(readme, /\| `ollama-cloud` \| token \| openai \| `ollama.com` \|/);
+  assert.ok(existsSync(new URL("transforms/openai/manifest.json", import.meta.url)));
 });

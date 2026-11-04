@@ -156,6 +156,32 @@ test("200 approvals in a burst: the open Approvals page re-renders a few times, 
   assert.ok(ms < 500, `${ms} ms`);
 });
 
+test("a schedule's next fire stays relative (09-schedules.md › UI/UX); a date never wraps at 390 px", {
+  skip,
+}, async () => {
+  const now = Date.now();
+  ctx.db
+    .prepare(
+      "INSERT INTO schedules(task_id, fire_at, every_sec, text, last_run, created) VALUES ('t1', ?, 3600, 'x', ?, ?)",
+    )
+    .run(new Date(now + 3600e3).toISOString(), new Date(now).toISOString(), new Date(now).toISOString());
+  await cdp.send(
+    "Emulation.setDeviceMetricsOverride",
+    { width: 390, height: 800, deviceScaleFactor: 1, mobile: true },
+    session,
+  );
+  try {
+    await go("/schedules");
+    assert.match(await ev<string>(`document.querySelector('time[data-rel]').textContent`), /^in (59|60) min$/);
+    assert.equal(
+      await ev(`[...document.querySelectorAll('time')].every((t) => t.getClientRects().length === 1)`),
+      true,
+    );
+  } finally {
+    await cdp.send("Emulation.clearDeviceMetricsOverride", {}, session);
+  }
+});
+
 test("cells carry their column name; the chat shows its stream's state", { skip }, async () => {
   await go("/");
   assert.equal(await ev(`document.querySelector('#list tbody td').dataset.label`), "Status");
