@@ -189,7 +189,8 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];
   fd3.on("error", () => {}).end(text); // EPIPE when the shim dies first: its exit code says why
-  const logFile = createWriteStream("", { fd: logFd });
+  // ENOSPC (or EIO) on console.log: an `error` without a listener would kill hortusd; the session goes on unlogged
+  const logFile = createWriteStream("", { fd: logFd }).on("error", () => stderr.resume());
   stderr.pipe(logFile);
   lines(stdout, MAX_LINE, o.onStdout);
   if (o.onStderr) lines(stderr, MAX_LINE, o.onStderr);

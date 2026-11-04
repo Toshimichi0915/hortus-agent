@@ -25,7 +25,7 @@ import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { invoke } from "../vault/transforms.ts";
-import { flags } from "./cdp.ts";
+import { connect, flags, launch } from "./cdp.ts";
 import { jar, registrable } from "./jar.ts";
 import { browserModule, IDLE } from "./login-view.ts";
 import { BrowserSession } from "./tools.ts";
@@ -548,4 +548,12 @@ test("cdp: DevTools over a pipe, never a TCP port (sessions reach 127.0.0.0/8)",
   const f = flags({ userDataDir: "/x" });
   assert.ok(f.includes("--remote-debugging-pipe"));
   assert.ok(!f.some((x) => x.startsWith("--remote-debugging-port")));
+});
+
+test("cdp: a missing chromium fails connect at once, naming the binary (no 15 s wait, close does not hang)", async () => {
+  const t = Date.now();
+  const b = await launch({ userDataDir: join(tempDir("hortus-nochrome-"), "u"), cmd: ["/nonexistent/chromium"] });
+  await assert.rejects(connect(b), /chromium did not start .*\/nonexistent\/chromium ENOENT/);
+  await b.close();
+  assert.ok(Date.now() - t < 3000, `${Date.now() - t} ms`);
 });

@@ -37,7 +37,20 @@ export const PROJECT_NAME_HINT = "a project name: letters, digits, . _ - only (n
 export const Config = z.looseObject({
   owner: z
     .looseObject({
-      tz: z.string().default(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+      // checked here: Intl throws on an unknown zone, and the Planner's day and the Schedules page format with it
+      tz: z
+        .string()
+        .refine(
+          (tz) => {
+            try {
+              return !!new Intl.DateTimeFormat("en", { timeZone: tz });
+            } catch {
+              return false;
+            }
+          },
+          { message: "not an IANA time zone (e.g. Asia/Tokyo)" },
+        )
+        .default(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
       notify: z.string().optional(),
     })
     .prefault({}),
@@ -123,8 +136,15 @@ export function load(path = paths.config()): Config {
     throw new Error(`${path}: ${(e as Error).message}`);
   }
   const r = Config.safeParse(raw);
-  if (!r.success) throw new Error(`${path}: ${z.prettifyError(r.error)}`);
+  if (!r.success) throw new Error(`${path}: ${oneLine(r.error)}`);
   return r.data;
+}
+
+/** A schema error as one line naming each key: `vm.cpus: expected number, received string; owner.tz: …`. */
+export function oneLine(e: z.ZodError): string {
+  return e.issues
+    .map((i) => `${i.path.join(".") || "(top level)"}: ${i.message.replace(/^Invalid input: /, "")}`)
+    .join("; ");
 }
 
 /** Atomic (temp + rename), mode 0600. */

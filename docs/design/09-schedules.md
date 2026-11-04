@@ -37,6 +37,7 @@ Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last r
 - `unschedule` from a run acts on the parent's row; a worker calling `unschedule` on another task's row → `forbidden`.
 - Recovery: a `running` run killed before its first model call is closed `failed` at restart and not re-fired; one killed after resumes.
 - `PAUSED` stops ticks; un-pausing fires overdue rows once each (not once per missed interval: `every` advances past now).
+- Missed while hortusd was down: a daily `cron` in `America/New_York` missed for 3 days across the fall-back fires once at the first tick, then at 9:00 EST (v7 › Schedules › Missed firings).
 
 ## UI/UX verification
 

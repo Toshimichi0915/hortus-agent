@@ -45,13 +45,24 @@ const modules: Module[] = [
 
 const log = logger("hortusd");
 
+/** A start-up error a restart cannot fix: one line, exit 78 (EX_CONFIG; the unit's RestartPreventExitStatus). */
+function unfixable(msg: string): never {
+  log.error(msg);
+  process.exit(78);
+}
+
 async function main(): Promise<void> {
   // HORTUS_NO_NET drops the nftables rules and session addresses: a test switch, never a production daemon's.
   if (process.env.HORTUS_NO_NET === "1" && process.env.HORTUS_HOME === undefined) {
     log.error("HORTUS_NO_NET=1 needs HORTUS_HOME (tests only): refusing to run sessions without network rules");
     process.exit(1);
   }
-  const config = load();
+  let config: Config;
+  try {
+    config = load();
+  } catch (e) {
+    unfixable((e as Error).message);
+  }
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
 
   define("ping", {
@@ -64,13 +75,20 @@ async function main(): Promise<void> {
   try {
     server = await serveSocket(paths.socket());
   } catch (e) {
-    log.error(`cannot bind ${JSON.stringify(paths.socket())}: another hortusd on this HORTUS_HOME?`, e);
-    process.exit(1);
+    unfixable(`cannot bind ${JSON.stringify(paths.socket())}: another hortusd on this HORTUS_HOME? (${e})`);
+  }
+  let db: ReturnType<typeof openDb>;
+  try {
+    db = openDb(paths.db());
+  } catch (e) {
+    unfixable(
+      `${paths.db()}: ${(e as Error).message} (locked by another process, or corrupt: move it aside to start empty)`,
+    );
   }
 
   const ctx: Ctx = {
     config,
-    db: openDb(paths.db()),
+    db,
     paths,
     log: logger,
     async reload() {
@@ -136,7 +154,15 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown("SIGINT"));
 
   for (const m of modules) {
-    await m.start(ctx);
+    try {
+      await m.start(ctx);
+    } catch (e) {
+      // no CAP_NET_ADMIN (hortusd run by hand, outside the unit): restarting cannot help
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/Operation not permitted|EPERM/.test(msg))
+        unfixable(`${m.name}: ${msg.split("\n")[0]} (hortusd needs CAP_NET_ADMIN: run it as the unit, hortus install)`);
+      throw e;
+    }
     started.push(m);
   }
   gateDeps.consoleUrl = `http://127.0.0.1:${consoleModule.port()}`;

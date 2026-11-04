@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -64,7 +64,7 @@ test("hortusd: creates HORTUS_HOME 0700, answers ping, a second daemon fails, ex
     assert.match(r.out, /^pong/);
 
     const second = daemon(home);
-    assert.equal(await exited(second, 5000), 1);
+    assert.equal(await exited(second, 5000), 78);
     assert.equal(((await ping()) as { pong: boolean }).pong, true);
 
     d.kill("SIGTERM");
@@ -80,7 +80,7 @@ test("hortusd: socket already bound → exits non-zero without creating the DB",
   const squatter = await serveSocket(paths.socket());
   try {
     const d = daemon(home);
-    assert.equal(await exited(d, 5000), 1);
+    assert.equal(await exited(d, 5000), 78);
     assert.equal(existsSync(paths.db()), false);
   } finally {
     squatter.close();
@@ -98,4 +98,50 @@ test("hortusd: HORTUS_NO_NET=1 without HORTUS_HOME refuses to start", async () =
   } finally {
     d.kill("SIGKILL");
   }
+});
+
+/** One error line on stderr (no stack) and exit 78: the unit's RestartPreventExitStatus, so no restart loop. */
+async function unfixable(home: string): Promise<{ code: unknown; lines: string[] }> {
+  const d = daemon(home);
+  let err = "";
+  d.stderr?.on("data", (b) => (err += b));
+  const code = await exited(d, 10000);
+  d.kill("SIGKILL");
+  return { code, lines: err.trim().split("\n") };
+}
+
+test("hortusd: an invalid hortusd.json → one line naming each key, exit 78", async () => {
+  const home = tempDir("hortusd-");
+  writeFileSync(join(home, "hortusd.json"), JSON.stringify({ vm: { cpus: "two" } }));
+  const { code, lines } = await unfixable(home);
+  assert.equal(code, 78);
+  assert.equal(lines.length, 1, lines.join("\n"));
+  assert.match(JSON.parse(lines[0] ?? "").msg, /hortusd\.json: vm\.cpus: expected number, received string$/);
+});
+
+test("hortusd: a corrupt DB → one line naming the file and what to do, exit 78", async () => {
+  const home = tempDir("hortusd-");
+  process.env.HORTUS_HOME = home;
+  writeFileSync(paths.db(), Buffer.alloc(8192, 0x5a));
+  const { code, lines } = await unfixable(home);
+  assert.equal(code, 78);
+  const msg = JSON.parse(lines.at(-1) ?? "").msg as string;
+  assert.ok(msg.startsWith(`${paths.db()}: file is not a database`), msg);
+  assert.match(msg, /move it aside/);
+});
+
+test("hortusd: without CAP_NET_ADMIN (run by hand) → one line saying so, exit 78", {
+  skip: process.getuid?.() === 0,
+}, async () => {
+  const home = tempDir("hortusd-");
+  const d = spawn(process.execPath, ["--no-warnings", bin("hortusd")], {
+    env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: "0", HORTUS_NO_NET: "" },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let err = "";
+  d.stderr?.on("data", (b) => (err += b));
+  const code = await exited(d, 10000);
+  d.kill("SIGKILL");
+  assert.equal(code, 78, err);
+  assert.match(JSON.parse(err.trim().split("\n").at(-1) ?? "").msg, /^runtime: .*needs CAP_NET_ADMIN/);
 });

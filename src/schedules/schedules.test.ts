@@ -343,3 +343,16 @@ test("PAUSED skips ticks; un-pausing fires each overdue row once and every advan
   tick();
   assert.equal(runsOf(p.id).length, 1);
 });
+
+test("missed while hortusd was down (3 days, across the fall-back): one run at the first tick, then 9:00 local again", async () => {
+  const p = parent();
+  T = Date.parse("2026-10-30T12:00:00Z");
+  const { id, fire_at } = await set(p.id, { cron: "0 9 * * *", tz: "America/New_York" });
+  assert.equal(fire_at, "2026-10-30T13:00:00.000Z"); // 9:00 EDT
+  T = Date.parse("2026-11-02T20:00:00Z"); // down from before the 30th's firing until the 2nd, 15:00 EST
+  tick();
+  assert.equal(runsOf(p.id).length, 1, "the four missed firings run once, not four times");
+  assert.equal(row(id)?.fire_at, "2026-11-03T14:00:00.000Z"); // 9:00 EST
+  tick();
+  assert.equal(runsOf(p.id).length, 1);
+});

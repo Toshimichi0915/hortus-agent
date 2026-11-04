@@ -1,7 +1,7 @@
 /** The console module (06-console.md): the web UI listener and the RPCs it owns. */
 import { rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { Config, save } from "../config.ts";
+import { Config, oneLine, save } from "../config.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { define } from "../rpc.ts";
 import { localConsole } from "../runtime/net.ts";
@@ -94,7 +94,7 @@ define("settings.set", {
   async run({ config }) {
     const c = ctx();
     const r = Config.safeParse(config);
-    if (!r.success) throw new RpcError("invalid", z.prettifyError(r.error), r.error.issues);
+    if (!r.success) throw new RpcError("invalid", oneLine(r.error), r.error.issues);
     save(r.data, c.paths.config());
     await c.reload();
     return { ok: true };

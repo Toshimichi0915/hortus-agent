@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -123,7 +123,15 @@ test("missingImage names the first missing file and the fix", () => {
   const d = tempDir("hortus-img-");
   assert.equal(missingImage(d), `${join(d, "agent.ext4")} missing: run \`hortus image build\``);
   for (const f of ["agent.ext4", "initramfs.img", "vmlinuz"]) writeFileSync(join(d, f), "");
-  assert.equal(missingImage(d), null);
+  assert.equal(missingImage(d, "/nonexistent"), "qemu-system-x86_64 not found on PATH: install it");
+  const bin = tempDir("hortus-imgbin-");
+  writeFileSync(join(bin, "qemu-system-x86_64"), "", { mode: 0o755 });
+  assert.equal(missingImage(d, bin), "virtiofsd not found on PATH: install it");
+  writeFileSync(join(bin, "virtiofsd"), "", { mode: 0o644 });
+  assert.equal(missingImage(d, bin), "virtiofsd not found on PATH: install it", "not executable");
+  chmodSync(join(bin, "virtiofsd"), 0o755);
+  // /dev/kvm: whatever this machine has (the VM tests need it)
+  assert.ok([null, "/dev/kvm not accessible: join the kvm group"].includes(missingImage(d, bin)));
 });
 
 const enabled = process.env.HORTUS_TEST_VM === "1";

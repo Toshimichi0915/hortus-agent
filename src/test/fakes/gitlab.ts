@@ -8,12 +8,12 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { tempDir } from "../until.ts";
 
 const run = promisify(execFile);
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
@@ -22,7 +22,7 @@ const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSY
 export class GitHost {
   root: string;
   constructor(prefix: string) {
-    this.root = mkdtempSync(join(tmpdir(), prefix));
+    this.root = tempDir(prefix);
   }
   private dir = (full: string) => join(this.root, `${full}.git`);
   private git(full: string, ...args: string[]) {

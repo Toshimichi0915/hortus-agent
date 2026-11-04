@@ -99,8 +99,13 @@ let tmpSeq = 0;
 export function writeAtomic(file: string, data: string | Buffer): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = join(dirname(file), `.${basename(file)}.tmp-${process.pid}-${tmpSeq++}`);
-  writeFileSync(tmp, data);
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, data);
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true }); // ENOSPC: a half-written temp file would be the next sync's `git add -A`
+    throw e;
+  }
 }
 
 /** Remove `dir` and its parents up to (not including) `root` while they are empty. */

@@ -32,11 +32,14 @@ test("invalid JSON or schema → throws naming the path", () => {
     () => load(bad),
     (e: Error) => e.message.startsWith(bad),
   );
-  writeFileSync(bad, JSON.stringify({ vm: { cpus: "two" } }));
+  writeFileSync(bad, JSON.stringify({ vm: { cpus: "two" }, owner: { tz: 3 } }));
   assert.throws(
     () => load(bad),
-    (e: Error) => e.message.startsWith(bad) && e.message.includes("cpus"),
+    (e: Error) =>
+      e.message === `${bad}: owner.tz: expected string, received number; vm.cpus: expected number, received string`,
   );
+  writeFileSync(bad, JSON.stringify({ owner: { tz: "Mars/Olympus" } }));
+  assert.throws(() => load(bad), { message: `${bad}: owner.tz: not an IANA time zone (e.g. Asia/Tokyo)` });
 });
 
 test("policyFor: forced human, exact key, * fallback, empty policy", () => {

@@ -104,7 +104,7 @@ A `worker`/`planner` caller's `task` is set by the transport (the proxy's link l
 - `rpc`: `define` twice throws; `call` with a role outside `roles` → `forbidden` before input validation runs (validation errors must not leak to a caller who may not call); invalid input → `invalid` with the zod issue; a handler throwing a non-`RpcError` → `failed` with the message, stack only in the log; the socket transport answers out of order calls by `id`, survives a malformed line (answers `{error: invalid}` and keeps the connection), and rejects a frame over 16 MB.
 - `hortusd`: starts with `HORTUS_HOME` pointing at an empty directory, creates it `0700`, answers `ping` over the socket, exits cleanly on `SIGTERM` within 2 s.
 
-Edge cases: `HORTUS_HOME` with a trailing slash; a config with unknown keys (kept, not dropped, so a newer version's keys survive an older binary); `policy` with an empty object; two daemons on the same `HORTUS_HOME` (the second fails to bind the socket and exits non-zero without touching the DB).
+Edge cases: `HORTUS_HOME` with a trailing slash; a config with unknown keys (kept, not dropped, so a newer version's keys survive an older binary); `policy` with an empty object; two daemons on the same `HORTUS_HOME` (the second fails to bind the socket and exits 78 without touching the DB). An invalid `hortusd.json`, a corrupt or locked DB: one log line naming the key or file, exit 78 (the unit's `RestartPreventExitStatus`, so no restart loop; v7 › Process).
 
 ## UI/UX verification
 

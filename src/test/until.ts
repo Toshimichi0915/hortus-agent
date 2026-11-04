@@ -1,6 +1,6 @@
 /** Test helpers. */
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Log } from "../types.ts";
@@ -25,8 +25,12 @@ export function memLog(): Log & { infos: string[]; errors: string[] } {
 
 const temps: string[] = [];
 process.on("exit", () => {
-  if (!process.env.KEEP) for (const d of temps) rmSync(d, { recursive: true, force: true });
+  if (!process.env.KEEP) for (const d of temps) rmSync(d, { recursive: true, force: true, maxRetries: 2 });
 });
+// The runner SIGTERMs a test file that times out and ^C sends SIGINT; neither runs `exit` handlers by default.
+// ponytail: SIGKILL still leaks; the `hortus-*` prefix makes leftovers easy to sweep.
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const)
+  process.once(sig, () => process.exit(128 + constants.signals[sig]));
 
 /** `mkdtemp` under the OS temp dir, removed when the process exits (unless `KEEP` is set): the Landlock profile
  * builder enumerates `/tmp`, so leftovers slow every later sandbox spawn. */

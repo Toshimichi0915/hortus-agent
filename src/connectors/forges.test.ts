@@ -6,12 +6,11 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type http from "node:http";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import https from "node:https";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,7 +29,7 @@ import { sandboxEnv } from "../runtime/host.ts";
 import { FakeBitbucket } from "../test/fakes/bitbucket.ts";
 import { FakeGitHub } from "../test/fakes/github.ts";
 import { FakeGitLab } from "../test/fakes/gitlab.ts";
-import { memLog, until } from "../test/until.ts";
+import { memLog, tempDir, until } from "../test/until.ts";
 import type { Forge, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
@@ -39,7 +38,7 @@ import { dirOf } from "./forge.ts";
 import { patchOf } from "./gitlab.ts";
 import { connectors } from "./index.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-forges-"));
+process.env.HORTUS_HOME = tempDir("hortus-forges-");
 process.env.HORTUS_NO_NET = "1";
 const run = promisify(execFile);
 
@@ -674,7 +673,7 @@ for (const h of H) {
   });
 
   test(`${dof}: insteadOf clone carries the token to the fake's git server; push asks with old new refname`, async () => {
-    const work = mkdtempSync(join(tmpdir(), `hortus-${dof}-work-`));
+    const work = tempDir(`hortus-${dof}-work-`);
     await gitUntil(h, work, ["clone", "-q", `https://${h.gitHost}/${P}.git`, "r"]);
     const token = h.token();
     assert.ok(token && h.fake.gitAuths.includes(token), "the fake's git server saw the token");

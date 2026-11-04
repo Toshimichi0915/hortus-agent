@@ -80,8 +80,14 @@ export async function launch(o: LaunchOpts): Promise<Browser> {
   proc.stderr?.on("data", (c: Buffer) => {
     stderr = (stderr + c.toString()).slice(-4000);
   });
-  proc.on("error", () => {}); // a missing binary: connect reports it
-  const exited = new Promise<void>((r) => proc.once("exit", () => r()));
+  // a missing binary emits `error` and never `exit`: connect reports it, close must not wait for an exit
+  const exited = new Promise<void>((r) => {
+    proc.once("exit", () => r());
+    proc.once("error", (e) => {
+      stderr = `${e.message}${stderr ? `\n${stderr}` : ""}`;
+      r();
+    });
+  });
   const close = async () => {
     if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
     await exited;

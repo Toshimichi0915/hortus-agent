@@ -1,13 +1,11 @@
 /** `equals` (18-gitlab-bitbucket.md): constant-time comparison against a webhook-secret credential. */
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
+import { tempDir } from "../test/until.ts";
 import { equals } from "./ops.ts";
 import { write } from "./vault.ts";
 
-process.env.HORTUS_HOME = mkdtempSync(join(tmpdir(), "hortus-equals-"));
+process.env.HORTUS_HOME = tempDir("hortus-equals-");
 const secret = "s3cret-token-0123456789abcdef";
 write({ hook: { type: "webhook-secret", value: secret }, tok: { type: "token", value: secret } });
 

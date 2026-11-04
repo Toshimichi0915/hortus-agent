@@ -36,6 +36,7 @@ test("install writes the unit with sudo tee, refuses a different one without --f
     "Delegate=yes",
     "KillMode=mixed",
     "Restart=on-failure",
+    "RestartPreventExitStatus=78",
   ]) {
     assert.ok(text.split("\n").includes(line), line);
   }

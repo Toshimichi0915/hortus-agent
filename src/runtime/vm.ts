@@ -4,7 +4,7 @@
  * `cgroup.kill`. `HORTUS_NO_NET=1` swaps the tap for `-netdev user` (boot-only: no proxy, no rules, no links row).
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -58,10 +58,23 @@ export function init(d: VmDeps): void {
   deps = d;
 }
 
-/** null, or the error a task card shows when the image has not been built. */
-export function missingImage(dir = paths.images()): string | null {
+/** null, or the error a task card shows when the image has not been built or QEMU/virtiofsd/KVM are not there. */
+export function missingImage(dir = paths.images(), path = process.env.PATH ?? ""): string | null {
   const gone = IMAGE.filter((f) => !existsSync(join(dir, f)));
-  return gone.length ? `${join(dir, gone[0] ?? "")} missing: run \`hortus image build\`` : null;
+  if (gone.length) return `${join(dir, gone[0] ?? "")} missing: run \`hortus image build\``;
+  for (const bin of ["qemu-system-x86_64", "virtiofsd"])
+    if (!path.split(":").some((d) => d && runnable(join(d, bin)))) return `${bin} not found on PATH: install it`;
+  if (!runnable("/dev/kvm", constants.R_OK | constants.W_OK)) return "/dev/kvm not accessible: join the kvm group";
+  return null;
+}
+
+function runnable(f: string, mode = constants.X_OK): boolean {
+  try {
+    accessSync(f, mode);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The same task as the Worker inside the VM sees it. */
@@ -164,7 +177,10 @@ export async function startVm(o: VmOpts): Promise<Child> {
   writeFileSync(join(paths.ctl(id), "task.json"), JSON.stringify(vmTaskJson(task), null, 2));
   // opened here (no link followed); QEMU's serial chardev gets the same file as its fd 3
   const logFd = openAppend(join(out, "console.log"));
-  const logFile = createWriteStream("", { fd: logFd });
+  // ENOSPC on console.log: an `error` without a listener would kill hortusd (attach resumes the stderr it drops)
+  const logFile = createWriteStream("", { fd: logFd }).on("error", () => {
+    for (const p of procs) p.stderr?.resume();
+  });
   // hortusd's own, outside every share: the guest cannot plant anything where the sockets go
   const vfs = join(paths.task(id), "vfs");
   const procs: ChildProcess[] = [];
