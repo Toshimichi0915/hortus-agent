@@ -14,7 +14,7 @@ import { bus } from "./events.ts";
 import { h, layout, type Page, tryCall } from "./html.ts";
 import { watch as watchLogin } from "../browser/login-view.ts";
 import { approvals } from "./pages/approvals.ts";
-import { chat, lastReplies, replyLine } from "./pages/chat.ts";
+import { chat, lastReplies, repliesAfter, replyLine } from "./pages/chat.ts";
 import { credentials } from "./pages/credentials.ts";
 import { dofFile } from "./pages/dof.ts";
 import { loginView } from "./pages/login-view.ts";
@@ -135,7 +135,7 @@ function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined):
   };
 }
 
-/** `chat` replays `replies` after `Last-Event-ID` (or `?after=`; default: the last 1000), then follows the bus. */
+/** `chat` replays every `replies` row after `Last-Event-ID` (or `?after=`; default: the last 1000), then follows the bus. */
 function events(
   ctx: Ctx,
   name: string,
@@ -161,10 +161,13 @@ function events(
     const from = req.headers["last-event-id"] ?? q.get("after");
     let last = from === undefined || from === null || from === "" ? -1 : Number(from);
     const flush = () => {
-      for (const r of lastReplies(ctx, taskId, last)) {
-        res.write(`id: ${r.seq}\ndata: ${JSON.stringify({ seq: r.seq, html: replyLine(r).html })}\n\n`);
-        last = r.seq;
-      }
+      // text deltas are a row each: a phone asleep for one long reply missed over 1000, so a cursor gets all of them
+      const next = () => (last < 0 ? lastReplies(ctx, taskId) : repliesAfter(ctx, taskId, last));
+      for (let rows = next(); rows.length; rows = next())
+        for (const r of rows) {
+          res.write(`id: ${r.seq}\ndata: ${JSON.stringify({ seq: r.seq, html: replyLine(r).html })}\n\n`);
+          last = r.seq;
+        }
     };
     onEvent = flush;
     flush();

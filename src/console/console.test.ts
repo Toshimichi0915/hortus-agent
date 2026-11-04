@@ -146,6 +146,14 @@ test("sse: chat honours Last-Event-ID and follows the bus; keepalives; no listen
   );
   assert.match(text, /line 11/);
 
+  // a phone back from sleep: more rows missed than one replay's 1000, every one of them in order
+  for (let i = 12; i <= 2600; i++) ins.run(i, JSON.stringify({ type: "text", text: `line ${i}` }));
+  const woke = await stream("/events/chat?task=x", { "last-event-id": "11" }, (t) => t.includes("id: 2600\n"));
+  assert.deepEqual(
+    [...woke.matchAll(/^id: (\d+)$/gm)].map((m) => Number(m[1])),
+    Array.from({ length: 2589 }, (_, i) => i + 12),
+  );
+
   const ka = await stream("/events/tasks", {}, (t) => t.includes(": keepalive"));
   assert.match(ka, /: keepalive/);
   const ev = stream("/events/approvals", {}, (t) => t.includes("data: "));
