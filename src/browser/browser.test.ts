@@ -399,8 +399,13 @@ test("v6 done-when: browser_login → login view (SSE + login.input) → Done �
   assert.match(page, new RegExp(`href="/approvals/${id}/login"`));
   assert.match(await (await fetch(`${base()}/approvals/${id}/login`)).text(), /<canvas/);
 
+  const ready = () => site.seen.filter((x) => x.path === "/ready").length;
+  const n = ready();
   const ev = events(id);
   const first = await ev.wait((e) => e.frame !== undefined);
+  // the first frame can be about:blank (the screencast starts before the navigation): the owner sees that and waits;
+  // a click on it lands on nothing, and under load the login failed that way
+  await until(() => ready() > n, 15_000, "the login form");
   assert.ok(
     Buffer.from(first.frame ?? "", "base64")
       .subarray(0, 2)

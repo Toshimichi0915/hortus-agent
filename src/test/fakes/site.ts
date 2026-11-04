@@ -47,7 +47,8 @@ const LOGIN = page(
   `const h = (s) => [...s].reduce((a, c) => (Math.imul(a, 31) + c.charCodeAt(0)) >>> 0, 7).toString(16);
 document.getElementById("f").addEventListener("submit", () => {
   document.getElementById("hash").value = h(document.getElementById("pw").value);
-});`,
+});
+fetch("/ready");`,
 );
 
 export async function fakeSite(): Promise<FakeSite> {
