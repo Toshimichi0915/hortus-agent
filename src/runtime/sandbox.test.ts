@@ -77,6 +77,7 @@ function suite(): void {
     "dof/slack/C1/channel.md": "# C1\n",
     "dof/slack.git/HEAD": "ref: refs/heads/main\n",
     "dof/github/o/r/issues/1.md": "out of scope\n",
+    "dof/slack2/C1/channel.md": "a prefix of slack's name, out of scope\n",
     "clones/T/README": "x",
   };
   before(() => {
@@ -87,6 +88,8 @@ function suite(): void {
     mkdirSync(secret);
     writeFileSync(join(secret, "f"), "s");
     symlinkSync(secret, join(root, "denylink"));
+    // a link inside a readable DOF is followed to its target, which Landlock checks on its own path
+    symlinkSync("../../slack2/C1/channel.md", join(H, "dof/slack/C1/peek.md"));
   });
   after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -190,6 +193,8 @@ function suite(): void {
       ok(await shimSh(prof(), `cat ${H}/dof/slack.git/HEAD`));
       denied(await shimSh(prof(), `cat ${H}/dof/github/o/r/issues/1.md`));
       denied(await shimSh(prof(), `ls ${H}/dof`));
+      denied(await shimSh(prof(), `cat ${H}/dof/slack2/C1/channel.md`));
+      denied(await shimSh(prof(), `cat ${H}/dof/slack/C1/peek.md`));
       denied(await shimSh(profile("unattended", { ...task, dofs: [] }, config), `cat ${H}/dof/slack/C1/channel.md`));
     });
     test("no connect to another process's socket under /tmp (X11, tmux, ssh-agent live there)", async () => {
