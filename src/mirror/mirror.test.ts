@@ -459,9 +459,10 @@ test("publishLog: a Worker's 48 MB of user turns renders and indexes capped, in 
       );
     writeFileSync(join(dir, `${1730000000 + f}_s.jsonl`), lines.join("\n"));
   }
-  const t = performance.now();
+  const t = process.cpuUsage();
   await publishLog("huge", "Huge", "done");
-  const ms = performance.now() - t;
+  const used = process.cpuUsage(t);
+  const ms = (used.user + used.system) / 1000; // CPU, not the clock: a busy machine is not what this bounds
   const md = readFileSync(join(paths.logs(), "huge", "session.md"), "utf8");
   assert.ok(md.length < MAX_RENDER + 4096, String(md.length));
   assert.match(md, /… \(session log cut at 16 MB\)\n$/);

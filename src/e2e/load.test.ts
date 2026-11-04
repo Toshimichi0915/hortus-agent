@@ -156,7 +156,10 @@ test(`${ROUNDS} rounds of ${N} simultaneous chats: own replies, responsive conso
     await Promise.all(ids.map((id) => api("task.close", { id, outcome: "done" })));
     await until(() => cgroups() === 0, 10_000, "no task cgroups");
     const secs = (Date.now() - t0) / 1000;
-    const s = { secs, fds: fds(), rss: rssMb(), p50: pct(lat, 0.5) ?? 0, p95: pct(lat, 0.95) ?? 0 };
+    // the low of a second: a sample on the turn sessions end counts pipes on their way out (under stress 110, 118)
+    let open = fds();
+    for (let i = 0; i < 10; i++, await sleep(100)) open = Math.min(open, fds());
+    const s = { secs, fds: open, rss: rssMb(), p50: pct(lat, 0.5) ?? 0, p95: pct(lat, 0.95) ?? 0 };
     stats.push(s);
     console.log(
       `# load round ${round}: ${N} chats in ${secs.toFixed(1)} s; task.list p50 ${s.p50.toFixed(0)} ms p95 ${s.p95.toFixed(0)} ms; fds ${s.fds}; rss ${s.rss.toFixed(0)} MB`,
