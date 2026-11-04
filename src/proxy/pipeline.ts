@@ -847,7 +847,10 @@ function flatHeaders(h: http.IncomingHttpHeaders): Record<string, string | strin
   return out;
 }
 
-/** Refs and repos are `<dof>:…`; a transform speaks only for the configured DOFs of its own type. */
+/**
+ * Refs and repos are `<dof>:…`; a transform speaks only for the configured DOFs of its own type. It writes its type
+ * for the DOF, which it cannot know: the DOF is the credential of that name (a connector's is `hortus-secret-<dof>`).
+ */
 function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | undefined): void {
   const task = p.client.task;
   if (!task) return;
