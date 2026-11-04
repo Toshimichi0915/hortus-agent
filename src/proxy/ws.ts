@@ -17,7 +17,16 @@ import { HANDLE, handles, resolvable, resolveHandle } from "../vault/ops.ts";
 import * as transforms from "../vault/transforms.ts";
 import { effectiveHosts, manifestEntry, PREFIX, read as readVault, touch } from "../vault/vault.ts";
 import type { Client } from "./links.ts";
-import { hashTemplate, type IncomingRequest, type Out, type Prepared, prepare, refuse, upstream } from "./pipeline.ts";
+import {
+  bound,
+  hashTemplate,
+  type IncomingRequest,
+  type Out,
+  type Prepared,
+  prepare,
+  refuse,
+  upstream,
+} from "./pipeline.ts";
 
 const log = logger("ws");
 
@@ -171,6 +180,17 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   );
   fromClient.on("error", kill);
   fromUp.on("error", kill);
+  // the Senders write without backpressure: an upstream flooding frames at a client that does not read grew
+  // hortusd's memory without bound. A side whose destination needs a drain pauses until it drains.
+  const hold = (src: Duplex, dst: Duplex) => () => {
+    if (!dst.writableNeedDrain || src.isPaused()) return;
+    src.pause();
+    dst.once("drain", () => src.resume());
+  };
+  fromUp.on("message", hold(up, client));
+  fromUp.on("ping", hold(up, client));
+  fromClient.on("message", hold(client, up));
+  fromClient.on("ping", hold(client, up));
   if (head.length) fromClient.write(head);
   if (upHead.length) fromUp.write(upHead);
   client.pipe(fromClient);
@@ -211,7 +231,13 @@ export async function relay(client: Client, req: IncomingRequest, socket: Duplex
   } catch (e) {
     return writeOut(socket, refuse(403, (e as Error).message));
   }
+  // the client hanging up (or an upstream that never answers the handshake) ends the upstream side
+  const gone = new AbortController();
+  socket.once("close", () => gone.abort());
+  bound(up.req, gone.signal);
   up.req.on("upgrade", (res, upSock, upHead) => {
+    // a quiet WebSocket is fine: the idle bound is for the handshake only
+    upSock.setTimeout(0);
     const lines = [`HTTP/1.1 101 ${res.statusMessage ?? "Switching Protocols"}`];
     for (let i = 0; i + 1 < res.rawHeaders.length; i += 2)
       lines.push(`${res.rawHeaders[i]}: ${prepared.scrub.text(res.rawHeaders[i + 1] ?? "")}`);

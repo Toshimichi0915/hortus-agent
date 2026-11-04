@@ -403,3 +403,49 @@ test("dof CLI inside a task posts to <rpc>/rpc/dof.search", async () => {
   assert.equal(r.stdout, "logs/t/summary.md\tt\t\tT\n");
   assert.deepEqual(seen, { url: "/rpc/dof.search", auth: undefined, body: { q: "two words", author: "U1" } });
 });
+
+test("search: a common trigram over megabyte session logs answers in bounded time (the snippet is linear)", async () => {
+  const { upsert } = await import("./fts.ts");
+  const body = "the model said something about deploy; ".repeat(25_000);
+  for (let i = 0; i < 3; i++)
+    upsert(db, { dof: "logs", path: `big${i}/session.md`, author: "", ts: `2026-11-0${i + 1}`, title: "big", body });
+  const t = performance.now();
+  const hits = search({ q: "the", in: "logs", limit: 200 });
+  const ms = performance.now() - t;
+  // FTS5's snippet() took seconds per row here (quadratic in the row's 25,000 hits)
+  assert.ok(ms < 500, `${ms} ms`);
+  const big = hits.find((h) => h.path === "big0/session.md");
+  assert.ok(big?.snippet.startsWith("[the] model"), JSON.stringify(big));
+  assert.ok((big?.snippet.length ?? 0) < 200);
+});
+
+test("publishLog: a Worker's 48 MB of user turns renders and indexes capped, in bounded time", async () => {
+  const { MAX_RENDER } = await import("./logs.ts");
+  const dir = join(paths.out("huge"), "sessions");
+  mkdirSync(dir, { recursive: true });
+  const content = "lorem ipsum dolor sit amet ".repeat(40);
+  for (let f = 0; f < 3; f++) {
+    const lines: string[] = [];
+    for (let i = 0; i < 15_000; i++)
+      lines.push(
+        JSON.stringify({
+          v: 1,
+          type: "message",
+          id: `${f}-${i}`,
+          parentId: i ? `${f}-${i - 1}` : null,
+          message: { role: "user", content },
+        }),
+      );
+    writeFileSync(join(dir, `${1730000000 + f}_s.jsonl`), lines.join("\n"));
+  }
+  const t = performance.now();
+  await publishLog("huge", "Huge", "done");
+  const ms = performance.now() - t;
+  const md = readFileSync(join(paths.logs(), "huge", "session.md"), "utf8");
+  assert.ok(md.length < MAX_RENDER + 4096, String(md.length));
+  assert.match(md, /… \(session log cut at 16 MB\)\n$/);
+  const row = db.prepare("SELECT length(body) AS n FROM search WHERE path = 'huge/session.md'").get() as { n: number };
+  assert.ok(row.n <= 4 * 1024 * 1024, String(row.n));
+  // uncapped: ~1.5 s here and ~4.5 s at the 256 MB read budget
+  assert.ok(ms < 1000, `${ms} ms`);
+});

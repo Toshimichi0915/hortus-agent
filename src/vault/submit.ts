@@ -17,6 +17,8 @@ import { ctx, NAME, read, write } from "./vault.ts";
 export const MAX_BYTES = 256 * 1024;
 /** Tests run synchronously in QuickJS (≤ 100 ms a call): the cap bounds how long one submission blocks the loop. */
 export const MAX_TESTS = 32;
+/** All of a submission's test calls together, on hortusd's thread. */
+export const TESTS_MS = 500;
 const FILE = /^(manifest\.json|transform\.js|README\.md|tests\/[a-z0-9-]+\.json)$/;
 
 const Hostname = z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/, "a hostname");
@@ -132,9 +134,15 @@ export function validate({ name, files }: Submission): { manifest: Manifest; tes
   if (!tests.length) invalid("at least one tests/<x>.json is required");
   if (tests.length > MAX_TESTS) invalid(`${tests.length} tests, over ${MAX_TESTS}`);
   const failures: { file: string; diff: string }[] = [];
-  // the first failure ends the run: a looping transform costs one deadline, not one per test
+  // the first failure ends the run: a looping transform costs one deadline, not one per test; and a transform that
+  // spends just under the deadline on each call (64 of them) is stopped by the total, not after 6 s of hortusd's thread
+  const t0 = Date.now();
   for (const file of tests) {
     if (failures.length) break;
+    if (Date.now() - t0 > TESTS_MS) {
+      failures.push({ file, diff: `the tests ran over ${TESTS_MS} ms in total` });
+      break;
+    }
     let c: z.infer<typeof Test>;
     try {
       const t = Test.safeParse(JSON.parse(files[file] ?? ""));

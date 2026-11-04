@@ -206,20 +206,29 @@ export async function egress(
 // ---------------------------------------------------------------------------------------------------------------------
 // Body reading
 
-/** Buffers up to `max` bytes; past that, a stream of everything (the buffered prefix first). */
-export function readUpTo(r: Readable, max: number): Promise<{ buf: Buffer } | { rest: Readable }> {
+/** Buffers up to `max` bytes (and, `ms` given, for up to `ms`); past that, a stream of everything (the buffered
+ * prefix first). */
+export function readUpTo(r: Readable, max: number, ms?: number): Promise<{ buf: Buffer } | { rest: Readable }> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let n = 0;
+    const timer = ms === undefined ? undefined : setTimeout(() => spill(), ms);
     const cleanup = () => {
+      clearTimeout(timer);
       r.off("data", onData);
       r.off("end", onEnd);
       r.off("error", onErr);
+      r.off("close", onClose);
     };
+    // destroyed (the client hung up) before or without an end: else this never settles
+    const onClose = () => onErr(new Error("closed before its end"));
+    if (r.destroyed) return reject(new Error("closed before its end"));
     const onData = (c: Buffer) => {
       chunks.push(c);
       n += c.length;
-      if (n <= max) return;
+      if (n > max) spill();
+    };
+    const spill = () => {
       cleanup();
       r.pause();
       const pt = new PassThrough();
@@ -239,6 +248,7 @@ export function readUpTo(r: Readable, max: number): Promise<{ buf: Buffer } | { 
     r.on("data", onData);
     r.on("end", onEnd);
     r.on("error", onErr);
+    r.on("close", onClose);
   });
 }
 
@@ -854,6 +864,26 @@ const DECODERS: Record<string, () => Transform> = {
   br: () => zlib.createBrotliDecompress(),
 };
 
+/** Responses one client may be buffering at once (≤ 16 MB each, a few copies while scrubbed and transformed): 10
+ * endless bodies cost hortusd 165 MB, and MAX_INFLIGHT of them would have been ~12 GB. Further responses wait, their
+ * upstream sockets paused. hortusd's own (core) calls are not counted. */
+export const BUFFERING = 4;
+export const BUFFER_MS = 30_000;
+const slots = new Map<Client, { n: number; wait: (() => void)[] }>();
+
+async function slot(c: Client): Promise<() => void> {
+  if (c.role === "core") return () => {};
+  const own = slots.get(c) ?? { n: 0, wait: [] };
+  slots.set(c, own);
+  if (own.n < BUFFERING) own.n++;
+  else await new Promise<void>((r) => own.wait.push(r));
+  return () => {
+    const next = own.wait.shift();
+    if (next) return next(); // the slot passes on
+    if (--own.n === 0) slots.delete(c);
+  };
+}
+
 async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   const status = res.statusCode ?? 502;
   let scrub = p.scrub;
@@ -902,8 +932,15 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
     return { status, headers: h, body: s };
   };
   if (STREAM_RESPONSE.test(ct)) return streamed(src);
-  const r = await readUpTo(src, RESPONSE_BUFFER);
-  // ponytail: over 16 MB skips response() and is scrubbed as a stream (downloads), not refused
+  const release = await slot(p.client);
+  let r: Awaited<ReturnType<typeof readUpTo>>;
+  try {
+    // a body still arriving after BUFFER_MS streams on (as one over 16 MB does): a drip cannot hold the slot
+    r = await readUpTo(src, RESPONSE_BUFFER, BUFFER_MS);
+  } finally {
+    release();
+  }
+  // ponytail: over 16 MB (or still arriving after 30 s) skips response() and is scrubbed as a stream, not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
   if (text === undefined || (!p.tf && !p.cookie)) {
@@ -980,8 +1017,22 @@ function store(p: Prepared, list: Capture[]): void {
   }
 }
 
-/** The whole pipeline for one request. */
-export async function handle(client: Client, req: IncomingRequest): Promise<Out> {
+/** An upstream socket with no bytes either way for this long is dropped (a server that never answers, or never
+ * finishes TLS, held its socket and fd forever). Streams are fine: LLM streams and git keep bytes flowing. */
+export const IDLE_MS = 10 * 60_000;
+
+/** Ends the upstream side when `signal` aborts (the client hung up) or the socket idles past IDLE_MS. */
+export function bound(req: http.ClientRequest, signal?: AbortSignal): void {
+  req.setTimeout(IDLE_MS, () => req.destroy(new Error(`no bytes for ${IDLE_MS / 60_000} min`)));
+  if (!signal) return;
+  if (signal.aborted) return void req.destroy(new Error("the client went away"));
+  const abort = () => req.destroy(new Error("the client went away"));
+  signal.addEventListener("abort", abort, { once: true });
+  req.once("close", () => signal.removeEventListener("abort", abort));
+}
+
+/** The whole pipeline for one request; `signal` aborts the upstream request (the client hung up). */
+export async function handle(client: Client, req: IncomingRequest, signal?: AbortSignal): Promise<Out> {
   const h = (req.tls ? req.sni : req.headers.host?.replace(/:\d+$/, ""))?.toLowerCase();
   // 2. hortusd.internal
   if (h === "hortusd.internal") return internal(client, req);
@@ -993,6 +1044,7 @@ export async function handle(client: Client, req: IncomingRequest): Promise<Out>
   } catch (e) {
     return refuse(403, (e as Error).message, { host: p.host });
   }
+  bound(up.req, signal);
   return new Promise<Out>((resolve) => {
     let rawHit = false;
     up.req.on("response", (res) => {

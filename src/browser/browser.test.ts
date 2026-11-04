@@ -21,7 +21,7 @@ import { links, listen, proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { type FakeSite, fakeSite, PASSWORD, SESSION, TOKEN, USER } from "../test/fakes/site.ts";
-import { tempDir } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { invoke } from "../vault/transforms.ts";
@@ -416,7 +416,8 @@ test("v6 done-when: browser_login → login view (SSE + login.input) → Done �
   await api("login.input", { id, type: "key", event: "keyUp", key: "Enter", code: "Enter", keyCode: 13 });
   for (let i = 0; i < 100 && !site.auth; i++) await sleep(100);
   assert.ok(site.auth, "the form posted the JS hash and the site signed the view in");
-  const auth = cookieRow("fake.test", "auth");
+  // the site sets `auth` before its response (and the Set-Cookie capture) reaches the proxy: wait for the row
+  const auth = await until(() => cookieRow("fake.test", "auth"), 5000, "the auth cookie captured");
   assert.equal(auth?.value, site.auth);
 
   const done = await api("login.done", { id });

@@ -52,6 +52,24 @@ export function writeOut(res: http.ServerResponse, out: Out): void {
   else res.end(out.body);
 }
 
+/** Requests and upgrades one client may have open at once: each holds two fds and up to 16 MB of buffer, so a Worker
+ * opening thousands to a server that never answers ran hortusd out of both. One count per client, across listeners. */
+export const MAX_INFLIGHT = 256;
+const inflight = new Map<Client, number>();
+
+/** Counts one open request of `client` until `done` closes; false (and nothing counted) over MAX_INFLIGHT. */
+function admit(client: Client, done: { once(ev: "close", f: () => void): unknown }): boolean {
+  const n = inflight.get(client) ?? 0;
+  if (n >= MAX_INFLIGHT) return false;
+  inflight.set(client, n + 1);
+  done.once("close", () => {
+    const left = (inflight.get(client) ?? 1) - 1;
+    if (left > 0) inflight.set(client, left);
+    else inflight.delete(client);
+  });
+  return true;
+}
+
 function serve(tls: boolean, proxyAddress: string) {
   const clientOf = (s: Socket): Client | undefined => {
     const local = norm(s.localAddress);
@@ -67,8 +85,22 @@ function serve(tls: boolean, proxyAddress: string) {
         body: "hortus: unknown client\n",
       });
     }
+    if (!admit(client, res)) {
+      req.resume();
+      log.info("refused", { status: 429, msg: "too many requests in flight", task: client.task });
+      return writeOut(res, {
+        status: 429,
+        headers: { "content-type": "text/plain", "retry-after": "1" },
+        body: `hortus: over ${MAX_INFLIGHT} requests in flight\n`,
+      });
+    }
+    // the client hanging up ends the upstream request (else it held its socket until the upstream gave up)
+    const ac = new AbortController();
+    res.once("close", () => {
+      if (!res.writableFinished) ac.abort();
+    });
     // a writeOut that throws (a transform's status 0 or header name with a space) lands in catch, not unhandled
-    handle(client, toIncoming(req, tls))
+    handle(client, toIncoming(req, tls), ac.signal)
       .then((out) => writeOut(res, out))
       .catch((e) => {
         log.error("pipeline failed", e);
@@ -79,6 +111,8 @@ function serve(tls: boolean, proxyAddress: string) {
   const onUpgrade = (req: http.IncomingMessage, socket: Socket, head: Buffer) => {
     const client = clientOf(socket);
     if (!client) return socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+    if (!admit(client, socket))
+      return socket.end("HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
     relay(client, toIncoming(req, tls), socket, head).catch((e) => {
       log.error("upgrade failed", e);
       socket.destroy();

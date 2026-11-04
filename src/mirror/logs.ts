@@ -13,6 +13,7 @@ import { parse, render } from "./render.ts";
 import { writeAtomic } from "./repo.ts";
 
 const EXCERPT = 4096;
+export const MAX_RENDER = 16 * 1024 * 1024;
 const log = logger("logs");
 
 /** A fence longer than any backtick run inside, so tool output can't close it. */
@@ -112,6 +113,8 @@ export async function renderSession(dir: string): Promise<string> {
   const out: string[] = [];
   let seq = 0;
   let budget = MAX_SESSIONS;
+  // the rendered text is capped too: 256 MB of the Worker's user turns rendered to 255 MB, held in RSS at every exit
+  let room = MAX_RENDER;
   readDir(
     dir,
     (n) => n.endsWith(".jsonl"),
@@ -132,7 +135,13 @@ export async function renderSession(dir: string): Promise<string> {
           } catch {
             md = "(not a message)"; // a planted line of the wrong shape loses itself, not the log
           }
-          out.push(`## ${++seq} ${String(m?.role)} ${ts}\n\n${md}\n`);
+          const s = `## ${++seq} ${String(m?.role)} ${ts}\n\n${md}\n`;
+          room -= s.length + 1;
+          if (room < 0) {
+            out.push(`… (session log cut at ${MAX_RENDER / 1024 / 1024} MB)\n`);
+            return;
+          }
+          out.push(s);
         }
       }
     },

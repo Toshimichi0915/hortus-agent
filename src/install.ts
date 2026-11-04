@@ -42,6 +42,7 @@ CapabilityBoundingSet=${caps}
 SupplementaryGroups=kvm
 Delegate=yes
 KillMode=mixed
+LimitNOFILE=65536
 Restart=on-failure
 
 [Install]
