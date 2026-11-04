@@ -54,6 +54,12 @@ export const lastReplies = (ctx: Ctx, task: string, after = -1, limit = 1000): R
       .all(task, after, limit) as unknown as ReplyRow[]
   ).reverse();
 
+/** The next rows after a cursor, oldest first. */
+export const repliesAfter = (ctx: Ctx, task: string, after: number): ReplyRow[] =>
+  ctx.db
+    .prepare("SELECT seq, body, created FROM replies WHERE task_id = ? AND seq > ? ORDER BY seq LIMIT 1000")
+    .all(task, after) as unknown as ReplyRow[];
+
 const composer = (method: string, input: unknown, extra: Raw = raw("")) =>
   h`<form class="composer" data-call="${method}" data-input="${JSON.stringify(input)}"${raw(
     method === "task.open" ? ' data-go="/chat/{id}"' : "",

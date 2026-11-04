@@ -13,11 +13,12 @@ import {
   PAGE,
   type Page,
   parse,
+  type Raw,
   skipOf,
   time,
 } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
-import { lastReplies, replyLine } from "./chat.ts";
+import { lastReplies, type ReplyRow, replyLine } from "./chat.ts";
 import { type ScheduleListRow, scheduleTable } from "./schedules.ts";
 import { type TaskRow, taskActions } from "./tasks.ts";
 
@@ -35,6 +36,21 @@ const msg = (r: MsgRow) => {
 /** The last 64 KB of `out/console.log` (a VM's serial output, an unattended session's stdout and stderr). */
 function tail(f: string): string | null {
   return readCapped(f, 64 * 1024, true)?.text ?? null; // the Worker's file: no links, FIFOs
+}
+
+/** Text comes as deltas, one row each: a run of them is one timed line, and a row that renders to nothing is no line. */
+function streamLines(rows: ReplyRow[]): Raw[] {
+  const lines: { at: string | null; parts: Raw[] }[] = [];
+  let inText = false;
+  for (const r of rows) {
+    const line = replyLine(r);
+    if (!line.html) continue;
+    const text = parse<{ type?: string }>(r.body)?.type === "text";
+    if (text && inText) lines.at(-1)?.parts.push(line);
+    else lines.push({ at: r.created, parts: [line] });
+    inText = text;
+  }
+  return lines.map((l) => h`<div class="line">${time(l.at)} ${l.parts}</div>`);
 }
 
 export const task: Page = (ctx, { m, q }) => {
@@ -92,7 +108,7 @@ ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join(";
 ${pending.length ? h`<h2>Waiting for you</h2>${pending.map((a) => approvalEntry(a))}` : ""}
 ${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
 <h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : h`<p class="empty">none</p>`}
-<h2>Stream</h2>${replies.length ? h`<div class="stream">${replies.map((r) => h`<div class="line">${time(r.created)} ${replyLine(r)}</div>`)}</div>` : h`<p class="empty">none</p>`}
+<h2>Stream</h2>${replies.length ? h`<div class="stream">${streamLines(replies)}</div>` : h`<p class="empty">none</p>`}
 <h2>Inbox</h2>${more(q, "inbox messages", inbox.rows.length, inbox.total)}${inbox.rows.length ? h`<ul class="msgs">${inbox.rows.map(msg)}</ul>` : h`<p class="empty">empty</p>`}
 </div>${
       open

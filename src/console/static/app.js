@@ -81,10 +81,13 @@ async function rerender() {
   const twin = active?.dataset?.call
     ? `[data-call="${active.dataset.call}"][data-input="${CSS.escape(active.dataset.input ?? "")}"]`
     : null;
+  const asks = () => document.querySelectorAll("#approvals .approval").length;
+  const before = asks();
   for (const el of document.querySelectorAll("[data-refresh]")) {
     const n = doc.getElementById(el.id);
     if (n) el.innerHTML = n.innerHTML;
   }
+  if (asks() > before) toEnd(); // chat: the Worker waits on it, and it lands below the stream, off a phone's screen
   const nav = doc.querySelector("nav");
   if (nav) $("nav").innerHTML = nav.innerHTML;
   localTimes();
@@ -181,6 +184,8 @@ document.addEventListener("submit", (e) => {
     .catch(() => {});
 });
 
+// a phone's keyboard has no Shift+Enter: there Enter is a newline and the Send button sends
+const touch = matchMedia("(pointer: coarse)").matches;
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     say("");
@@ -191,7 +196,14 @@ document.addEventListener("keydown", (e) => {
     }
   }
   const t = e.target;
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && t.closest?.(".composer") && t.tagName === "TEXTAREA") {
+  if (
+    !touch &&
+    e.key === "Enter" &&
+    !e.shiftKey &&
+    !e.isComposing &&
+    t.closest?.(".composer") &&
+    t.tagName === "TEXTAREA"
+  ) {
     e.preventDefault();
     t.form.requestSubmit();
   }
@@ -201,15 +213,21 @@ document.addEventListener("keydown", (e) => {
 $(".composer")?.append(msg);
 const draft = $(".composer textarea");
 if (draft) {
+  if (touch) draft.placeholder = "Message";
   draft.value = sessionStorage.getItem(key) || "";
   draft.addEventListener("input", () => sessionStorage.setItem(key, draft.value));
 }
 
 const page = document.body.dataset.page;
 const st = $("#stream");
+/** The chat's end, the page's too: on a phone the stream runs past the screen, its end under the sticky composer. */
+function toEnd() {
+  st.scrollTop = st.scrollHeight;
+  scrollTo(0, document.documentElement.scrollHeight);
+}
 if (st) {
   const atBottom = () => st.scrollHeight - st.scrollTop - st.clientHeight < 40;
-  st.scrollTop = st.scrollHeight;
+  toEnd();
   // the stream's connection state: EventSource retries by itself (Last-Event-ID), the owner sees that it does
   const conn = $("#conn");
   conn.textContent = "connecting…";
@@ -218,7 +236,7 @@ if (st) {
     (d) => {
       const stick = atBottom();
       st.insertAdjacentHTML("beforeend", d.html);
-      if (stick) st.scrollTop = st.scrollHeight;
+      if (stick) toEnd();
     },
     `?task=${encodeURIComponent(st.dataset.task)}&after=${st.dataset.last}`,
   );
