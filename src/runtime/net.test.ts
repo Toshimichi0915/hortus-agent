@@ -118,6 +118,7 @@ if (!enabled) {
   let local: Server;
   let lan: Server; // stands in for a LAN host: reachable unless a rule drops it
   let console_: Server;
+  let remote_: Server; // the remote console (v6 3d: "a host session cannot open the listener")
   before(async () => {
     await net.flushStale();
     await net.ensureDummy();
@@ -127,11 +128,16 @@ if (!enabled) {
     // the console on an ephemeral port (as HORTUS_CONSOLE_PORT): the dropped port must follow it
     await new Promise<void>((r) => console_?.listen(0, "127.0.0.1", r));
     net.localConsole.port = (console_.address() as { port: number }).port;
+    remote_ = createServer((_, res) => res.end("remote"));
+    await new Promise<void>((r) => remote_?.listen(0, "0.0.0.0", r));
+    net.remoteConsole.port = (remote_.address() as { port: number }).port;
   });
   after(async () => {
     local.close();
     lan.close();
     console_.close();
+    remote_.close();
+    net.remoteConsole.port = 0;
     for (const id of ["S1", "S2"]) await sessionNet.close(id).catch(() => {});
     for (const id of ["S1", "S2", "X"]) await cgroup.kill(id);
     spawnSync("nft", ["delete", "table", "inet", NAMES.table]);
@@ -178,6 +184,10 @@ if (!enabled) {
     assert.equal((await curl(s1, `http://127.0.0.1:${cp}/`)).code, 28, "console: dropped, timed out");
     assert.equal((await curl(s1, `http://${b}/`)).code, 28, "another session's address");
     assert.equal((await curl(s1, lanUrl)).out, "lan", "in S1's chat.allow");
+    const rp = net.remoteConsole.port;
+    assert.equal((await curl(s1, `http://192.0.2.7:${rp}/`)).code, 28, "the remote console, even on a chat.allow host");
+    assert.equal((await curl(s1, `http://127.0.0.1:${rp}/`)).code, 28, "the remote console on loopback");
+    assert.equal((await curl(other, `http://127.0.0.1:${rp}/`)).out, "remote", "not a session: reachable");
     assert.equal((await curl(s1, proxyLanUrl)).code, 28, "10.77/16 stays dropped even in chat.allow");
     proxyLan.close();
     assert.equal((await curl(s1, "telnet://127.0.0.53:53")).code, 28, "TCP DNS to a local resolver");

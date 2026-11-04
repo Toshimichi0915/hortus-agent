@@ -16,6 +16,8 @@ import { remoteConsole } from "../runtime/net.ts";
 import { tempDir } from "../test/until.ts";
 import { SoftAuthenticator } from "../test/webauthn.ts";
 import { caCert } from "../vault/ca.ts";
+import "../vault/index.ts"; // approval.decide
+import { bind } from "../vault/vault.ts";
 import { bus } from "./events.ts";
 import { consoleModule, consoleUrl } from "./index.ts";
 import { encode } from "./qr.ts";
@@ -35,6 +37,7 @@ let port = 0;
 let origin = "";
 
 before(async () => {
+  bind(ctx);
   await consoleModule.start(ctx);
   origin = consoleUrl();
   port = Number(new URL(origin).port);
@@ -216,6 +219,21 @@ test("login: a correct assertion signs in; replay, stale counter, wrong RP ID or
   assert.equal((await signIn(a)).status, 400);
   a.origin = origin;
   assert.equal((await signIn(a)).status, 200);
+});
+
+test("v6 3d: the phone decides a pending entry off the LAN with its cookie; without it, 401", async () => {
+  const cookie = token(await enrol(auth(), "decider"));
+  const { lastInsertRowid: id } = ctx.db
+    .prepare(
+      "INSERT INTO approvals(kind, category, task_id, summary, status, requested_at, payload) VALUES ('request', 'credential:x', 't1', '{}', 'pending', ?, '{}')",
+    )
+    .run(new Date().toISOString());
+  const body = { id: Number(id), decision: "approve" };
+  assert.equal((await remote("/api/approval.decide", { body })).status, 401);
+  const r = await remote("/api/approval.decide", { body, cookie });
+  assert.equal(r.status, 200, r.body);
+  const row = ctx.db.prepare("SELECT status, decided_by FROM approvals WHERE id = ?").get(id) as Record<string, string>;
+  assert.deepEqual({ ...row }, { status: "approved", decided_by: "owner" });
 });
 
 test("enroll.code is loopback only; session.revoke makes the revoked session's next request 401", async () => {

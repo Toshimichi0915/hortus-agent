@@ -352,6 +352,15 @@ test("a Worker that dies before any model call: waiting with the error on the ca
 test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof search --in logs", {
   skip,
 }, async () => {
+  await turn(chatA, "!done zebracorn summary line");
+  // v6 step 3: `hortus tasks <id>` shows the card with the Worker's notes and summary
+  const cli = spawnSync(process.execPath, ["--no-warnings", bin("hortus"), "tasks", chatA], {
+    env: { ...process.env, HORTUS_HOME: home },
+    encoding: "utf8",
+  });
+  assert.match(cli.stdout, /\nnotes from fake\n/, cli.stdout + cli.stderr); // the summary (the fake's summary call)
+  assert.match(cli.stdout, /echo: hello zebracorn/); // the Worker's notes
+  assert.match(cli.stdout, /zebracorn summary line/);
   await api("task.close", { id: chatA, outcome: "done" });
   assert.equal(await status(chatA), "done");
   assert.ok(!existsSync(paths.task(chatA)));
@@ -369,6 +378,9 @@ test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof 
   const { id } = await api<{ id: string }>("task.open", { text: "!bash dof search --in logs zebracorn" });
   await waitStatus(id, "waiting");
   assert.match(texts(await card(id)), new RegExp(`tool said: logs/${chatA}/`));
+  // and reads its summary
+  await turn(id, `!bash cat ${join(paths.logs(), chatA, "summary.md")}`);
+  assert.match(texts(await card(id)), /tool said: ---\ntitle: hello zebracorn\n[\s\S]*notes from fake/);
 });
 
 /** An unattended task straight into the queue (no Planner in this test), its brief one model directive. */
