@@ -44,6 +44,7 @@ const sseSent: number[] = [];
 const gitProgress = new EventEmitter();
 
 const fake = http.createServer((req, res) => {
+  if (req.url === "/api/hang") return; // a long poll that has nothing yet
   const chunks: Buffer[] = [];
   let n = 0;
   req.on("data", (c: Buffer) => {
@@ -543,6 +544,16 @@ test("x-git-receive-pack: a 5 MB body streams; the transform sees body null, str
   assert.equal(r.status, 200);
   assert.equal(r.body, `n=${5 * MB}`);
   assert.equal(seen.at(-1)?.xSeen, "[null,true]");
+});
+
+test("coreFetch honours init.signal: a stop does not wait out a long poll (Telegram's held every stop for 50 s)", async () => {
+  const ac = new AbortController();
+  const held = coreFetch("https://slack.com/api/hang", { headers: slackAuth, signal: ac.signal });
+  await sleep(100);
+  ac.abort();
+  const r = await Promise.race([held, sleep(3000).then(() => "held")]);
+  assert.ok(r instanceof Response, "the request outlived its signal");
+  assert.equal(r.status, 502);
 });
 
 test("transform failures → 502: infinite loop (interrupted fast), 100 MB, non-object; then a healthy one works", async () => {

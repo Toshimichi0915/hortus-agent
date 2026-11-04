@@ -19,7 +19,10 @@ export async function until<T>(pred: () => T | Promise<T>, ms = 3000, what = "co
 }
 
 /** A Log that keeps lines instead of printing them. */
-/** SIGTERM and the exit, bounded: a daemon that ignores it fails its test, it does not hold the run. */
+/**
+ * SIGTERM and the exit, bounded: a daemon that ignores it fails the file, it does not hold the run. No throw: the rest
+ * of the `after` hook must still close its fakes, or the file never exits.
+ */
 export async function stopped(d: ChildProcess, ms = 30_000): Promise<void> {
   if (d.exitCode !== null || d.signalCode !== null) return;
   const exit = new Promise((r) => d.once("exit", r));
@@ -31,7 +34,10 @@ export async function stopped(d: ChildProcess, ms = 30_000): Promise<void> {
   }, ms);
   await exit;
   clearTimeout(timer);
-  if (late) throw new Error(`hortusd ignored SIGTERM for ${ms / 1000} s`);
+  if (late) {
+    console.error(`hortusd ignored SIGTERM for ${ms / 1000} s`);
+    process.exitCode = 1;
+  }
 }
 
 export function memLog(): Log & { infos: string[]; errors: string[] } {

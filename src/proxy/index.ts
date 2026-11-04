@@ -41,7 +41,7 @@ const NO_BODY = new Set([101, 204, 205, 304]);
 
 /**
  * `fetch`-shaped, in-process, role core: the same pipeline as every other client, so placeholders in `init` are
- * resolved by transforms and hortusd never handles a raw secret itself. `init.signal` is not honoured.
+ * resolved by transforms and hortusd never handles a raw secret itself. `init.signal` ends the upstream request.
  */
 export async function coreFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   const r = new Request(input, { ...init, ...(init.body ? { duplex: "half" } : {}) } as RequestInit);
@@ -53,14 +53,18 @@ export async function coreFetch(input: string | URL, init: RequestInit = {}): Pr
   headers.host = u.host;
   const body = r.body ? Readable.fromWeb(r.body as import("node:stream/web").ReadableStream) : null;
   const tls = u.protocol === "https:";
-  const out = await handle(links.CORE, {
-    method: r.method,
-    path: u.pathname + u.search,
-    headers,
-    body,
-    tls,
-    ...(tls ? { sni: u.hostname } : {}),
-  });
+  const out = await handle(
+    links.CORE,
+    {
+      method: r.method,
+      path: u.pathname + u.search,
+      headers,
+      body,
+      tls,
+      ...(tls ? { sni: u.hostname } : {}),
+    },
+    init.signal ?? undefined,
+  );
   const h = new Headers();
   for (const [k, v] of Object.entries(out.headers)) for (const x of [v].flat()) h.append(k, x);
   if (NO_BODY.has(out.status)) {
