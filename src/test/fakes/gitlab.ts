@@ -131,6 +131,8 @@ export interface DeliverOpts {
   guid?: string;
   /** the token / signature header to send instead of the right one */
   signature?: string;
+  /** `X-Gitlab-Event-UUID`, shared by a recursive chain of hooks; a fresh one otherwise, even on a retry */
+  eventUuid?: string;
 }
 
 interface User {
@@ -403,11 +405,19 @@ export class FakeGitLab {
     return { ...x, n: t.iid, sha };
   }
 
-  approve(path: string, n: number, user: string, d?: DeliverOpts) {
+  /** One user's approval; `approved` when it is the one that satisfies the rules. */
+  approve(path: string, n: number, user: string, d?: DeliverOpts, action = "approval") {
     const t = this.thing(path, n, true);
     t.mr?.approvals.push(this.user(user));
     t.updated_at = this.ts();
-    return this.send("merge_request", this.get(path), user, { object_attributes: this.hookAttrs(t, "approved") }, d);
+    return this.send("merge_request", this.get(path), user, { object_attributes: this.hookAttrs(t, action) }, d);
+  }
+
+  unapprove(path: string, n: number, user: string, d?: DeliverOpts, action = "unapproval") {
+    const t = this.thing(path, n, true);
+    if (t.mr) t.mr.approvals = t.mr.approvals.filter((u) => u.username !== user);
+    t.updated_at = this.ts();
+    return this.send("merge_request", this.get(path), user, { object_attributes: this.hookAttrs(t, action) }, d);
   }
 
   mergeMR(path: string, n: number, by: string, d?: DeliverOpts) {
@@ -451,7 +461,9 @@ export class FakeGitLab {
       "content-type": "application/json",
       "user-agent": "GitLab/fake",
       "x-gitlab-event": `${event.replace(/(^|_)(\w)/g, (_, s, c: string) => `${s ? " " : ""}${c.toUpperCase()}`)} Hook`,
-      "x-gitlab-event-uuid": guid,
+      "webhook-id": guid,
+      "idempotency-key": guid,
+      "x-gitlab-event-uuid": o.eventUuid ?? randomUUID(),
       "x-gitlab-webhook-uuid": "hook-1",
       "x-gitlab-token": o.signature ?? this.webhookSecret,
     };

@@ -67,6 +67,7 @@ interface Suite {
   head_sha: string;
   status: string;
   conclusion: string | null;
+  latest_check_runs_count?: number;
   pull_requests?: { number: number }[];
 }
 interface Repo {
@@ -186,7 +187,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
 
   async function checksOf(repo: string, sha: string, fallback: Suite[] = []): Promise<string | null> {
     try {
-      return worst((await json<{ check_suites: Suite[] }>(`/repos/${repo}/commits/${sha}/check-suites`)).check_suites);
+      const { check_suites } = await json<{ check_suites: Suite[] }>(`/repos/${repo}/commits/${sha}/check-suites`);
+      // GitHub opens a suite per checks-writing App on every push: one that never ran stays `queued`, for ever
+      return worst(check_suites.filter((s) => s.latest_check_runs_count !== 0));
     } catch (e) {
       deps.log.error(`${name}: check suites of ${repo}@${sha} failed`, e);
       return worst(fallback);
@@ -405,8 +408,12 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       for (const d of await all<Delivery>("/app/hook/deliveries?per_page=100")) {
         if (d.delivered_at < since || done.has(d.guid) || seen(d.guid) || !EVENTS.has(d.event)) continue;
         done.add(d.guid);
-        const full = await json<{ request: { payload: Payload } }>(`/app/hook/deliveries/${d.id}`);
-        yield { key: d.guid, event: toEvent(d.event, d.guid, full.request.payload) };
+        const { payload } = (await json<{ request: { payload: Payload | null } }>(`/app/hook/deliveries/${d.id}`))
+          .request;
+        // the log holds what `webhook()` acknowledged and dropped too: a project outside `repos` stays out
+        const project = payload?.repository?.full_name;
+        if (!payload || (project && !matches(project, globs))) continue;
+        yield { key: d.guid, event: toEvent(d.event, d.guid, payload) };
       }
     },
 

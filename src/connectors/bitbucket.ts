@@ -65,7 +65,13 @@ interface Payload {
   comment?: Comment;
   approval?: { date: string; user: User };
   changes_request?: { date: string; user: User };
-  commit_status?: { state: string; commit?: { hash: string }; updated_on?: string };
+  /** the published sample carries only `links.commit.href`; `commit.hash` is kept for what real deliveries may add */
+  commit_status?: {
+    state: string;
+    commit?: { hash: string };
+    links?: { commit?: { href?: string } };
+    updated_on?: string;
+  };
 }
 /** events.payload: the event key and body, plus the PRs a commit status belongs to (looked up at receipt) */
 interface Wrapped {
@@ -74,6 +80,7 @@ interface Wrapped {
   prs?: number[];
 }
 
+const shaOf = (b: Payload) => b.commit_status?.commit?.hash ?? b.commit_status?.links?.commit?.href?.split("/").pop();
 const idOf = (u: User | null | undefined) => u?.account_id ?? u?.uuid ?? "";
 const nick = (u: User | null | undefined) => u?.nickname ?? u?.display_name ?? idOf(u);
 /** a file-name-safe id (`557058:abc…`, `{uuid}`) */
@@ -116,7 +123,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       throw e;
     }
   });
-  async function member(p: string, u: User | undefined): Promise<boolean> {
+  async function member(p: string, u: User | null | undefined): Promise<boolean> {
     if (!idOf(u)) return false;
     try {
       return await memberOf(`${p.split("/")[0]}\0${idOf(u)}`);
@@ -140,7 +147,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const thread = threadOf(type, b);
     const ci = type.startsWith("repo:commit_status_");
     let prs: number[] = [];
-    const hash = b.commit_status?.commit?.hash;
+    const hash = shaOf(b);
     if (ci && hash) {
       try {
         const open = await all<Pull>(`${R(p)}/pullrequests?state=OPEN&pagelen=50`, "values");
@@ -159,6 +166,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       key,
       ts: iso(
         b.approval?.date ??
+          b.changes_request?.date ??
           b.comment?.updated_on ??
           b.comment?.created_on ??
           b.commit_status?.updated_on ??
@@ -166,7 +174,14 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       ),
       payload: { type, body: b, ...(ci ? { prs } : {}) } satisfies Wrapped,
       // CI results carry no author (they never start work) and are not bot traffic: they must reach their task
-      author: u && !ci ? { user: idOf(u), member: await member(p, u) } : null,
+      // trust follows who wrote the text the event carries (as GitHub's `author_association`), not who touched it
+      author:
+        u && !ci
+          ? {
+              user: idOf(u),
+              member: await member(p, b.comment?.user ?? b.pullrequest?.author ?? b.issue?.reporter ?? u),
+            }
+          : null,
       bot: !ci && !!u && (own || u.type === "app_user"),
       summary: `${type} ${p}${thread ?? ""} by ${nick(u)}: ${text}`,
       refs: thread ? [ref(p, thread)] : prs.map((n) => ref(p, `!${n}`)),
@@ -253,14 +268,24 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
 
   async function projects(): Promise<string[]> {
     try {
-      // the workspaces the `repos` globs name; none (or a glob workspace) → every repository the token sees
-      const ws = [...new Set((globs ?? []).map((g) => g.split("/")[0] ?? ""))];
-      const listed =
-        ws.length && ws.every((w) => w && !w.includes("*"))
-          ? (await Promise.all(ws.map((w) => all<Repo>(`/repositories/${w}?role=member&pagelen=100`, "values")))).flat()
-          : (await all<{ repository: Repo }>("/user/permissions/repositories?pagelen=100", "values")).map(
-              (x) => x.repository,
-            );
+      // exact names need no listing, the one form a repository access token surely serves (it sees a single repository
+      // and no `account` scope); globs list the workspaces they name; none (or a glob workspace) → `/user/workspaces`,
+      // which takes `account`, so a workspace token only (`/user/permissions/repositories` died with the cross-workspace
+      // APIs, 2026-04-14)
+      const named = globs?.length && globs.every((g) => !g.includes("*")) ? globs : undefined;
+      const repo = (p: string) =>
+        json<Repo>(R(p)).catch((e) => {
+          if (e instanceof HttpError && e.status === 404) return undefined;
+          throw e;
+        });
+      let ws = [...new Set((globs ?? []).map((g) => g.split("/")[0] ?? ""))];
+      if (!ws.length || !ws.every((w) => w && !w.includes("*")))
+        ws = (await all<{ workspace: { slug: string } }>("/user/workspaces?pagelen=100", "values")).map(
+          (x) => x.workspace.slug,
+        );
+      const listed = named
+        ? (await Promise.all(named.map(repo))).filter((r) => r !== undefined)
+        : (await Promise.all(ws.map((w) => all<Repo>(`/repositories/${w}?role=member&pagelen=100`, "values")))).flat();
       const out = listed.map((r) => r.full_name).filter((p) => matches(p, globs));
       projectCount = out.length;
       st.connected = true;
@@ -306,7 +331,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       const none = { changes: [], wake: false };
       if (!thread) {
         if (!type.startsWith("repo:commit_status_") || !prs?.length) return none; // a push: the repo mirror's business
-        const checks = await checksOf(p, b.commit_status?.commit?.hash);
+        const checks = await checksOf(p, shaOf(b));
         const changes: Change[] = prs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks } }));
         return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
       }
@@ -336,7 +361,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     projects,
 
     async *history(project, cursor) {
-      const q = cursor ? `&q=${encodeURIComponent(`updated_on > "${cursor}"`)}` : "";
+      // BBQL datetimes are unquoted (a quoted value is a string); no `Z` in its grammar, and no offset means UTC
+      const q = cursor ? `&q=${encodeURIComponent(`updated_on > ${cursor.replace(/Z$/, "")}`)}` : "";
       const changes: Change[] = [channelChange(await json<Repo>(R(project)))];
       let max = cursor ?? "";
       const seen = (ts: string) => {
@@ -351,7 +377,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       try {
         issues = await all<Issue>(`${R(project)}/issues?pagelen=50${q}`, "values");
       } catch (e) {
-        if (!(e instanceof HttpError && e.status === 404)) throw e; // 404: the repo has no issue tracker
+        // the issue tracker API was removed (changelog, 2026-08-20); status unpublished, a sunset answers 404 or 410
+        if (!(e instanceof HttpError && (e.status === 404 || e.status === 410))) throw e;
       }
       for (const i of issues) {
         seen(i.updated_on);

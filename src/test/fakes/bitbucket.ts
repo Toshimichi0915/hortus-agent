@@ -82,6 +82,9 @@ export class FakeBitbucket {
     public url: string,
   ) {}
 
+  /** the issue tracker API as it is since 2026-08-20: removed */
+  issuesGone = false;
+
   static async start(): Promise<FakeBitbucket> {
     let self: FakeBitbucket | undefined;
     const server = createServer((req, res) => {
@@ -314,7 +317,10 @@ export class FakeBitbucket {
     const now = this.ts();
     r.statuses = r.statuses.filter((s) => !(s.sha === sha && s.key === "ci"));
     r.statuses.push({ key: "ci", state, sha, updated_on: now });
-    const commit_status = { key: "ci", state, name: "ci", commit: { hash: sha }, created_on: now, updated_on: now };
+    // the event-payloads page's shape: the commit only as a link (http, as published)
+    const commit = `http://api.bitbucket.org/2.0/repositories/${full}/commit/${sha}`;
+    const links = { commit: { href: commit }, self: { href: `${commit}/statuses/build/ci` } };
+    const commit_status = { key: "ci", state, name: "ci", type: "build", links, created_on: now, updated_on: now };
     return this.send(
       `repo:commit_status_${r.statuses.length > 1 ? "updated" : "created"}`,
       r,
@@ -374,13 +380,19 @@ export class FakeBitbucket {
       return json(401, { type: "error", error: { message: "Unauthorized" } });
     const body = await readJson(req);
     const api = path.slice("/2.0".length);
-    const after = u.searchParams.get("q")?.match(/updated_on > "([^"]+)"/)?.[1];
+    // BBQL: an unquoted ISO-8601 datetime, UTC without an offset; a quoted value is a string
+    const q = u.searchParams.get("q");
+    if (q && !/^updated_on > \d{4}-\d\d-\d\dT[\d:.]+$/.test(q))
+      return json(400, { type: "error", error: { message: `Invalid filter: ${q}` } });
+    const after = q && `${q.slice("updated_on > ".length)}Z`;
     const since = (t: { updated_on: string }) => !after || Date.parse(t.updated_on) > Date.parse(after);
     let x: RegExpMatchArray | null;
 
     if (api === "/user") return json(200, this.user(this.self));
-    if (api === "/user/permissions/repositories")
-      return page([...this.repos.values()].map((r) => ({ permission: "write", repository: this.repoJson(r) })));
+    if (api === "/user/workspaces") {
+      const slugs = new Set([...this.repos.keys()].map((f) => f.split("/")[0]));
+      return page([...slugs].map((slug) => ({ type: "workspace_access", administrator: false, workspace: { slug } })));
+    }
     x = api.match(/^\/workspaces\/([^/]+)\/members\/([^/]+)$/);
     if (x) {
       const id = decodeURIComponent(x[2] ?? "");
@@ -402,6 +414,8 @@ export class FakeBitbucket {
     if (!x || !r) return json(404, { type: "error", error: { message: "Repository not found" } });
     const rest = x[2] ?? "";
     if (rest === "") return json(200, this.repoJson(r));
+    if (rest.startsWith("/issues") && this.issuesGone)
+      return json(410, { type: "error", error: { message: "Resource removed" } });
     if (rest === "/issues" && M === "GET")
       return page([...r.issues.values()].filter(since).map((i) => this.issueJson(r, i)));
     if (rest === "/pullrequests" && M === "GET") {

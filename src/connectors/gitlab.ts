@@ -77,6 +77,7 @@ interface Payload {
     note?: string;
     description?: string;
     action?: string;
+    author_id?: number;
     state?: string;
     status?: string;
     sha?: string;
@@ -210,7 +211,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       ts: iso(a?.updated_at ?? a?.created_at),
       payload: { type, body: b, ...(pipeline ? { mrs } : {}) } satisfies Wrapped,
       // pipelines carry no author (they never start work) and are not bot traffic: they must reach their task
-      author: u && !pipeline ? { user: u.username, member: await member(p, u.id) } : null,
+      // trust follows who wrote the text the event carries (as GitHub's `author_association`), not who touched it
+      author: u && !pipeline ? { user: u.username, member: await member(p, a?.author_id ?? u.id) } : null,
       bot,
       summary: `${type}${a?.action ? `.${a.action}` : ""} ${p}${thread ?? ""} by ${u?.username ?? "?"}: ${text}`,
       refs: thread ? [ref(p, thread)] : mrs.map((n) => ref(p, `!${n}`)),
@@ -313,11 +315,12 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  async function approvals(p: string, iid: number): Promise<Change[]> {
+  async function approvals(p: string, mr: MR): Promise<Change[]> {
     const a = await json<{ approved_by?: { user: User }[]; updated_at?: string }>(
-      `${P(p)}/merge_requests/${iid}/approvals`,
+      `${P(p)}/merge_requests/${mr.iid}/approvals`,
     );
-    return (a.approved_by ?? []).map((x) => reviewChange(p, `!${iid}`, x.user, a.updated_at ?? ""));
+    // Community Edition's answer has no `updated_at`
+    return (a.approved_by ?? []).map((x) => reviewChange(p, `!${mr.iid}`, x.user, a.updated_at ?? mr.updated_at));
   }
 
   return {
@@ -331,7 +334,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     async webhook(req) {
       const h = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
       if (!equals(`${name}-webhook`, h["x-gitlab-token"])) return { ok: false };
-      const key = h["x-gitlab-event-uuid"];
+      // `webhook-id` (19.0) = `Idempotency-Key` (17.4), stable across retries; the event UUID, v6's key, is shared by a
+      // recursive chain of hooks, so distinct events could collapse on it, and stays for older instances
+      const key = h["webhook-id"] ?? h["idempotency-key"] ?? h["x-gitlab-event-uuid"];
       if (!key) return { ok: false };
       let b: Payload;
       try {
@@ -364,9 +369,12 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         case "merge_request": {
           if (!a?.iid || !thread) return none;
           const act = a.action ?? "";
-          if (act === "approved" && b.user)
+          // `approval`/`unapproval`: one user's; `approved`/`unapproved`: the MR's rules flipped by that user's act
+          if ((act === "approved" || act === "approval") && b.user)
             return { changes: [reviewChange(p, thread, b.user, a.updated_at ?? "")], wake: true };
-          if (act === "unapproved" && b.user)
+          // ponytail: on a reset-on-push (`system`) `user` is the pusher, so the approvers' files stay until the MR
+          // closes; the mirror cannot list a thread's reviews. Read `/approvals` against a listing if that bites
+          if ((act === "unapproved" || act === "unapproval") && b.user)
             return { changes: [{ op: "delete", path: at(p, thread, `review-${b.user.id}`) }], wake: false };
           const mr = await json<MR>(`${P(p)}/merge_requests/${a.iid}`);
           return {
@@ -415,7 +423,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       for (const mr of await all<MR>(`${P(project)}/merge_requests?state=opened&per_page=100`)) {
         changes.push(...(await prTop(project, mr, true)));
         await notes("merge_requests", mr.iid, `!${mr.iid}`);
-        changes.push(...(await approvals(project, mr.iid)));
+        changes.push(...(await approvals(project, mr)));
       }
       yield { changes, cursor: max };
     },

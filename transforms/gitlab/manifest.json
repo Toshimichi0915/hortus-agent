@@ -21,6 +21,11 @@
   "consequential": [
     "DELETE {host}/api/v4/**",
     "POST {host}/**/git-receive-pack",
+    "PUT {host}/api/v4/projects/*/merge_requests/*/merge",
+    "PUT {host}/api/v4/projects/*/merge_requests/*/rebase",
+    "POST {host}/api/v4/projects/*/merge_trains/**",
+    "POST {host}/api/v4/projects/*/repository/**",
+    "PUT {host}/api/v4/projects/*/repository/**",
     "POST {host}/api/v4/projects",
     "PUT {host}/api/v4/projects/*",
     "POST {host}/api/v4/projects/*/transfer",
