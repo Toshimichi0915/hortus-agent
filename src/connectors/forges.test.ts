@@ -107,6 +107,8 @@ interface Harness {
   inScope: string;
   outScope: string;
   create: { path: string; body: string };
+  /** every REST door to a ref, as the service documents it: "the merge button is the approval" (v6) */
+  writes: [string, string][];
   /** an in-scope admin call (members, visibility): asks like a creation (static tokens are not narrowed upstream) */
   admin?: { method: string; path: string };
   closed: string;
@@ -155,6 +157,15 @@ const H: Harness[] = [
     inScope: "/repos/o/r/issues",
     outScope: "/repos/o/other/issues",
     create: { path: "/user/repos", body: JSON.stringify({ name: "newrepo" }) },
+    writes: [
+      ["PUT", "/repos/o/r/pulls/1/merge"],
+      ["PUT", "/repos/o/r/pulls/1/update-branch"],
+      ["POST", "/repos/o/r/merges"],
+      ["POST", "/repos/o/r/merge-upstream"],
+      ["PUT", "/repos/o/r/contents/src/a.ts"],
+      ["POST", "/repos/o/r/git/refs"],
+      ["PATCH", "/repos/o/r/git/refs/heads/main"],
+    ],
     closed: "closed",
     token: () => gh.mints.find((m) => m.repositories?.join() === "r")?.token,
     openIssue: (user, title, body, drop) => gh.openIssue("o/r", { user, title, body: body ?? "" }, { drop: !!drop }),
@@ -195,6 +206,14 @@ const H: Harness[] = [
     inScope: "/api/v4/projects/g%2Fsub%2Fp/issues",
     outScope: "/api/v4/projects/g%2Fother/issues",
     create: { path: "/api/v4/projects", body: JSON.stringify({ name: "newp" }) },
+    writes: [
+      ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/merge"],
+      ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/rebase"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/merge_trains/merge_requests/1"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/repository/commits"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/repository/branches"],
+      ["PUT", "/api/v4/projects/g%2Fsub%2Fp/repository/files/src%2Fa.ts"],
+    ],
     admin: { method: "POST", path: "/api/v4/projects/g%2Fp/members" },
     closed: "closed",
     token: () => gl.token,
@@ -236,6 +255,12 @@ const H: Harness[] = [
     inScope: "/2.0/repositories/w/r/issues",
     outScope: "/2.0/repositories/w/other/issues",
     create: { path: "/2.0/repositories/w/newrepo", body: JSON.stringify({ scm: "git", is_private: true }) },
+    writes: [
+      ["POST", "/2.0/repositories/w/r/pullrequests/1/merge"],
+      ["POST", "/2.0/repositories/w/r/src"],
+      ["POST", "/2.0/repositories/w/r/refs/branches"],
+      ["POST", "/2.0/repositories/w/r/refs/tags"],
+    ],
     admin: { method: "PUT", path: "/2.0/repositories/w/r" },
     closed: "resolved",
     token: () => bb.token,
@@ -523,6 +548,9 @@ for (const h of H) {
     assert.equal(row(dof, eve.guid)?.member, 0);
     assert.equal(row(dof, carol.guid)?.trusted, 0);
     assert.equal(row(dof, carol.guid)?.member, 1);
+    // a member closing a stranger's issue does not vouch for the stranger's text
+    const closed = (await h.closeIssue(n, "carol")) as Sent;
+    assert.equal(row(dof, closed.guid)?.member, 0);
     const lookups = () => h.fake.calls.filter((c) => c.url.includes("/members/")).length;
     const l0 = lookups();
     ctx.config = Config.parse({ ...base, dofs: { ...dofs, [dof]: { ...dofs[dof], trust: "members" } } });
@@ -654,6 +682,16 @@ for (const h of H) {
     const id = JSON.parse(create.body).approval as number;
     assert.ok(pending(true).some((p) => p.id === id));
     gate.decide(id, "reject", "owner");
+    for (const [method, path] of h.writes) {
+      const r = await send({ host: h.apiHost, path, method, headers: h.rest, body: "{}" });
+      assert.ok(isApproval(r), `${method} ${path}: ${r.body}`);
+      const wid = JSON.parse(r.body).approval as number;
+      assert.ok(
+        pending(true).some((p) => p.id === wid),
+        `${method} ${path} is consequential`,
+      );
+      gate.decide(wid, "reject", "owner");
+    }
     if (h.admin) {
       const a = await send({
         host: h.apiHost,
@@ -720,6 +758,51 @@ test("gitlab: /changes assembled as a unified diff (new, deleted, renamed files)
       "diff --git a/a b/b\nrename from a\nrename to b\n",
     ].join(""),
   );
+});
+
+test("gitlab: one user's approval and its removal; a distinct key per event, whatever the event UUID says", async () => {
+  const { n } = await gl.openMR("g/p", { user: "toshi", title: "Rules", head: "main", diff: "" });
+  const file = `g__p/!${n}/review-${gl.user("carol").id}.md`;
+  const review = () => fm("gitlab", file)?.frontmatter.review;
+  await gl.approve("g/p", n, "carol");
+  await until(() => review() === "approved", 3000, "approval");
+  await gl.unapprove("g/p", n, "carol");
+  await until(() => review() === undefined, 3000, "unapproval");
+  await gl.approve("g/p", n, "carol", undefined, "approved");
+  await until(() => review() === "approved", 3000, "approved");
+  await gl.unapprove("g/p", n, "carol", undefined, "unapproved");
+  await until(() => review() === undefined, 3000, "unapproved");
+
+  const a = await gl.mrComment("g/p", n, { user: "toshi", body: "one" }, { eventUuid: "chain" });
+  const b = await gl.mrComment("g/p", n, { user: "toshi", body: "two" }, { eventUuid: "chain" });
+  assert.ok(row("gitlab", a.guid) && row("gitlab", b.guid), "a recursive chain shares the event UUID, not the key");
+});
+
+test("bitbucket: a status finds its PR from the published `links.commit.href` and from `commit.hash`", async () => {
+  const { n, sha } = await bb.openPR("w/r", { user: "toshi", title: "CI shapes", head: "main", diff: "" });
+  const checks = () => fm("bitbucket", `w__r/!${n}/!${n}.md`)?.frontmatter.checks;
+  await bb.status("w/r", sha, "FAILED", { drop: true });
+  const commit_status = { key: "ci", state: "FAILED", commit: { hash: sha }, updated_on: new Date().toISOString() };
+  await bb.deliver("repo:commit_status_updated", { repository: { full_name: "w/r" }, commit_status });
+  await until(() => checks() === "failure", 3000, "commit.hash");
+  await bb.status("w/r", sha, "SUCCESSFUL");
+  await until(() => checks() === "success", 3000, "links.commit.href");
+});
+
+test("bitbucket: history survives the removed issue tracker", async () => {
+  const conn = (await connectors.bitbucket?.({
+    name: "bitbucket",
+    config: dofs.bitbucket,
+    log,
+    fetch: coreFetch,
+    hasRef: () => false,
+  })) as Forge;
+  bb.issuesGone = true;
+  try {
+    for await (const b of conn.history?.("w/r", "2026-01-01T00:00:00Z") ?? []) assert.ok(b.changes.length);
+  } finally {
+    bb.issuesGone = false;
+  }
 });
 
 test("gitlab host: gitlab.example.com expands hosts and scope patterns; the connector's api follows", async () => {

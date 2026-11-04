@@ -54,6 +54,7 @@ interface FakeSuite {
   head_sha: string;
   status: string;
   conclusion: string | null;
+  latest_check_runs_count: number;
 }
 interface FakeRepo {
   full_name: string;
@@ -417,9 +418,20 @@ export class FakeGitHub {
   }
 
   /** A completed (or running) suite on `sha`; its `pull_requests` are the open PRs whose head is `sha`. */
-  checkSuite(full: string, sha: string, o: { status?: string; conclusion: string | null }, d?: DeliverOpts) {
+  checkSuite(
+    full: string,
+    sha: string,
+    o: { status?: string; conclusion: string | null; runs?: number },
+    d?: DeliverOpts,
+  ) {
     const r = this.get(full);
-    const s: FakeSuite = { id: this.ids++, head_sha: sha, status: o.status ?? "completed", conclusion: o.conclusion };
+    const s: FakeSuite = {
+      id: this.ids++,
+      head_sha: sha,
+      status: o.status ?? "completed",
+      conclusion: o.conclusion,
+      latest_check_runs_count: o.runs ?? 1,
+    };
     r.suites.push(s);
     const prs = [...r.things.values()].filter((t) => t.pr && t.state === "open" && t.pr.head.sha === sha);
     const check_suite = { ...s, pull_requests: prs.map((t) => ({ number: t.number })) };

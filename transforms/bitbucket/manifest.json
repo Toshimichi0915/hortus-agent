@@ -20,6 +20,10 @@
   "consequential": [
     "DELETE api.bitbucket.org/**",
     "POST bitbucket.org/**/git-receive-pack",
+    "POST api.bitbucket.org/2.0/repositories/*/*/pullrequests/*/merge",
+    "POST api.bitbucket.org/2.0/repositories/*/*/src",
+    "POST api.bitbucket.org/2.0/repositories/*/*/src/**",
+    "POST api.bitbucket.org/2.0/repositories/*/*/refs/**",
     "POST api.bitbucket.org/2.0/repositories/*/*",
     "PUT api.bitbucket.org/2.0/repositories/*/*",
     "POST api.bitbucket.org/2.0/repositories/*/*/hooks**",

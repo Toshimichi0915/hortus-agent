@@ -31,7 +31,7 @@ Webhook listener: `127.0.0.1:7701` (`src/gateway/webhooks.ts`): `POST /<dof>/web
 
 ### Transform `github` and the vault
 
-- Manifest per v6's example; `credentials.github.type = github-app`; `scope` and `consequential` patterns as listed.
+- Manifest per v6's example; `credentials.github.type = github-app`; `scope` and `consequential` patterns as listed, plus every REST door to a ref (`pulls/*/merge`, `update-branch`, `merges`, `merge-upstream`, `contents/**`, `git/refs`).
 - `ops.installationToken(name, repos, permissions)`: App JWT (RS256, `iat − 60`, `exp + 10 min`) → `POST /app/installations/{id}/access_tokens` with `repositories` and `permissions` (role core request through the pipeline? It needs the private key: the op runs in hortusd directly, not through a transform; the resulting token is cached 50 min keyed by `(task, repos, permissions)` and added to the scrub set). Permissions: Workers `contents: write, issues: write, pull_requests: write, checks: read, actions: read` (+ `administration: write` only for the two create endpoints, minted per request); role core `issues, pull_requests, checks, contents: read`.
 - The transform's `request()` emits `{sign:installation-token({"name":"github"})}` as the bearer or basic password; the runtime resolves it with the caller's `scope.repos` (projects whose DOF is `github`) — so a Worker's token covers only its repos.
 - Project scope: a credentialed URL must match a `scope` pattern with `{project}` ∈ `scope.repos` or a consequential pattern (03).

@@ -310,6 +310,14 @@ test("mirror: a PR with its diff, a review, a review comment, check suites; CI w
   await until(() => wakes === w0 + 1, 3000, "CI wake");
 });
 
+test("an App's suite that never ran stays `queued`: it says nothing about the PR", async () => {
+  const sha = await fake.commit("o/r", "feature", "q.txt", "q\n");
+  const { n } = await fake.openPR("o/r", { user: "toshi", title: "Queued", head: "feature", diff: "" });
+  await fake.checkSuite("o/r", sha, { status: "queued", conclusion: null, runs: 0 }, { drop: true });
+  await fake.checkSuite("o/r", sha, { conclusion: "success" });
+  await until(() => fm(`o__r/!${n}/!${n}.md`)?.frontmatter.checks === "success", 3000, "checks");
+});
+
 test("push → the repo mirror fetches the commit, no wake", async () => {
   const before = await fake.sha("o/r", "main");
   const after = await fake.commit("o/r", "main", "b.txt", "b\n");
@@ -467,6 +475,28 @@ test("redelivery: a delivery the tunnel dropped is picked up by the check and mi
   await until(() => fm(`o__r/#${n}/${lost.id}.md`), 3000, "redelivered comment");
   await wh.redeliver("github");
   assert.equal(wh.state.get("github")?.missed, 0);
+});
+
+test("redelivery: the log's deliveries outside `repos`, and one whose payload is gone, stay out", async () => {
+  const { n } = await fake.openIssue("o/r", { user: "toshi", title: "Filtered" });
+  const lost = await fake.comment("o/r", n, { user: "toshi", body: "not ours" }, { drop: true });
+  const empty = await fake.comment("o/r", n, { user: "toshi", body: "no payload" }, { drop: true });
+  const d = fake.deliveries.find((x) => x.guid === empty.guid);
+  assert.ok(d);
+  (d.request as { payload: unknown }).payload = null; // nullable in the OpenAPI description
+  const conn = (await connectors.github?.({
+    name: "github",
+    config: { type: "github", repos: ["o/other"] },
+    log,
+    fetch: coreFetch,
+    hasRef: () => false,
+  })) as Forge;
+  const got: string[] = [];
+  for await (const r of conn.redeliveries?.("2000-01-01T00:00:00Z", () => false) ?? []) got.push(r.key);
+  assert.ok(!got.includes(lost.guid) && !got.includes(empty.guid));
+  await wh.redeliver("github"); // the real one takes the first; the empty one must not stop the check
+  assert.ok(row(lost.guid));
+  assert.equal(row(empty.guid), undefined);
 });
 
 test("host config: {api}/{host} expand from the DOF config; the connector talks to /api/v3", async () => {

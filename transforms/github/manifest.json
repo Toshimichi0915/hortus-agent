@@ -13,6 +13,13 @@
   "consequential": [
     "DELETE {api}/**",
     "POST {host}/**/git-receive-pack",
+    "PUT {api}/repos/*/*/pulls/*/merge",
+    "PUT {api}/repos/*/*/pulls/*/update-branch",
+    "POST {api}/repos/*/*/merges",
+    "POST {api}/repos/*/*/merge-upstream",
+    "PUT {api}/repos/*/*/contents/**",
+    "POST {api}/repos/*/*/git/refs",
+    "PATCH {api}/repos/*/*/git/refs/**",
     "POST {api}/user/repos",
     "POST {api}/orgs/*/repos"
   ]
