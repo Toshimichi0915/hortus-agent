@@ -123,7 +123,7 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
   // a tainted task (v7 › Review round 6: untrusted messages, a web page, a stranger's search hit, a tainted batch):
   // the judge sees only the brief and the request, so the owner decides, once per task if they grant the category
   // to it (round 7: a task grant taken while the entry showed the taint)
-  const tainted = taintOf(c.db, task);
+  const tainted = taintOf(c.db, task, c.config);
   if (tainted.length)
     return taintGranted(input.category, task)
       ? "pass"
@@ -177,7 +177,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     }
     return { pending: pending.id };
   }
-  const untrusted = taintOf(db, requester);
+  const untrusted = taintOf(db, requester, ctx().config);
   const r = db
     .prepare(
       "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload, prompt_hash) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
@@ -277,7 +277,7 @@ export function decide(
       t,
       t,
       by,
-      JSON.stringify({ untrusted: taintOf(db, row.task_id) }),
+      JSON.stringify({ untrusted: taintOf(db, row.task_id, ctx().config) }),
     );
   if (row.kind === "grant" && status === "approved" && row.task_id) addToScope(row.task_id, row.category);
   log.info("approval decided", { id, status, by });

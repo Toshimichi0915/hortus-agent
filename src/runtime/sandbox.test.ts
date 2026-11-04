@@ -75,6 +75,8 @@ function suite(): void {
     "tasks/T/ctl/task.json": "{}",
     "tasks/T/out/.keep": "",
     "dof/slack/C1/channel.md": "# C1\n",
+    "dof/slack.git/HEAD": "ref: refs/heads/main\n",
+    "dof/github/o/r/issues/1.md": "out of scope\n",
     "clones/T/README": "x",
   };
   before(() => {
@@ -110,7 +112,7 @@ function suite(): void {
     });
   }
   const shimSh = (prof: string, script: string) => shimRun(prof, script, ["--", "sh", "-c", script]);
-  const task = { id: "T", clone: join(H, "clones/T") };
+  const task = { id: "T", clone: join(H, "clones/T"), dofs: ["slack"] };
   const denied = (r: Ran) => assert.match(r.err, /Permission denied|Operation not permitted/, r.err);
   const ok = (r: Ran) => assert.equal(r.code, 0, r.err);
 
@@ -133,7 +135,9 @@ function suite(): void {
   describe("profile", () => {
     test("no path under a denied directory except carve-outs; every path exists", () => {
       const deny = denySet(config);
-      const carve = ["dof", "repos", "tasks/T/ctl", "tasks/T/out", "clones/T"].map((p) => join(H, p));
+      const carve = ["dof/slack", "dof/slack.git", "repos", "tasks/T/ctl", "tasks/T/out", "clones/T"].map((p) =>
+        join(H, p),
+      );
       for (const kind of ["unattended", "chat"] as const) {
         const lines = profile(kind, task, config).trim().split("\n");
         assert.equal(lines.at(-1), "end");
@@ -147,7 +151,8 @@ function suite(): void {
     });
     test("carve-out modes; chat has no ro lines except read-only carve-outs", () => {
       const u = profile("unattended", task, config).split("\n");
-      assert.ok(u.includes(`ro ${join(H, "dof")}`));
+      assert.ok(u.includes(`ro ${join(H, "dof/slack")}`) && u.includes(`ro ${join(H, "dof/slack.git")}`));
+      assert.ok(!u.some((l) => l.startsWith(`ro ${join(H, "dof/github")}`) || l === `ro ${join(H, "dof")}`));
       assert.ok(u.includes(`rw ${join(H, "tasks/T/out")}`));
       assert.ok(u.includes("scope signal") && u.includes("scope abstract"));
       const ro = profile("chat", task, config)
@@ -157,7 +162,8 @@ function suite(): void {
         .filter((p) => existsSync(p))
         .map((p) => `ro ${p}`);
       // no repos/ in this home; hortusd's own code and the user units are read-only too
-      assert.deepEqual(ro.sort(), [`ro ${join(H, "dof")}`, `ro ${join(H, "tasks/T/ctl")}`, ...own].sort());
+      const dofs = [`ro ${join(H, "dof/slack")}`, `ro ${join(H, "dof/slack.git")}`];
+      assert.deepEqual(ro.sort(), [...dofs, `ro ${join(H, "tasks/T/ctl")}`, ...own].sort());
     });
     test("a policy.deny symlink is denied by its target", () => {
       assert.ok(denySet(config).includes(secret));
@@ -179,6 +185,12 @@ function suite(): void {
       ok(await shimSh(prof(), "f=$(mktemp /tmp/hortus-f4-XXXXXX) && rm $f"));
       ok(await shimSh(prof(), "echo > /dev/null"));
       denied(await shimSh(prof(), `touch ${H}/dof/x`));
+    });
+    test("scope.dofs: a DOF outside it, and the DOF root, cannot be read", async () => {
+      ok(await shimSh(prof(), `cat ${H}/dof/slack.git/HEAD`));
+      denied(await shimSh(prof(), `cat ${H}/dof/github/o/r/issues/1.md`));
+      denied(await shimSh(prof(), `ls ${H}/dof`));
+      denied(await shimSh(profile("unattended", { ...task, dofs: [] }, config), `cat ${H}/dof/slack/C1/channel.md`));
     });
     test("no connect to another process's socket under /tmp (X11, tmux, ssh-agent live there)", async () => {
       const sock = join(tmpdir(), `hortus-f4-sock-${process.pid}`);

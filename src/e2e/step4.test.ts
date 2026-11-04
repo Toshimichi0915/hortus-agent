@@ -368,16 +368,62 @@ test("untrusted: task_create refused → ignored; a stranger in the task's threa
   assert.equal(batches().length, count, "both messages were one batch");
   // the brief is the Planner's text written beside bob's: the task is tainted (its gated requests go to the owner)
   assert.deepEqual(
-    db((d) => taintOf(d, id)),
+    db((d) => taintOf(d, id, { dofs: { slack: { type: "slack", owner: "U1" } } })),
     [`created from a batch with untrusted events (${b})`],
   );
   const card = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
   assert.match(card, /<th>Tainted<\/th><td class="untrusted">created from a batch with untrusted events/);
   assert.deepEqual(
-    db((d) => taintOf(d, fooTask)),
+    db((d) => taintOf(d, fooTask, { dofs: { slack: { type: "slack", owner: "U1" } } })),
     [],
     "the owner's DM alone",
   );
+});
+
+test("scope.dofs: task_create validates it; the Worker reads only those DOFs; one holding a stranger taints", {
+  skip,
+}, async () => {
+  // bob (a stranger) posted in C1 in the test above: the slack DOF holds untrusted text
+  const probe = `!bash cat ${join(paths.dof("slack"), "C1", "channel.md")} && echo READ-OK; ls ${join(home, "dof")}`;
+  planner(`export default ({ n, events }) => {
+    if (n > 0) return { text: "ok" };
+    const e = [events[0].id];
+    return { calls: [
+      { name: "task_create", input: { title: "reads slack", brief: ${JSON.stringify(probe)}, event_ids: e, scope: { dofs: ["slack"] } } },
+      { name: "task_create", input: { title: "reads nothing", brief: ${JSON.stringify(probe)}, event_ids: e } },
+      { name: "task_create", input: { title: "bad", brief: "x", event_ids: e, scope: { dofs: ["nope"] } } },
+    ] };
+  };`);
+  const count = batches().length;
+  slack.post("D1", { user: "U1", text: "scope probe" });
+  const b = await nextBatch(count);
+  const [a, none, bad] = toolResults(b);
+  assert.match(bad?.output ?? "", /^invalid: unknown DOF nope \(expected one of logs, transforms, slack\)/);
+  const A = (JSON.parse(a?.output ?? "{}") as { id: string }).id;
+  const B = (JSON.parse(none?.output ?? "{}") as { id: string }).id;
+  assert.ok(A && B, `${a?.output} ${none?.output}`);
+  const ran = (id: string) =>
+    until(() => reqs(id).find((r) => r.messages.at(-1)?.results?.length), 20_000, `${id} ran its probe`);
+  const outOf = async (id: string) => (await ran(id)).messages.at(-1)?.results?.[0]?.output ?? "";
+  const outA = await outOf(A);
+  const outB = await outOf(B);
+  assert.match(outA, /READ-OK/);
+  assert.match(outA, /Permission denied/, "the DOF root itself is not listable");
+  assert.doesNotMatch(outB, /READ-OK/);
+  assert.match(outB, /Permission denied/);
+  const scopeOf = (id: string) =>
+    (JSON.parse(readFileSync(join(paths.ctl(id), "task.json"), "utf8")) as { scope: { dofs: string[] } }).scope.dofs;
+  assert.deepEqual(scopeOf(A), ["transforms", "slack"]);
+  assert.deepEqual(scopeOf(B), ["transforms"]);
+  const cfg = { dofs: { slack: { type: "slack", owner: "U1" } } };
+  assert.match(db((d) => taintOf(d, A, cfg)).join(), /^can read slack, which holds untrusted authors/);
+  assert.deepEqual(
+    db((d) => taintOf(d, B, cfg)),
+    [],
+    "the same owner's DM, no DOF to read",
+  );
+  const card = await (await fetch(`http://127.0.0.1:${port}/tasks/${A}`)).text();
+  assert.match(card, /<th>Tainted<\/th><td class="untrusted">can read slack, which holds untrusted authors/);
 });
 
 test("injection: a stranger's fence-breaking text gets no credentialed task, stays quoted for the Worker, is not laundered", {

@@ -58,7 +58,7 @@ await s.close();
 console.log(JSON.stringify(out));`,
   );
   const config = Config.parse({ policy: { deny: [secret] } });
-  const text = profile("unattended", { id: "T" }, config);
+  const text = profile("unattended", { id: "T", dofs: [] }, config);
   const r = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
     const c = spawn(shim.path, ["--", process.execPath, script], {
       cwd: work,

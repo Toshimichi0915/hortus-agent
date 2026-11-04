@@ -38,6 +38,8 @@ export interface Share {
   tag: string;
   path: string;
   ro: boolean;
+  /** `dof`: the subdirectories of `path` the guest may see (scope.dofs); the rest of `path` is not shared */
+  only?: string[];
 }
 
 export interface Link {
@@ -92,6 +94,53 @@ export function vmTaskJson(task: TaskJson): TaskJson {
   };
 }
 
+/**
+ * The virtiofsd command for a share. A share with `only` (the DOF root, v7 › Review round 7) shares `view` instead: one
+ * empty directory per readable DOF, each the DOF's worktree bind-mounted read-only inside an unprivileged user and mount
+ * namespace (the host never sees the mounts), then a nested user namespace gives virtiofsd back the owner's uid, so it
+ * runs as an unwrapped one does. microvm has 8 virtio-mmio slots and 7 are taken: one share per DOF does not fit.
+ */
+export function virtiofsd(s: Share, sock: string, view: string): { cmd: string; args: string[] } {
+  const args = [
+    // namespace (unprivileged user + mount namespace, the share as its root): a symlink the guest plants cannot
+    // point virtiofsd outside the shared directory
+    "--sandbox",
+    "namespace",
+    "--socket-path",
+    sock,
+    "--shared-dir",
+    s.only ? view : s.path,
+    ...(s.ro ? ["--readonly"] : []),
+    // its INFO/WARN lines (file handles, rlimits, "client connected") filled the console.log tail a failed
+    // boot's card shows, hiding QEMU's own error
+    "--log-level",
+    "error",
+  ];
+  if (!s.only) return { cmd: "virtiofsd", args };
+  const binds = s.only.flatMap((d) => [join(s.path, d), join(view, d)]);
+  const script = `u=$1 g=$2; shift 2
+while [ "$1" != -- ]; do mount --bind -o ro "$1" "$2" || exit 1; shift 2; done; shift
+exec unshare --user --map-user="$u" --map-group="$g" virtiofsd "$@"`;
+  const { uid, gid } = userInfo();
+  return {
+    cmd: "unshare",
+    args: [
+      "--user",
+      "--map-root-user",
+      "--mount",
+      "sh",
+      "-c",
+      script,
+      "sh",
+      `${uid}`,
+      `${gid}`,
+      ...binds,
+      "--",
+      ...args,
+    ],
+  };
+}
+
 /** The virtiofs shares (tags match the image's /etc/fstab); optional ones only when the host path exists. */
 export function shares(task: TaskJson): Share[] {
   const opt = (tag: string, path: string | undefined, ro: boolean): Share[] =>
@@ -99,7 +148,10 @@ export function shares(task: TaskJson): Share[] {
   return [
     { tag: "task-ctl", path: paths.ctl(task.id), ro: true },
     { tag: "task-out", path: paths.out(task.id), ro: false },
-    ...opt("dof", task.paths.dof, true),
+    ...opt("dof", task.paths.dof, true).map((s) => ({
+      ...s,
+      only: (task.scope.dofs ?? []).filter((d) => !/^\.*$|\//.test(d) && existsSync(join(s.path, d))),
+    })),
     ...opt("repos", task.paths.repos, true),
     ...opt("schedule", task.paths.schedule, false),
   ];
@@ -234,22 +286,10 @@ export async function startVm(o: VmOpts): Promise<Child> {
     mkdirSync(vfs, { mode: 0o700 });
     for (const s of shares(task)) {
       const sock = join(vfs, `${s.tag}.sock`);
-      const args = [
-        // namespace (unprivileged user + mount namespace, the share as its root): a symlink the guest plants cannot
-        // point virtiofsd outside the shared directory
-        "--sandbox",
-        "namespace",
-        "--socket-path",
-        sock,
-        "--shared-dir",
-        s.path,
-        ...(s.ro ? ["--readonly"] : []),
-        // its INFO/WARN lines (file handles, rlimits, "client connected") filled the console.log tail a failed
-        // boot's card shows, hiding QEMU's own error
-        "--log-level",
-        "error",
-      ];
-      await attach(spawn("virtiofsd", args, { stdio: ["ignore", "ignore", "pipe"] }));
+      const view = join(vfs, `${s.tag}-view`);
+      if (s.only) for (const d of ["", ...s.only]) mkdirSync(join(view, d), { recursive: true });
+      const v = virtiofsd(s, sock, view);
+      await attach(spawn(v.cmd, v.args, { stdio: ["ignore", "ignore", "pipe"] }));
       sockets.push({ tag: s.tag, sock });
     }
     await until(() => sockets.every((s) => existsSync(s.sock)), 5000, "virtiofsd sockets");

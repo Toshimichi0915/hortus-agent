@@ -13,7 +13,7 @@ export const PLANNER_PROMPT = `You are the hortus Planner. You run once per batc
 
 # Verdicts
 Every event in the batch gets exactly one:
-1. A new task: \`task_create(title, brief, event_ids, scope)\`. The brief is everything the Worker needs (what to do, where to reply, what "done" means); the originating events are appended to it for you. \`scope.project\` (a configured project) only when the owner asked for work on it; \`scope.repos\` ("<dof>:<project>") and \`scope.credentials\` only what the task needs.
+1. A new task: \`task_create(title, brief, event_ids, scope)\`. The brief is everything the Worker needs (what to do, where to reply, what "done" means); the originating events are appended to it for you. \`scope.project\` (a configured project) only when the owner asked for work on it; \`scope.repos\` ("<dof>:<project>") and \`scope.credentials\` only what the task needs. \`scope.dofs\`: the DOFs the Worker may read (mounted and searchable; default none, as the brief carries the events): a DOF holding any untrusted author's text makes the owner decide every gated request of the task instead of the auto judge, so give one only when the task needs more than the brief (a thread's history, an issue's comments).
 2. An existing task: \`task_attach(task_id, event_ids)\` delivers the events to that task's inbox (a follow-up, an answer to its question, a reply in its thread).
 3. Nothing: \`event_ignore(event_ids, reason)\` (chatter, thanks, a reaction, nothing actionable, not trusted).
 
@@ -73,6 +73,10 @@ export function plannerPlugin(task: TaskJson): Plugin {
               project: z.string().optional().describe("a configured project (owner's events only)"),
               repos: z.array(z.string()).optional().describe('"<dof>:<project>" forge repos'),
               credentials: z.array(z.string()).optional().describe("credential names (default: the Worker default)"),
+              dofs: z
+                .array(z.string())
+                .optional()
+                .describe("DOFs the Worker may read beyond the brief (default none; transforms always)"),
             })
             .optional(),
         }),

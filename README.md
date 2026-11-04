@@ -13,8 +13,9 @@ placeholders (`hortus-secret-<name>`), and all their traffic goes through `hortu
 only where a transform says it belongs (a header, a host) and scrubs it from responses. A request that uses a credential
 passes the Approval Gate: the owner approves it on the Approvals page (or, under the `auto` policy, a judge model does,
 except for consequential requests, merges, new transforms, logins, and tainted tasks: ones that read a stranger's
-message, a web page or an untrusted search hit; "Approve, and allow … for this task" on a tainted task's routine request
-lets its later ones through, consequential ones still ask). The design is `hortus_v6.md` (in the owner's vault); `hortus_v7.md`
+message, a web page or an untrusted search hit, or can read a DOF holding a stranger's text; the Planner gives a task
+only the DOFs it needs, `scope.dofs`; "Approve, and allow … for this task" on a tainted task's routine request lets
+its later ones through, consequential ones still ask). The design is `hortus_v6.md` (in the owner's vault); `hortus_v7.md`
 here records every decision made while building it.
 
 ## Install

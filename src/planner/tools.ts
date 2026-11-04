@@ -6,7 +6,7 @@
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { dirOf } from "../connectors/forge.ts";
-import { taint, taintOf } from "../db.ts";
+import { dofNames, readableOf, taint, taintOf } from "../db.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
 import { tasks } from "../runtime/index.ts";
@@ -51,7 +51,7 @@ function batchTaint(caller: Caller): string | undefined {
   const results = db.prepare("SELECT DISTINCT task_id FROM outbox WHERE consumed = ?").all(Number(n)) as {
     task_id: string;
   }[];
-  return strangers || results.some((r) => taintOf(db, r.task_id).length)
+  return strangers || results.some((r) => taintOf(db, r.task_id, pctx().config).length)
     ? `created from a batch with untrusted events (${caller.task})`
     : undefined;
 }
@@ -76,6 +76,7 @@ define("task_create", {
         project: z.string().optional(),
         repos: z.array(z.string()).optional(),
         credentials: z.array(z.string()).optional(),
+        dofs: z.array(z.string()).optional(),
       })
       .default({}),
   }),
@@ -98,6 +99,9 @@ define("task_create", {
       if (!d || !shaped || !(d.repos?.includes(name) || existsSync(paths.repo(dof, dirOf(name)))))
         throw new RpcError("invalid", `unknown repo ${r} (expected <dof>:<project> of a configured forge)`);
     }
+    const known = dofNames(c);
+    for (const d of scope.dofs ?? [])
+      if (!known.includes(d)) throw new RpcError("invalid", `unknown DOF ${d} (expected one of ${known.join(", ")})`);
     const names = new Set(Object.keys(readVault()));
     for (const n of scope.credentials ?? [])
       if (!names.has(n)) throw new RpcError("invalid", `unknown credential ${n}`);
@@ -115,6 +119,8 @@ define("task_create", {
       scope: {
         ...(scope.credentials ? { credentials: scope.credentials } : {}),
         ...(scope.repos ? { repos: scope.repos } : {}),
+        // v7 › Review round 7: none unless the Planner asks (the brief carries the events)
+        dofs: scope.dofs ?? [],
       },
       ...(project !== undefined ? { project } : {}),
       runtime,
@@ -133,9 +139,11 @@ define("task_attach", {
   run({ task_id, event_ids }) {
     task(task_id);
     const evs = events(event_ids);
+    const can = readableOf(pctx().db, pctx().config, task_id);
     const seqs = evs.map((e) => {
       const ref = refsOf(e)[0];
-      const where = ref ? `\n(the thread: ${ref.split(":").join("/")}/ under the DOF root)` : "";
+      // a thread outside the task's scope.dofs is not mounted: no pointer to it
+      const where = ref && can.includes(e.dof) ? `\n(the thread: ${ref.split(":").join("/")}/ under the DOF root)` : "";
       return tasks.inboxWrite(task_id, {
         from: ref ?? `${e.dof}:${e.key}`,
         ...(e.author ? { author: e.author } : {}),
