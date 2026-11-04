@@ -137,7 +137,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       });
       if (res.status === 429 && i < 5) {
         await res.body?.cancel();
-        await sleep(Number(res.headers.get("retry-after") ?? 1) * 1000);
+        await sleep(Number(res.headers.get("retry-after") ?? 1) * 1000, deps.signal);
         continue;
       }
       if (!res.ok) {

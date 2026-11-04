@@ -3,8 +3,10 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, readFileSync } from "node:fs";
 import { request } from "node:http";
 import { Agent, request as httpsRequest } from "node:https";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { TLSSocket } from "node:tls";
 import { load } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
@@ -354,7 +356,11 @@ test("console.tls: the configured chain is served, a world-readable key warns, a
     return readFileSync(join(dir, "cert.pem"));
   };
   const first = mint("first");
-  await stopRemote();
+  // a client in its TLS handshake is not in closeAllConnections: the stop must not wait out handshakeTimeout
+  const mute = connect(port, "127.0.0.1");
+  await new Promise((r) => mute.once("connect", r));
+  assert.ok(await Promise.race([stopRemote().then(() => true), sleep(2000).then(() => false)]), "stopRemote returned");
+  mute.destroy();
   const lines: string[] = [];
   const write = process.stderr.write.bind(process.stderr);
   process.stderr.write = ((s: string) => lines.push(String(s)) > 0) as typeof process.stderr.write;

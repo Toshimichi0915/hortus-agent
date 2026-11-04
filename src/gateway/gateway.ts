@@ -22,6 +22,9 @@ import {
 } from "../types.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
+/** What a stop or a reload leaves the calls in flight: a mirror mostly finishes (a Telegram message has no second
+ * chance), then whatever is left is cut, a stalled upstream or a 429's Retry-After included. */
+export const timing = { graceMs: 3000 };
 
 export interface GatewayDeps {
   db: DatabaseSync;
@@ -67,6 +70,8 @@ export interface Gateway {
 interface Runner {
   cfg: DofConfig;
   ac: AbortController;
+  /** aborted `graceMs` after `ac`: every upstream call of this runner, and the events still queued */
+  calls: AbortController;
   conn?: Connector;
   error?: string;
   chain: Promise<void>;
@@ -93,6 +98,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
     while (!signal.aborted) {
       try {
         for await (const { event, ack } of conn.events(signal)) {
+          if (r.calls.signal.aborted) break; // not inserted, not acked: Slack and Telegram send it again
           const cfg = deps.config().dofs[name] ?? r.cfg;
           let inserted: boolean;
           try {
@@ -145,7 +151,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
     }
   }
 
-  async function reconcileOnce(name: string, conn: Connector, only?: string): Promise<void> {
+  async function reconcileOnce(name: string, conn: Connector, signal: AbortSignal, only?: string): Promise<void> {
     const history = conn.history?.bind(conn);
     if (!history) return;
     let scopes: string[];
@@ -156,6 +162,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
       return;
     }
     for (const scope of scopes) {
+      if (signal.aborted) return; // a first backfill runs for hours, and stopOne waits for this loop
       try {
         const row = getCursor.get(name, scope) as { cursor: string | null } | undefined;
         let n = 0;
@@ -163,6 +170,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
           if (b.changes.length) await deps.commit(name, b.changes, `sync(${name}): ${scope} +${b.changes.length}`);
           setCursor.run(name, scope, b.cursor, now());
           n += b.changes.length;
+          if (signal.aborted) return;
         }
         log.info(`sync(${name}): ${scope} +${n}`, { reconcile: true });
       } catch (e) {
@@ -175,20 +183,24 @@ export function createGateway(deps: GatewayDeps): Gateway {
     const r = runners.get(name);
     const conn = r?.conn;
     if (!r || !conn) return Promise.resolve();
-    const p = r.chain.then(() => reconcileOnce(name, conn, scope));
+    const p = r.chain.then(() => reconcileOnce(name, conn, r.ac.signal, scope));
     r.chain = p;
     return p;
   }
 
   async function run(name: string, r: Runner, factory: ConnectorFactory): Promise<void> {
     const { signal } = r.ac;
+    const calls = r.calls.signal;
+    const fetch: ConnectorDeps["fetch"] = (url, init) =>
+      deps.fetch(name)(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, calls]) : calls });
     for (let i = 0; !r.conn && !signal.aborted; i++) {
       try {
         r.conn = await factory({
           name,
           config: r.cfg,
           log,
-          fetch: deps.fetch(name),
+          fetch,
+          signal: calls,
           hasRef: deps.hasRef,
           ...(deps.ws && { ws: deps.ws }),
         });
@@ -213,7 +225,13 @@ export function createGateway(deps: GatewayDeps): Gateway {
   function startOne(name: string, cfg: DofConfig): void {
     const factory = deps.connectors[cfg.type];
     if (!factory) return;
-    const r: Runner = { cfg, ac: new AbortController(), chain: Promise.resolve(), done: Promise.resolve() };
+    const r: Runner = {
+      cfg,
+      ac: new AbortController(),
+      calls: new AbortController(),
+      chain: Promise.resolve(),
+      done: Promise.resolve(),
+    };
     runners.set(name, r);
     r.done = run(name, r, factory).catch((e) => log.error(`${name}: runner failed`, e));
   }
@@ -223,7 +241,10 @@ export function createGateway(deps: GatewayDeps): Gateway {
     if (!r) return;
     runners.delete(name);
     r.ac.abort();
+    const cut = setTimeout(() => r.calls.abort(), timing.graceMs);
     await r.done;
+    clearTimeout(cut);
+    r.calls.abort(); // the old connector's stragglers: a webhook chore's pass, not waited for
   }
 
   const gw: Gateway = {
@@ -237,7 +258,8 @@ export function createGateway(deps: GatewayDeps): Gateway {
     },
     async reload() {
       const next = deps.config().dofs;
-      for (const [name, r] of [...runners]) if (!isDeepStrictEqual(r.cfg, next[name])) await stopOne(name);
+      const changed = [...runners].filter(([name, r]) => !isDeepStrictEqual(r.cfg, next[name]));
+      await Promise.all(changed.map(([name]) => stopOne(name)));
       for (const [name, cfg] of Object.entries(next)) if (!runners.has(name)) startOne(name, cfg);
     },
     async reconcile(dof, scope) {

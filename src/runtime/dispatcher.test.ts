@@ -1,6 +1,7 @@
 /** The dispatcher's VM routing without an image: a task without a project is a VM task; `vm.fallback_host: false`
  * keeps it queued with the image error on the card (the fallback-to-host path needs Landlock and a provider). */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,8 +17,10 @@ import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir, until } from "../test/until.ts";
 import { plannerModule, renderBatch } from "../planner/planner.ts";
 import "../planner/tools.ts";
+import { proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
 import { dispatcherModule, readOutbox, runPlanner } from "./dispatcher.ts";
+import { shim } from "./landlock.ts";
 import * as tasks from "./tasks.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-dispatch-");
@@ -108,6 +111,69 @@ test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch
   } finally {
     await dispatcherModule.stop();
   }
+});
+
+test("a stop while a VM is starting ends it: no child yet to kill, and none left running", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "a stop while a VM"), /# pass 1/);
+  const tag = `hortus-mid-${process.pid}`;
+  fakeVm(paths.home(), tag);
+  writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ worker: { provider: "fake", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  await dispatcherModule.start(ctx);
+  const { id } = tasks.create({ kind: "unattended", title: "t", brief: "b", scope: { credentials: [] } });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate); // the tick ran: `running`, inside startVm's first await
+  assert.equal(tasks.get(id).status, "running");
+  const stopped = await Promise.race([
+    dispatcherModule.stop().then(() => true),
+    new Promise<boolean>((r) => setTimeout(() => r(false), 5000).unref()),
+  ]);
+  assert.ok(stopped, "the stop returned");
+  assert.notEqual(spawnSync("pgrep", ["-f", tag]).status, 0, "no QEMU or virtiofsd left");
+});
+
+test("a stop while a host session is starting ends it: a shim not yet in its cgroup too", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "a stop while a host"), /# pass 1/);
+  const tag = `hortus-mid-${process.pid}`;
+  // never joins the cgroup, as the real shim has not in its first instant
+  shim.path = join(paths.home(), "fake-shim");
+  writeFileSync(shim.path, `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\nexec -a ${tag} sleep 600\n`, {
+    mode: 0o755,
+  });
+  writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ worker: { provider: "fake", model: "m" }, proxy: { https: 0, http: 0, dns: 0 } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  await mirrorModule.start(ctx);
+  await proxyModule.start(ctx);
+  await dispatcherModule.start(ctx);
+  const { id } = tasks.create({ kind: "chat", title: "t", brief: "b", scope: { credentials: [] } });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate); // the tick ran: `running`, before the spawn
+  assert.equal(tasks.get(id).status, "running");
+  const stopped = await Promise.race([
+    dispatcherModule.stop().then(() => true),
+    new Promise<boolean>((r) => setTimeout(() => r(false), 5000).unref()),
+  ]);
+  await proxyModule.stop();
+  assert.ok(stopped, "the stop returned");
+  assert.notEqual(spawnSync("pgrep", ["-f", tag]).status, 0, "no session left");
 });
 
 test("VM failures: a boot timeout, the hours deadline, a Worker dead in the guest; a clean exit is none", {

@@ -7,8 +7,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { request } from "node:https";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { after, before, test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { WebSocket } from "ws";
 import { Config } from "../config.ts";
 import { create as discord } from "../connectors/discord.ts";
@@ -24,7 +25,7 @@ import type { Connector, Incoming } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { coreFetch, coreSocket, links, listen, proxyModule } from "./index.ts";
+import { coreFetch, coreSocket, links, listen, proxyModule, unlisten } from "./index.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-ws-");
 process.env.HORTUS_NO_NET = "1";
@@ -246,6 +247,27 @@ test("coreSocket (hortusd's wiring): the in-process route is role core and IDENT
   dc.post("300", { user: "200", text: "via coreSocket" });
   await got;
   assert.deepEqual(dc.identifies.slice(n), [{ op: 2, token: dc.token }]);
+});
+
+test("unlisten waits for no client: not a live WebSocket, nor one that never said hello", async () => {
+  links.register("127.0.0.7", "core", null, "test");
+  const p = await listen("127.0.0.7", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
+  const ws = new WebSocket(`wss://127.0.0.7:${p.https}/?v=10&encoding=json`, {
+    servername: "gateway.discord.gg",
+    headers: { host: "gateway.discord.gg" },
+    ca,
+  } as WebSocket.ClientOptions);
+  await new Promise((r, reject) => ws.once("open", r).once("error", reject));
+  const mute = connect(p.https, "127.0.0.7");
+  await new Promise((r) => mute.once("connect", r));
+  const done = await Promise.race([unlisten("127.0.0.7").then(() => true), sleep(2000).then(() => false)]);
+  ws.terminate();
+  mute.destroy();
+  assert.ok(done, "unlisten returned");
+  const again = await listen("127.0.0.7", { https: p.https, http: p.http, dns: 0, proxyAddress: "127.0.0.1" });
+  assert.equal(again.https, p.https, "the port is free at once");
+  await unlisten("127.0.0.7");
+  links.release("127.0.0.7");
 });
 
 test("a client frame with the raw token is refused (1008) and never reaches the gateway", async () => {

@@ -210,15 +210,13 @@ export async function unlisten(address: string): Promise<void> {
   if (!l) return;
   listeners.delete(address);
   l.dns.close();
-  await Promise.all(
-    l.servers.map(
-      (s) =>
-        new Promise<void>((r) => {
-          s.close(() => r());
-          s.closeAllConnections();
-        }),
-    ),
-  );
+  // not waiting for close's callback: closeAllConnections misses an upgraded socket and one still in its TLS handshake,
+  // so a VM's WebSocket (QEMU killed, no FIN) or a silent client held a stop to STOP_MS. They end with their client,
+  // the handshake timeout or hortusd; the port is free once close returns
+  for (const s of l.servers) {
+    s.close();
+    s.closeAllConnections();
+  }
 }
 
 export const listening = (): string[] => [...listeners.keys()];

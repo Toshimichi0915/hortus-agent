@@ -118,8 +118,9 @@ export async function stopRemote(): Promise<void> {
   state = undefined;
   remoteConsole.port = 0;
   clearInterval(s.timer);
+  // as proxy/server.ts › unlisten: no waiting on a TCP client in its TLS handshake, which closeAllConnections misses
+  s.server.close();
   s.server.closeAllConnections();
-  await new Promise<void>((resolve) => s.server.close(() => resolve()));
 }
 
 /** `https://console.host[:port]` while the remote listener runs. */
