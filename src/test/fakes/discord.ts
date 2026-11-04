@@ -34,6 +34,7 @@ export interface DMsg {
   attachments: DAttachment[];
   message_reference?: { message_id: string; channel_id: string };
   reactions?: { emoji: { id: string | null; name: string }; count: number }[];
+  message_snapshots?: { message: { content: string } }[];
 }
 export interface DChannel {
   id: string;
@@ -43,7 +44,9 @@ export interface DChannel {
   guild_id?: string;
   parent_id?: string;
   recipients?: DUser[];
-  thread_metadata?: { archived: boolean };
+  thread_metadata?: { archived: boolean; archive_timestamp?: string };
+  /** the bot lacks READ_MESSAGE_HISTORY here: 403 on its archived threads and messages */
+  hidden?: boolean;
   messages: DMsg[];
   /** per emoji key → user ids, per message */
   reacts: Map<string, Map<string, string[]>>;
@@ -55,6 +58,8 @@ export interface PostOpts {
   reply?: string;
   /** `bytes` is served; `size` (default bytes.length) is what the API reports */
   files?: { name: string; bytes?: Buffer; size?: number }[];
+  /** a forward of this text: `content` stays empty, the text is in `message_snapshots` */
+  forward?: string;
   /** state only, no dispatch (history fixtures) */
   quiet?: boolean;
 }
@@ -86,7 +91,7 @@ export class FakeDiscord {
   channels = new Map<string, DChannel>();
   files = new Map<string, Buffer>();
   /** every REST call, in order */
-  calls: { method: string; path: string; body: Json }[] = [];
+  calls: { method: string; path: string; body: Json; userAgent?: string }[] = [];
   /** interaction callbacks received: id and the time since dispatch */
   callbacks: { id: string; type: number; ms: number }[] = [];
   /** tokens received in IDENTIFY / RESUME frames, in order */
@@ -102,6 +107,14 @@ export class FakeDiscord {
   hello = true;
   /** `GET /gateway/bot` answers this when set (proxy tests point it at `wss://gateway.discord.gg`) */
   gatewayUrl?: string;
+  /** READY's `resume_gateway_url` when set: a session-specific host, not the one connected to */
+  resumeUrl?: string;
+  /** the Host of every gateway connection, in order */
+  hosts: string[] = [];
+  /** close every IDENTIFY with this code (4014: a privileged intent not enabled in the portal) */
+  closeOnIdentify = 0;
+  /** archived threads per page (`has_more`) */
+  archivedPage = 100;
   pageSize = 100;
   url = "";
   private limits = new Map<string, number>();
@@ -127,7 +140,10 @@ export class FakeDiscord {
     });
     // any path: the real gateway URL has none, the default one here is `/gateway`
     this.wss = new WebSocketServer({ server: this.server });
-    this.wss.on("connection", (ws) => this.connection(ws));
+    this.wss.on("connection", (ws, req) => {
+      this.hosts.push(req.headers.host ?? "");
+      this.connection(ws);
+    });
   }
 
   static async start(): Promise<FakeDiscord> {
@@ -211,6 +227,7 @@ export class FakeDiscord {
     if (guild) m.guild_id = guild;
     if (guild && this.members.has(author.id)) m.member = { roles: [] };
     if (o.reply) m.message_reference = { message_id: o.reply, channel_id: channel };
+    if (o.forward) m.message_snapshots = [{ message: { content: o.forward } }];
     c.messages.push(m);
     if (!o.quiet) this.dispatch("MESSAGE_CREATE", this.msgOut(c, m));
     return m;
@@ -244,6 +261,26 @@ export class FakeDiscord {
     if (c.guild_id) d.guild_id = c.guild_id;
     if (c.guild_id && !remove && this.members.has(user)) d.member = { roles: [] };
     this.dispatch(remove ? "MESSAGE_REACTION_REMOVE" : "MESSAGE_REACTION_ADD", d);
+  }
+
+  /** MESSAGE_DELETE_BULK */
+  bulkDelete(channel: string, ids: string[]): void {
+    const c = this.must(channel);
+    c.messages = c.messages.filter((x) => !ids.includes(x.id));
+    this.dispatch("MESSAGE_DELETE_BULK", { ids, channel_id: channel, guild_id: c.guild_id });
+  }
+
+  /** MESSAGE_REACTION_REMOVE_ALL */
+  clearReactions(channel: string, id: string): void {
+    const c = this.must(channel);
+    c.reacts.delete(id);
+    this.dispatch("MESSAGE_REACTION_REMOVE_ALL", { channel_id: channel, message_id: id, guild_id: c.guild_id });
+  }
+
+  /** Someone joins a thread: THREAD_MEMBERS_UPDATE, whose `id` is the thread and which is no channel object. */
+  threadJoin(thread: string, user: string): void {
+    const m = { id: thread, user_id: user, join_timestamp: this.now(), flags: 0 };
+    this.dispatch("THREAD_MEMBERS_UPDATE", { id: thread, guild_id: this.guild, member_count: 2, added_members: [m] });
   }
 
   /** A guild member joins: GUILD_MEMBER_ADD. */
@@ -317,6 +354,7 @@ export class FakeDiscord {
       else if (f.op === 2 || f.op === 6) {
         this.identifies.push({ op: f.op, token: String(d.token) });
         if (d.token !== this.token) return ws.close(4004, "Authentication failed.");
+        if (f.op === 2 && this.closeOnIdentify) return ws.close(this.closeOnIdentify, "Disallowed intent(s).");
         if (f.op === 2) this.ready(ws);
         else this.resume(ws, String(d.session_id), Number(d.seq ?? 0));
       }
@@ -336,7 +374,7 @@ export class FakeDiscord {
       v: 10,
       user: bot,
       session_id: s.id,
-      resume_gateway_url: this.wsUrl(),
+      resume_gateway_url: this.resumeUrl ?? this.wsUrl(),
       guilds: [{ id: this.guild, unavailable: true }],
     });
     const all = [...this.channels.values()].filter((c) => c.guild_id === this.guild);
@@ -385,7 +423,7 @@ export class FakeDiscord {
   }
 
   private chan(c: DChannel): Json {
-    const { messages: _m, reacts: _r, ...rest } = c;
+    const { messages: _m, reacts: _r, hidden: _h, ...rest } = c;
     return rest;
   }
 
@@ -410,7 +448,7 @@ export class FakeDiscord {
     const raw = Buffer.concat(chunks).toString();
     const body = (raw ? JSON.parse(raw) : {}) as Json;
     const method = req.method ?? "GET";
-    this.calls.push({ method, path: path + u.search, body });
+    this.calls.push({ method, path: path + u.search, body, userAgent: req.headers["user-agent"] });
     for (const [route, left] of this.limits) {
       if (left > 0 && `${method} ${path}`.startsWith(route)) {
         this.limits.set(route, left - 1);
@@ -431,6 +469,9 @@ export class FakeDiscord {
       return { status: 204, body: "" };
     }
     if (req.headers.authorization !== `Bot ${this.token}`) return json({ message: "401: Unauthorized", code: 0 }, 401);
+    const seg = path.split("/");
+    if (seg[1] === "channels" && this.channels.get(seg[2] ?? "")?.hidden)
+      return json({ message: "Missing Access", code: 50001 }, 403);
     const r = this.route(method, path, u.searchParams, body);
     return r === undefined ? json({ message: "404: Not Found", code: 0 }, 404) : json(r);
   }
@@ -457,13 +498,16 @@ export class FakeDiscord {
             .filter((x) => x.guild_id === seg[1] && isThread(x) && !x.thread_metadata?.archived)
             .map((x) => this.chan(x)),
         };
-      case "GET /channels/:id/threads/archived/public":
-        return {
-          threads: [...this.channels.values()]
-            .filter((x) => x.parent_id === seg[1] && x.thread_metadata?.archived)
-            .map((x) => this.chan(x)),
-          has_more: false,
-        };
+      case "GET /channels/:id/threads/archived/public": {
+        // newest archive first, `before` an archive_timestamp
+        const stamp = (x: DChannel) => x.thread_metadata?.archive_timestamp ?? "";
+        const before = q.get("before");
+        const all = [...this.channels.values()]
+          .filter((x) => x.parent_id === seg[1] && x.thread_metadata?.archived && (!before || stamp(x) < before))
+          .sort((a, b) => stamp(b).localeCompare(stamp(a)));
+        const limit = Math.min(Number(q.get("limit") ?? 50), this.archivedPage);
+        return { threads: all.slice(0, limit).map((x) => this.chan(x)), has_more: all.length > limit };
+      }
       case "GET /channels/:id":
         return c && this.chan(c);
       case "GET /channels/:id/messages": {

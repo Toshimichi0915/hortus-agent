@@ -140,6 +140,29 @@ test("reactions patch the message's reactions by name and never wake", async () 
   assert.deepEqual((await mirrored()).changes[0]?.frontmatter, { reactions: null });
 });
 
+test("message_replied (no subtype, as delivered) writes nothing and wakes nothing; /me is mirrored", async () => {
+  const p = fake.post("C1", { user: "U_ALICE", text: "parent" });
+  await mirrored();
+  fake.replied("C1", p.ts);
+  const r = await mirrored();
+  assert.deepEqual(r.changes, []);
+  assert.equal(r.wake, false);
+  fake.post("C1", { user: "U_ALICE", text: "waves", subtype: "me_message" });
+  const me = await mirrored();
+  assert.equal(md(me.changes)[0]?.body, "waves");
+});
+
+test("a reaction on a file (no channel, no ts) is ignored; a private channel's rename puts channel.md", async () => {
+  fake.emit({ type: "reaction_added", user: "U_ALICE", reaction: "eyes", item: { type: "file", file: "F1" } });
+  assert.deepEqual((await mirrored()).changes, []);
+  fake.emit({
+    type: "group_rename",
+    channel: { id: "C1", name: "renamed", created: 1 },
+    event_ts: "1730000001.000100",
+  });
+  assert.equal((await mirrored()).changes[0]?.path, "C1/channel.md");
+});
+
 test("membership puts channel.md; other events change nothing", async () => {
   fake.join("C1", "U_GUEST");
   const r = await mirrored();
@@ -273,6 +296,18 @@ test("reconnect: disconnect → back within 2 s, later events arrive", async () 
   await until(() => fake.connects > n && conn.status().connected, 2000, "reconnect");
   fake.post("C1", { user: "U_ALICE", text: "after reconnect" });
   assert.equal((await pending).changes[0]?.body, "after reconnect");
+});
+
+test("a connection past its announced life with no disconnect is replaced (a dead TCP path sends no close)", async () => {
+  const n = fake.connects;
+  fake.connectionTime = 0.2;
+  fake.disconnect();
+  const pending = next(); // the generator reconnects only while it is pulled
+  await until(() => fake.connects === n + 1, 5000, "reconnect");
+  fake.connectionTime = 3600;
+  await until(() => fake.connects === n + 2, 5000, "replaced after 0.3 s, by nothing but the clock");
+  fake.post("C1", { user: "U_ALICE", text: "still here" });
+  await (await pending).ack();
 });
 
 test("a socket that never says hello is retried", async () => {

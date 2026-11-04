@@ -6,7 +6,7 @@ import type { Change, Connector, ConnectorDeps, ConnectorStatus, Event, Incoming
 import { backoff, sleep } from "./retry.ts";
 
 /** Tunables tests shorten. */
-export const timing = { helloMs: 10_000, usersMs: 3_600_000, unknownUserMs: 60_000 };
+export const timing = { helloMs: 10_000, lifeMs: 3_600_000, usersMs: 3_600_000, unknownUserMs: 60_000 };
 const MAX_FILE = 20 * 1024 * 1024;
 
 interface SlackFile {
@@ -36,7 +36,8 @@ interface SlackEvent extends Omit<Partial<SlackMsg>, "user"> {
   message?: SlackMsg;
   previous_message?: SlackMsg;
   deleted_ts?: string;
-  item?: { channel: string; ts: string };
+  /** a `file` or `file_comment` item has no channel or ts */
+  item?: { channel?: string; ts?: string };
   reaction?: string;
 }
 interface Payload {
@@ -62,13 +63,14 @@ interface Envelope {
   type: string;
   envelope_id?: string;
   payload?: Payload;
+  debug_info?: { approximate_connection_time?: number };
 }
 type Params = Record<string, string | number | boolean | undefined>;
 
 /** Slack ts strings ("1730000000.123456") compared without float rounding. */
 const cmpTs = (a: string, b: string): number => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
 const iso = (ts: string): string => `${new Date(Number(ts) * 1000).toISOString().slice(0, 19)}Z`;
-const MIRRORED = new Set([undefined, "thread_broadcast", "file_share", "bot_message"]);
+const MIRRORED = new Set([undefined, "thread_broadcast", "file_share", "bot_message", "me_message"]);
 const fileName = (f: SlackFile): string => `${f.id}-${(f.name ?? "file").replace(/[/\\\0]/g, "_")}`;
 const chanOf = (ev: SlackEvent): string =>
   (typeof ev.channel === "string" ? ev.channel : ev.channel?.id) ?? ev.item?.channel ?? "";
@@ -230,7 +232,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       notify();
       ws.close();
     };
-    const timer = setTimeout(close, timing.helloMs);
+    let timer = setTimeout(close, timing.helloMs);
     signal.addEventListener("abort", close, { once: true });
     ws.onclose = () => {
       closed = true;
@@ -247,6 +249,10 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       if (env.type === "hello") {
         hello = true;
         clearTimeout(timer);
+        // Slack refreshes a connection every few hours; past the announced life with no `disconnect`, the TCP path is
+        // dead (a suspend, a NAT drop) and nothing here writes to notice: a global WebSocket has no ping
+        const life = env.debug_info?.approximate_connection_time;
+        timer = setTimeout(close, 1.5 * (life ? life * 1000 : timing.lifeMs));
         st.connected = true;
         st.error = undefined;
         onHello();
@@ -306,7 +312,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       const none = { changes: [], wake: false };
       switch (ev.type) {
         case "message": {
-          if (MIRRORED.has(ev.subtype) && ev.ts) {
+          // `!ev.message`: message_replied arrives without its subtype (the docs' bug alert), and its `ts` is the event's
+          if (MIRRORED.has(ev.subtype) && ev.ts && !ev.message) {
             return { changes: await messageChanges(ch, ev as SlackMsg, true), wake: !e.bot };
           }
           if (ev.subtype === "message_changed" && ev.message) {
@@ -325,8 +332,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         }
         case "reaction_added":
         case "reaction_removed": {
-          if (!ev.item) return none;
-          const { channel, ts } = ev.item;
+          const { channel, ts } = ev.item ?? {};
+          if (!channel || !ts) return none;
           const r = await api<{ messages: SlackMsg[] }>("conversations.replies", { channel, ts, inclusive: true });
           const m = r.messages.find((x) => x.ts === ts);
           if (!m) return none;
@@ -338,6 +345,10 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         case "channel_rename":
         case "channel_created":
         case "channel_archive":
+        case "channel_unarchive":
+        case "group_rename":
+        case "group_archive":
+        case "group_unarchive":
           return { changes: [await channelChange(ch)], wake: false };
         default:
           return none;

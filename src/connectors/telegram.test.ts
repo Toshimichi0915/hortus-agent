@@ -96,6 +96,8 @@ test("message: key update_id, member via getChatMember, refs, v6 frontmatter, wa
   assert.deepEqual(poll?.allowed_updates, [
     "message",
     "edited_message",
+    "channel_post",
+    "edited_channel_post",
     "message_reaction",
     "chat_member",
     "my_chat_member",
@@ -163,6 +165,31 @@ test("edit puts the same path with edited and wakes", async () => {
   assert.equal(e.changes[0]?.path, `${GROUP}/${m.message_id}/${m.message_id}.md`);
   assert.equal(e.changes[0]?.body, "v2");
   assert.ok(e.changes[0]?.frontmatter?.edited);
+});
+
+test("a live location's edits (no text) write nothing and wake nothing; an edit keeps the reactions", async () => {
+  const m = fake.post(GROUP, { user: ALICE, text: "here" });
+  await mirrored();
+  fake.move(GROUP, m.message_id);
+  const r = await mirrored();
+  assert.deepEqual(r.changes, []);
+  assert.equal(r.wake, false);
+  fake.react(GROUP, m.message_id, ALICE, "👍");
+  await mirrored();
+  fake.edit(GROUP, m.message_id, "there");
+  const e = await mirrored();
+  assert.deepEqual(e.changes[0]?.frontmatter?.reactions, { "👍": ["alice"] });
+});
+
+test("a channel post is delivered (asked for in allowed_updates) and mirrored; it has no author", async () => {
+  const allowed = fake.calls.find((c) => c.method === "getUpdates")?.params.allowed_updates as string[];
+  for (const u of ["channel_post", "edited_channel_post", "chat_member", "message_reaction"])
+    assert.ok(allowed.includes(u));
+  fake.chat(-200, { type: "channel", title: "news" });
+  const p = fake.post(-200, { text: "an announcement" });
+  const r = await mirrored();
+  assert.equal(r.changes[0]?.path, `-200/${p.message_id}/${p.message_id}.md`);
+  assert.equal(r.event.author, null);
 });
 
 test("reactions patch `reactions` by emoji and never wake", async () => {
@@ -233,7 +260,7 @@ test("reconnect: a dropped long poll is retried and later updates arrive; a 429 
   assert.equal((await pending).changes[0]?.body, "after reconnect");
   const notes = conn.status().notes ?? [];
   assert.match(notes[0] ?? "", /^last update \d+$/);
-  assert.match(notes[1] ?? "", /^known chats: 2$/);
+  assert.match(notes[1] ?? "", /^known chats: 3$/);
 });
 
 test("the shipped transform passes its tests", async () => {

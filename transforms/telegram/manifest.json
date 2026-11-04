@@ -3,5 +3,11 @@
   "credentials": {
     "telegram": { "type": "token", "hosts": ["api.telegram.org"], "locations": ["path:/bot{}/"] }
   },
-  "consequential": ["POST api.telegram.org/bot*/deleteMessage", "POST api.telegram.org/bot*/leaveChat"]
+  "consequential": [
+    "* api.telegram.org/bot*/delete*",
+    "* api.telegram.org/bot*/leaveChat",
+    "* api.telegram.org/bot*/banChatMember",
+    "* api.telegram.org/bot*/setWebhook",
+    "* api.telegram.org/bot*/logOut"
+  ]
 }

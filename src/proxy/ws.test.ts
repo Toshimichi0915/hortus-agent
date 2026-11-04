@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { request } from "node:https";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { WebSocket } from "ws";
@@ -89,6 +90,7 @@ before(async () => {
         upstreams: {
           "discord.com": dc.url,
           "gateway.discord.gg": dc.url,
+          "gateway-us-east1-b.discord.gg": dc.url,
           "api.telegram.org": tg.url,
           "flood.example": `http://127.0.0.1:${(flood.address() as AddressInfo).port}`,
         },
@@ -102,7 +104,7 @@ before(async () => {
   writeVault({ ...dc.vault("discord"), ...tg.vault("telegram") });
   ctx.db
     .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: ["discord"], repos: [] }), JSON.stringify("*"));
+    .run(JSON.stringify({ credentials: ["discord", "telegram"], repos: [] }), JSON.stringify("*"));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load();
@@ -151,6 +153,67 @@ test("discord through the proxy: REST and IDENTIFY get the real token; upstream 
   assert.deepEqual(dc.identifies, [{ op: 2, token: dc.token }]);
   const m = await conn.mirror(event);
   assert.equal(m.changes[0]?.body, "leak hortus-secret-discord here");
+});
+
+test("a dropped gateway resumes on READY's session-specific host, RESUME swapped like IDENTIFY", async () => {
+  dc.resumeUrl = "wss://gateway-us-east1-b.discord.gg";
+  const ac = new AbortController();
+  const conn = await discord({
+    name: "discord",
+    config: { type: "discord", owner: "200" },
+    log: memLog(),
+    fetch: coreFetch,
+    ws: coreSocket,
+    hasRef: () => false,
+  });
+  const it = conn.events(ac.signal)[Symbol.asyncIterator]();
+  const n = dc.identifies.length;
+  const got = it.next();
+  await until(() => dc.identifies.length > n, 5000, "IDENTIFY");
+  await until(() => conn.status().connected, 5000, "READY");
+  dc.disconnect();
+  await until(() => dc.identifies.length > n + 1, 5000, "the second handshake");
+  assert.deepEqual(dc.identifies.at(-1), { op: 6, token: dc.token });
+  assert.match(dc.hosts.at(-1) ?? "", /^gateway-us-east1-b\.discord\.gg/);
+  dc.post("300", { user: "200", text: "after the resume" });
+  await got;
+  ac.abort();
+  void it.return?.();
+  dc.resumeUrl = undefined;
+});
+
+test("the shipped delete patterns hold for GET, for any case, and for the plural (the owner asked each time)", async () => {
+  const worker = (method: string, host: string, path: string) =>
+    new Promise<number>((resolve, reject) => {
+      const headers = { host, ...(host === "discord.com" ? { authorization: "Bot hortus-secret-discord" } : {}) };
+      const o = {
+        host: "127.0.0.1",
+        port: ports.https,
+        servername: host,
+        method,
+        path,
+        headers,
+        ca,
+        localAddress: WORKER,
+      };
+      request(o, (res) => res.resume().on("end", () => resolve(res.statusCode ?? 0)))
+        .on("error", reject)
+        .end();
+    });
+  const consequential = () => {
+    const row = ctx.db.prepare("SELECT payload FROM approvals ORDER BY id DESC").get() as { payload: string };
+    return (JSON.parse(row.payload) as { consequential?: boolean }).consequential;
+  };
+  const bot = "/bothortus-secret-telegram";
+  for (const [method, host, path] of [
+    ["GET", "api.telegram.org", `${bot}/deleteMessage?chat_id=1&message_id=2`],
+    ["POST", "api.telegram.org", `${bot}/DELETEMESSAGE`],
+    ["POST", "api.telegram.org", `${bot}/deleteMessages`],
+    ["POST", "discord.com", "/api/v10/channels/300/messages/bulk-delete"],
+  ] as const) {
+    assert.equal(await worker(method, host, path), 403, path);
+    assert.equal(consequential(), true, path);
+  }
 });
 
 test("coreSocket (hortusd's wiring): the in-process route is role core and IDENTIFY gets the real token", async () => {

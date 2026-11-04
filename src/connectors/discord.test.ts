@@ -6,7 +6,7 @@ import { directFetch } from "../test/direct.ts";
 import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorDeps, Incoming } from "../types.ts";
-import { create } from "./discord.ts";
+import { create, timing } from "./discord.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-discord-");
 
@@ -110,6 +110,36 @@ test("a thread message files under the parent channel; refs name the thread", as
   const a = await mirrored();
   assert.deepEqual(a.event.refs, [`discord:300:${answer.id}`, `discord:300:${root.id}`]);
   assert.equal(a.changes[0]?.frontmatter?.reply_to, root.id);
+});
+
+test("THREAD_MEMBERS_UPDATE leaves the thread a thread: its messages still file under the parent", async () => {
+  const t = fake.thread("300", { name: "members" });
+  await mirrored();
+  fake.threadJoin(t.id, "201");
+  fake.post(t.id, { user: "201", text: "after the join" });
+  const r = await mirrored();
+  assert.match(r.changes[0]?.path ?? "", new RegExp(`^300/${t.id}/`));
+  assert.ok(r.event.refs.includes(`discord:300:${t.id}`));
+});
+
+test("a bulk delete deletes each message; removing all reactions clears them; a forward's text is the body", async () => {
+  const a = fake.post("300", { user: "201", text: "a" });
+  await mirrored();
+  const b = fake.post("300", { user: "201", text: "b" });
+  await mirrored();
+  fake.react("300", b.id, "201", "ok");
+  await mirrored();
+  fake.clearReactions("300", b.id);
+  assert.deepEqual((await mirrored()).changes, [
+    { op: "patch", path: `300/${b.id}/${b.id}.md`, frontmatter: { reactions: null } },
+  ]);
+  fake.bulkDelete("300", [a.id, b.id]);
+  assert.deepEqual((await mirrored()).changes, [
+    { op: "delete", path: `300/${a.id}/${a.id}.md` },
+    { op: "delete", path: `300/${b.id}/${b.id}.md` },
+  ]);
+  fake.post("300", { user: "201", forward: "forwarded text" });
+  assert.equal((await mirrored()).changes[0]?.body, "forwarded text");
 });
 
 test("edit puts the same path with edited and wakes; delete deletes it", async () => {
@@ -220,6 +250,26 @@ test("scopes: text channels, active and archived threads, the owner's DM", async
   for (const id of ["300", "301", "9200", p.id]) assert.ok(s.includes(id), id);
 });
 
+test("scopes: a channel the bot cannot read costs only itself; archived threads page; forum threads are found", async () => {
+  fake.channel("310", { name: "secret", hidden: true });
+  fake.channel("311", { type: 15, name: "forum" });
+  const arch = (parent: string, id: string, at: string) => {
+    const t = fake.channel(id, { type: 11, parent_id: parent, name: `t${id}` });
+    t.thread_metadata = { archived: true, archive_timestamp: at };
+  };
+  arch("300", "3101", "2026-01-02T00:00:00+00:00");
+  arch("300", "3102", "2026-01-01T00:00:00+00:00");
+  arch("311", "3103", "2026-01-01T00:00:00+00:00");
+  fake.archivedPage = 1;
+  const s = await conn.scopes();
+  fake.archivedPage = 100;
+  for (const id of ["300", "3101", "3102", "3103"]) assert.ok(s.includes(id), id);
+  assert.ok(!s.includes("310") && !s.includes("311"), "not scopes");
+  fake.channels.delete("310");
+  fake.channels.delete("311");
+  for (const id of ["3101", "3102", "3103"]) fake.channels.delete(id);
+});
+
 test("history: after= paging ascending with cursor = last id; a thread scope files under its parent", async () => {
   fake.channel("302", { name: "hist" });
   fake.pageSize = 2;
@@ -268,6 +318,27 @@ test("resume: a dropped gateway resumes, missed events are replayed with their k
   assert.equal((await mirrored()).event.key, r.event.key);
 });
 
+test("REST carries Discord's User-Agent form", () => {
+  assert.ok(fake.calls.every((c) => /^DiscordBot \(\S+, \S+\)$/.test(c.userAgent ?? "")));
+});
+
+test("the first heartbeat is at heartbeat_interval * jitter, not a full interval", async () => {
+  const beats = () => fake.received.filter((f) => f.op === 1).length;
+  const random = Math.random;
+  Math.random = () => 0.01;
+  fake.heartbeatMs = 20_000;
+  const n = fake.connects;
+  fake.disconnect();
+  const pending = next(); // the generator reconnects only while it is pulled
+  await until(() => fake.connects > n, 5000, "reconnect");
+  const was = beats();
+  await until(() => beats() > was, 2000, "a beat long before the 20 s interval");
+  Math.random = random;
+  fake.heartbeatMs = 200;
+  fake.post("300", { user: "201", text: "after" });
+  await (await pending).ack();
+});
+
 test("INVALID_SESSION → a fresh IDENTIFY; events continue under the new session", async () => {
   const pending = mirrored();
   const before = conn.status().notes?.[0];
@@ -291,4 +362,52 @@ test("the shipped transform passes its tests", async () => {
   await transforms.load();
   for (const x of transforms.runTests("discord")) assert.ok(x.ok, `${x.file}: ${x.diff}`);
   assert.equal(transforms.runTests("discord").length, 4);
+});
+
+test("a close the docs forbid retrying: the owner reads why, and no IDENTIFY follows until the long wait", async () => {
+  const ac2 = new AbortController();
+  timing.fatalMs = 60_000;
+  const c = await create(deps());
+  fake.closeOnIdentify = 4014;
+  const n = fake.identifies.length;
+  const run = (async () => {
+    for await (const _ of c.events(ac2.signal));
+  })();
+  await until(() => /disallowed intents.*\(4014\)/.test(c.status().error ?? ""), 5000, "the reason on Sources");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(fake.identifies.length, n + 1, "one IDENTIFY, no 1 s retry");
+  fake.closeOnIdentify = 0;
+  ac2.abort();
+  await run;
+});
+
+test("a resume host that stays down: back to the cached URL with a new session", { timeout: 40_000 }, async () => {
+  const ac2 = new AbortController();
+  const seen: string[] = [];
+  const dead = "ws://127.0.0.1:9/gateway";
+  fake.resumeUrl = dead;
+  const c = await create({
+    ...deps(),
+    ws: (u) => {
+      seen.push(u);
+      return directSocket(["discord"])(u);
+    },
+  });
+  const idents = () => fake.identifies.filter((x) => x.op === 2).length;
+  const n = idents();
+  const run = (async () => {
+    for await (const _ of c.events(ac2.signal));
+  })();
+  await until(() => c.status().connected, 5000, "READY");
+  assert.equal(idents(), n + 1);
+  fake.resumeUrl = undefined;
+  timing.helloMs = 300; // the dead host may never refuse: its connect ends at the HELLO timer
+  fake.disconnect();
+  await until(() => idents() === n + 2, 30_000, "a new IDENTIFY");
+  assert.ok(
+    seen.some((u) => u.startsWith(dead)),
+    "tried the resume host first",
+  );
+  ac2.abort();
+  await run;
 });

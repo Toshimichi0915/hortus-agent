@@ -8,7 +8,15 @@ import { backoff, sleep } from "./retry.ts";
 /** Tunables tests shorten. */
 export const timing = { pollS: 50, memberMs: 3_600_000 };
 const MAX_FILE = 20 * 1024 * 1024;
-const ALLOWED = ["message", "edited_message", "message_reaction", "chat_member", "my_chat_member"];
+const ALLOWED = [
+  "message",
+  "edited_message",
+  "channel_post",
+  "edited_channel_post",
+  "message_reaction",
+  "chat_member",
+  "my_chat_member",
+];
 const MEMBER = new Set(["member", "administrator", "creator"]);
 
 interface TUser {
@@ -46,6 +54,7 @@ interface TMsg {
   audio?: TFile;
   voice?: TFile;
   animation?: TFile;
+  video_note?: TFile;
   new_chat_members?: TUser[];
   left_chat_member?: TUser;
   new_chat_title?: string;
@@ -65,6 +74,8 @@ interface Update {
   update_id: number;
   message?: TMsg;
   edited_message?: TMsg;
+  channel_post?: TMsg;
+  edited_channel_post?: TMsg;
   message_reaction?: {
     chat: TChat;
     message_id: number;
@@ -151,8 +162,14 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
 
   function filesOf(m: TMsg): TFile[] {
     const largest = m.photo?.at(-1);
-    return [m.document, largest, m.video, m.audio, m.voice, m.animation].filter((f): f is TFile => !!f);
+    return [m.document, largest, m.video, m.audio, m.voice, m.animation, m.video_note].filter((f): f is TFile => !!f);
   }
+  /** a poll, a location, a sticker: nothing to mirror (and a live location is an edit every few seconds) */
+  const blank = (m: TMsg) => m.text === undefined && m.caption === undefined && !filesOf(m).length;
+  const reactionsOf = (key: string) => {
+    const set = reacts.get(key);
+    return set?.size ? Object.fromEntries([...set].map(([k, v]) => [k, [...v]])) : undefined;
+  };
 
   async function messageChanges(m: TMsg, download: boolean): Promise<Change[]> {
     const thread = threadOf(m);
@@ -181,6 +198,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     if (m.edit_date) fm.edited = iso(m.edit_date);
     if (m.reply_to_message) fm.reply_to = m.reply_to_message.message_id;
     if (files.length) fm.files = files;
+    const rs = reactionsOf(`${m.chat.id}:${m.message_id}`);
+    if (rs) fm.reactions = rs;
     return [{ op: "put", path: `${dir}/${m.message_id}.md`, frontmatter: fm, body: m.text ?? m.caption ?? "" }, ...out];
   }
 
@@ -193,7 +212,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
   });
 
   async function toEvent(u: Update): Promise<Event> {
-    const m = u.message ?? u.edited_message;
+    const fresh = u.message ?? u.channel_post;
+    const m = fresh ?? u.edited_message ?? u.edited_channel_post;
     const r = u.message_reaction;
     const cm = u.chat_member ?? u.my_chat_member;
     const chat = (m ?? r ?? cm)?.chat;
@@ -204,7 +224,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       else chats.set(String(chat.id), chat);
     }
     const thread = m ? threadOf(m) : r ? (roots.get(`${r.chat.id}:${r.message_id}`) ?? r.message_id) : undefined;
-    const kind = u.message ? "message" : u.edited_message ? "edited" : r ? "reaction" : cm ? "member" : "update";
+    const kind = fresh ? "message" : m ? "edited" : r ? "reaction" : cm ? "member" : "update";
     const text = (m?.text ?? m?.caption ?? r?.new_reaction.map(rname).join(" ") ?? "")
       .replace(/\s+/g, " ")
       .slice(0, 80);
@@ -262,14 +282,16 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     async mirror(e): Promise<Mirrored> {
       const u = e.payload as Update;
       const none = { changes: [], wake: false };
-      if (u.message) {
-        const m = u.message;
+      const m = u.message ?? u.channel_post;
+      if (m) {
         if (m.new_chat_members || m.left_chat_member || m.new_chat_title)
           return { changes: [channelChange(m.chat)], wake: false };
-        if (m.text === undefined && m.caption === undefined && !filesOf(m).length) return none;
+        if (blank(m)) return none;
         return { changes: await messageChanges(m, true), wake: !e.bot };
       }
-      if (u.edited_message) return { changes: await messageChanges(u.edited_message, false), wake: !e.bot };
+      const edited = u.edited_message ?? u.edited_channel_post;
+      // download: an edit can replace the media, under a new file_unique_id
+      if (edited) return blank(edited) ? none : { changes: await messageChanges(edited, true), wake: !e.bot };
       const r = u.message_reaction;
       if (r) {
         const key = `${r.chat.id}:${r.message_id}`;
@@ -280,9 +302,9 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         for (const [k, v] of set) if (!v.size) set.delete(k);
         reacts.set(key, set);
         const thread = roots.get(key) ?? r.message_id;
-        const reactions = set.size ? Object.fromEntries([...set].map(([k, v]) => [k, [...v]])) : null;
+        const frontmatter = { reactions: reactionsOf(key) ?? null };
         return {
-          changes: [{ op: "patch", path: `${r.chat.id}/${thread}/${r.message_id}.md`, frontmatter: { reactions } }],
+          changes: [{ op: "patch", path: `${r.chat.id}/${thread}/${r.message_id}.md`, frontmatter }],
           wake: false,
         };
       }

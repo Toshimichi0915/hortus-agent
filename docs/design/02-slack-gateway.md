@@ -45,11 +45,11 @@ export type Factory = (deps: Deps) => Promise<Connector>;
 
 | Slack event | Changes |
 | --- | --- |
-| `message` (no subtype, `thread_broadcast`, `file_share`) | put `<ch>/<thread>/<ts>.md` (frontmatter per v6: `id`, `thread`, `ts`, `user: "U (name)"`, `files`, `reactions` if any; body `text`); each file ≤ 20 MB downloaded from `url_private_download` → put `<ch>/<thread>/files/<id>-<name>`; larger: `files` entry carries `size` and `url` only |
+| `message` (no subtype, `thread_broadcast`, `file_share`, `bot_message`, `me_message`; not a subtype-less `message_replied`, which nests `message`) | put `<ch>/<thread>/<ts>.md` (frontmatter per v6: `id`, `thread`, `ts`, `user: "U (name)"`, `files`, `reactions` if any; body `text`); each file ≤ 20 MB downloaded from `url_private_download` → put `<ch>/<thread>/files/<id>-<name>`; larger: `files` entry carries `size` and `url` only |
 | `message_changed` | put the same path with `edited` (body from `message.text`) |
 | `message_deleted` | delete the path (`deleted_ts`, thread from `previous_message`) |
 | `reaction_added` / `reaction_removed` | patch the message's `reactions` (read from the event's `item` plus the names cache: the connector keeps a per-message reaction map it rebuilds from `history` when missing) |
-| `member_joined_channel` / `member_left_channel` / `channel_rename` / `channel_created` / `channel_archive` | put `<ch>/channel.md` from `conversations.info` + `conversations.members` |
+| `member_joined_channel` / `member_left_channel` / `channel_rename` / `channel_created` / `channel_archive` / `channel_unarchive` / `group_rename` / `group_archive` / `group_unarchive` | put `<ch>/channel.md` from `conversations.info` + `conversations.members` |
 | anything else | no changes |
 
 `wake` is true for messages and edits by a non-bot, false for the rest (reactions never wake; v6 Gateway).
