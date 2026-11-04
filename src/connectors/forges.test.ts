@@ -118,6 +118,8 @@ interface Harness {
   create: { path: string; body: string };
   /** every REST door to a ref, as the service documents it: "the merge button is the approval" (v6) */
   writes: [string, string][];
+  /** the other doors to the same calls (GraphQL, numeric ids): no scope pattern, so refused, not asked */
+  reachless: string[];
   /** an in-scope admin call (members, visibility): asks like a creation (static tokens are not narrowed upstream) */
   admin?: { method: string; path: string };
   closed: string;
@@ -183,7 +185,15 @@ const H: Harness[] = [
       ["PUT", "/repos/o/r/contents/src/a.ts"],
       ["POST", "/repos/o/r/git/refs"],
       ["PATCH", "/repos/o/r/git/refs/heads/main"],
+      // a created repository, and what a ref can be reached or moved by besides
+      ["POST", "/repos/o/r/forks"],
+      ["POST", "/repos/o/r/generate"],
+      ["POST", "/repos/o/r/transfer"],
+      ["PATCH", "/repos/o/r"],
+      ["POST", "/repos/o/r/branches/feat/x/rename"],
+      ["POST", "/repos/o/r/releases"],
     ],
+    reachless: ["/graphql", "/repositories/1/pulls/1/merge"],
     closed: "closed",
     token: () => gh.mints.find((m) => m.repositories?.join() === "r")?.token,
     openIssue: (user, title, body, drop) => gh.openIssue("o/r", { user, title, body: body ?? "" }, { drop: !!drop }),
@@ -236,7 +246,12 @@ const H: Harness[] = [
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/repository/commits"],
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/repository/branches"],
       ["PUT", "/api/v4/projects/g%2Fsub%2Fp/repository/files/src%2Fa.ts"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/releases"],
+      // Grape's `format :json` routes a `.json` suffix to the same endpoint
+      ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/merge.json"],
+      ["PUT", "/api/v4/projects/123/merge_requests/1/merge"],
     ],
+    reachless: ["/api/graphql", "/api/v4/projects/123/issues"],
     admin: { method: "POST", path: "/api/v4/projects/g%2Fp/members" },
     closed: "closed",
     token: () => gl.token,
@@ -292,7 +307,11 @@ const H: Harness[] = [
       ["POST", "/2.0/repositories/w/r/src"],
       ["POST", "/2.0/repositories/w/r/refs/branches"],
       ["POST", "/2.0/repositories/w/r/refs/tags"],
+      ["POST", "/2.0/repositories/w/r/pullrequests/1/merge;x=1"],
+      ["POST", "/2.0/repositories/w/r/pullrequests/1\\merge"],
+      ["POST", "/2.0/repositories/w/r/pullrequests/1/m%2565rge"],
     ],
+    reachless: ["/2.0/workspaces/w/projects", "/2.0/repositories/%7Bw%7D/%7Br%7D/issues"],
     admin: { method: "PUT", path: "/2.0/repositories/w/r" },
     closed: "resolved",
     token: () => bb.token,
@@ -819,7 +838,7 @@ for (const h of H) {
     assert.match(other.body, /project scope/);
     // dot segments an upstream (or its edge) resolves: never past the scope, plain or encoded
     const other1 = h.outScope.split("/").slice(-2, -1)[0];
-    for (const dots of ["..", "%2e%2e", "%2E."]) {
+    for (const dots of ["..", "%2e%2e", "%2E.", "..;x", "%252e%252e"]) {
       const sneak = `${h.inScope.replace(/\/issues$/, "")}/${dots}/${other1}/issues`;
       const r = await send({ host: h.apiHost, path: sneak, headers: h.rest });
       assert.equal(r.status, 403, sneak);
@@ -846,6 +865,64 @@ for (const h of H) {
       );
       gate.decide(wid, "reject", "owner");
     }
+    for (const path of h.reachless) {
+      const r = await send({ host: h.apiHost, path, method: "POST", headers: h.rest, body: "{}" });
+      assert.equal(r.status, 403, path);
+      assert.match(r.body, /project scope/, path);
+    }
+    // a method the router takes from the request, not the request line: Rack::MethodOverride, in GitLab's stack
+    const inScope = h.inScope;
+    const form = { ...h.rest, "content-type": "application/x-www-form-urlencoded" };
+    for (const s of [
+      { path: inScope, headers: { ...h.rest, "x-http-method-override": "PUT" } },
+      { path: inScope, headers: form, body: "a=1&_method=PUT" },
+      { path: inScope, headers: form, body: "%5Fm%65thod=PUT" },
+      {
+        path: inScope,
+        headers: { ...h.rest, "content-type": "multipart/form-data; boundary=b" },
+        body: 'name="_method"',
+      },
+      { path: `${inScope}?_method=PUT`, headers: h.rest },
+    ]) {
+      const r = await send({ host: h.apiHost, method: "POST", body: "", ...s });
+      assert.equal(r.status, 403, JSON.stringify(s));
+      assert.match(r.body, /override its method/);
+    }
+    // git's content types pass unhashed on git's paths only: elsewhere the body would be outside the owner's view
+    const xgit = await send({
+      host: h.apiHost,
+      path: inScope,
+      method: "POST",
+      headers: { ...h.rest, "content-type": "application/x-git-upload-pack-request" },
+      body: "any text at all",
+    });
+    assert.ok(isApproval(xgit), xgit.body);
+    const xid = JSON.parse(xgit.body).approval as number;
+    assert.ok(
+      pending(true).some((p) => p.id === xid),
+      "a body nobody sees is consequential",
+    );
+    gate.decide(xid, "reject", "owner");
+    // a push whose commands the owner could not be shown
+    const hidden = await send({
+      host: h.gitHost,
+      path: `/${P}.git/git-receive-pack`,
+      method: "POST",
+      headers: { ...h.rest, "content-type": "application/x-git-receive-pack-request", "content-encoding": "gzip" },
+      body: "\x1f\x8b not pkt-lines",
+    });
+    assert.equal(hidden.status, 403, hidden.body);
+    assert.match(hidden.body, /ref commands/);
+    // a word in a JSON body is only that
+    const said = await send({
+      host: h.apiHost,
+      path: inScope,
+      method: "POST",
+      headers: { ...h.rest, "content-type": "application/json" },
+      body: JSON.stringify({ title: "name=_method&_method=PUT" }),
+    });
+    assert.ok(isApproval(said), said.body);
+    gate.decide(JSON.parse(said.body).approval, "reject", "owner");
     if (h.admin) {
       const a = await send({
         host: h.apiHost,

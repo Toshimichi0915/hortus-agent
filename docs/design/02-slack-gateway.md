@@ -69,7 +69,8 @@ start(ctx): for each dofs entry with a connector type: create, then run two loop
   reconcile loop: at start and every 10 min: for scope of c.scopes(): cursor = syncs row; for await (batch of c.history(scope, cursor))
                 → commit; UPDATE syncs. Errors are logged per scope and never stop the loop.
 stop, reload: the signal ends both loops between events, batches and scopes; 3 s later every upstream call of the
-              runner is cut and queued events are left for their redelivery (hortus_v7.md › Review round 11).
+              runner is cut; queued events go in unmirrored for a reconcile to heal, a connector without history leaves
+              them for its redelivery (hortus_v7.md › Review rounds 11, 12).
 ```
 
 `trust(event, cfg)`: `author === null || bot` → false; `cfg.trust` `owner` (default) → `author.user === cfg.owner`; `members` → owner or `author.member`; `anyone` → true; a list → includes. `status()` of every connector plus `syncs` feed the Sources page (06-console.md); `source.resync` resets a scope's cursor and runs `history` once.

@@ -191,6 +191,8 @@ interface Stub extends Connector {
   push(e: Partial<Event>, ack?: () => void): void;
 }
 
+const base = { ts: "t", payload: {}, author: null, bot: false, refs: [] };
+
 function stub(name: string, over: Partial<Connector> = {}): Stub {
   const queue: Incoming[] = [];
   let n = 0;
@@ -403,6 +405,58 @@ test("a stop cuts what its grace does not finish: a stalled call, a Retry-After,
   } finally {
     timing.graceMs = was;
     fake.retryAfter = 1;
+  }
+});
+
+test("past the grace a queue the service will not send again still goes in, and wakes the Planner", async () => {
+  const was = timing.graceMs;
+  timing.graceMs = 20;
+  const cfg = Config.parse({ dofs: { dq: { type: "stub" } } });
+  const stalled = (_url: string, init?: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      if (init?.signal?.aborted) return reject(new Error("cut"));
+      init?.signal?.addEventListener("abort", () => reject(new Error("cut")));
+    });
+  let queued: Stub | undefined;
+  let go = false;
+  const H = harness(
+    () => cfg,
+    {
+      ...connectors,
+      stub: async (d) => {
+        queued = stub("dq", {
+          // Discord's connect(): after the signal it still yields what it received
+          async *events(signal) {
+            while (!go) await sleep(1);
+            for (const key of ["d1", "d2", "d3"])
+              yield { event: { ...base, dof: "dq", key, summary: key }, ack: async () => {} };
+            if (!signal.aborted) await new Promise((r) => signal.addEventListener("abort", r));
+          },
+          mirror: async () => {
+            await d.fetch("http://stalled.test/");
+            return { changes: [], wake: true };
+          },
+          async *history() {},
+        });
+        return queued;
+      },
+    },
+    stalled as typeof fake.fetch,
+  );
+  try {
+    H.gw.start();
+    await until(() => queued);
+    go = true;
+    await until(() => rows("dq").length > 0);
+    await H.gw.stop();
+    const left = db.prepare("SELECT key, consumed FROM events WHERE dof = 'dq' ORDER BY id").all();
+    assert.deepEqual(
+      left.map((r) => ({ ...r })),
+      ["d1", "d2", "d3"].map((key) => ({ key, consumed: 0 })),
+    );
+    assert.equal(H.wakes(), 3);
+  } finally {
+    timing.graceMs = was;
   }
 });
 

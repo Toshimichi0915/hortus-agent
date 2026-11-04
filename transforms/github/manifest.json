@@ -22,7 +22,11 @@
     "PATCH {api}/repos/*/*/git/refs/**",
     "POST {api}/user/repos",
     "POST {api}/orgs/*/repos",
-    "PUT {api}/repos/*/*/pulls/*/merge",
-    "POST {api}/repos/*/*/merges"
+    "POST {api}/repos/*/*/forks",
+    "POST {api}/repos/*/*/generate",
+    "POST {api}/repos/*/*/transfer",
+    "PATCH {api}/repos/*/*",
+    "POST {api}/repos/*/*/branches/**/rename",
+    "POST {api}/repos/*/*/releases"
   ]
 }

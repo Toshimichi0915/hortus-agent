@@ -426,19 +426,29 @@ function glob(p: string): RegExp {
   return new RegExp(`^${src}$`);
 }
 
+/** `%65` and `e` are one character (RFC 3986); twice, for a router behind an edge that decodes first (`%2565`). */
+const decoded = (s: string): string => {
+  const once = (t: string) =>
+    t.replace(/%([0-9a-f]{2})/gi, (e, x: string) => {
+      const c = String.fromCharCode(Number.parseInt(x, 16));
+      return /[\w.~%;\\-]/.test(c) ? c : e;
+    });
+  return once(once(s));
+};
+
 /**
- * The path as an upstream routes it, for the consequential patterns only: `%65` and `e` are the same path (RFC 3986),
- * and routers drop a doubled or trailing `/`. Those patterns deny, so a spelling they miss was an ordinary request; the
- * scope patterns allow, so a spelling they miss is refused already.
+ * The path as an upstream routes it, for the consequential patterns and the dot-segment check: routers drop a doubled or
+ * trailing `/`, some a `;` path parameter or take `\` for `/`, and Grape (GitLab's API) a `.json` suffix. The request
+ * goes upstream as sent. Those patterns deny, so a spelling they miss was an ordinary request; the scope patterns allow,
+ * so a spelling they miss is refused already and they keep the raw path.
  */
 const routed = (path: string): string =>
-  path
-    .replace(/%([0-9a-f]{2})/gi, (e, x: string) => {
-      const c = String.fromCharCode(Number.parseInt(x, 16));
-      return /[\w.~-]/.test(c) ? c : e;
-    })
+  decoded(path)
+    .replace(/;[^/]*/g, "")
+    .replace(/\\/g, "/")
     .replace(/\/{2,}/g, "/")
-    .replace(/(.)\/$/, "$1");
+    .replace(/(.)\/$/, "$1")
+    .replace(/(\w)\.json$/i, "$1");
 
 const sorted = (h: Record<string, string>) =>
   Object.fromEntries(
@@ -597,10 +607,27 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const manifests = new Set<Manifest>(tf ? [tf.manifest] : []);
   let category: string | undefined;
   const requestPath = template.url.match(URL_PARTS)?.[2] || "/";
-  // scope and consequential patterns match the raw path, and upstreams (or their edges) resolve dot segments: a
-  // credentialed `/projects/g%2Fp/../g%2Fother` would reach a project outside the scope. Refused, plain or encoded.
-  if (found.length && /(^|\/|%2f|\\|%5c)(\.|%2e){1,2}(\/|%2f|\\|%5c|$)/i.test(requestPath))
+  // both ways: GitLab's `g%2Fp` is one segment to `projects/*`, and to a router that decodes first `o%2Fr` is two
+  const path = routed(requestPath);
+  const apart = routed(path.replace(/%2f/gi, "/"));
+  // the scope patterns match the raw path, and upstreams (or their edges) resolve dot segments: a credentialed
+  // `/projects/g%2Fp/../g%2Fother` would reach a project outside the scope. Refused, plain or encoded.
+  if (found.length && /(^|\/)\.{1,2}(\/|$)/.test(apart))
     return refuse(403, "a credentialed path may not hold a dot segment", { host });
+  // Rack::MethodOverride, in GitLab's stack, makes a POST whatever these say: the judged method would not be the method
+  // run. No client of the shipped transforms sends one. ponytail: a custom transform for an API that needs the header
+  // cannot use it through the proxy
+  const form = llmCall || /json/i.test(ct) ? "" : decoded(template.body ?? "");
+  if (
+    found.length &&
+    (Object.keys(template.headers).some((k) => /^x-(http-)?method(-override)?$/i.test(k)) ||
+      /[?&;]_method=/.test(decoded(template.url.match(URL_PARTS)?.[3] ?? "")) ||
+      /(^|[&;]|name="?)_method\b/.test(form))
+  )
+    return refuse(403, "a credentialed request may not override its method", { host });
+  // v6: each push shows `old new refname`. A gzipped body or a list over 64 KB shows none, and git sends neither
+  if (found.length && RECEIVE_PACK.test(ct) && template.body === null)
+    return refuse(403, "a push whose ref commands cannot be read", { host });
   for (const { h, loc } of found) {
     const name = h.name;
     let secret: Secret;
@@ -657,18 +684,23 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     if (why) return refuse(403, why, { host });
     secrets.set(name, secret);
   }
-  // both ways: GitLab's `g%2Fp` is one segment to `projects/*`, and to a router that decodes first `o%2Fr` is two
-  const line = `${template.method} ${host}${routed(requestPath)}`;
-  const lines = [line, line.replace(/%2f/gi, "/")];
+  const lines = [path, apart].map((l) => `${template.method} ${host}${l}`);
   // captured credentials: every method but GET/HEAD is consequential, plus the site manifest's patterns (3h)
   const capturedOnly = found.length > 0 && found.every((f) => f.h.name.startsWith("c-"));
   // a streamed body (over 1 MB, octet-stream) is outside the hash and the judge's view: the owner decides each one
-  // (git's bodies excepted: a push is hashed by its ref commands, a fetch writes nothing)
-  const blind = found.length > 0 && template.stream && template.body === null && !/^application\/x-git-/i.test(ct);
+  // (git's bodies excepted, on git's paths: a push is hashed by its ref commands, a fetch writes nothing)
+  const git = apart.match(/\/git-(upload|receive)-pack$/i)?.[1]?.toLowerCase();
+  const blind =
+    found.length > 0 &&
+    template.stream &&
+    template.body === null &&
+    !(git && ct.toLowerCase().startsWith(`application/x-git-${git}-pack-request`));
   const consequential =
     blind ||
     // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
-    [...manifests].some((m) => (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l)))) ||
+    [...manifests].some((m) =>
+      (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
+    ) ||
     (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
   if (found.length && client.task) {
     // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a

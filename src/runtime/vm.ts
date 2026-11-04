@@ -318,12 +318,13 @@ export async function startVm(o: VmOpts): Promise<Child> {
     await attach(qemu);
     let bootError: string | undefined;
     // a guest without its shares blocks, QEMU alive, until the hours deadline. A virtiofsd also exits when QEMU does, and
-    // either exit can be heard first: a second lets QEMU's own exit (a `cleaning` by then) speak for itself
+    // either exit can be heard first: a second lets QEMU's own exit (a `cleaning` by then) speak for itself, and past
+    // `ended` (QEMU freeing a big guest on a busy machine) the kill would turn a good exit into a failure
     for (const p of procs)
       if (p !== qemu)
         p.once("exit", () => {
           void sleep(1000, undefined, { ref: false }).then(() => {
-            if (cleaning) return;
+            if (cleaning || existsSync(ended)) return;
             bootError = "virtiofsd exited: the guest lost a share (console.log below)";
             void cleanup();
           });

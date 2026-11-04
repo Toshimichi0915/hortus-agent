@@ -25,7 +25,7 @@ Spec: v6 › Security › VM, Process › Network (VM links), Worker (runtimes),
 - Exit: QEMU exits on poweroff (`-no-reboot`); the dispatcher's exit handling is the host one (outbox, log, status). `kill()` = `cgroup.kill` (QEMU and virtiofsd), then the tap and rules are removed. `hours` → kill at the budget (`hortusd` kills QEMU when the task's hours run out, v6).
 - `max_concurrent` enforced by the dispatcher; `PAUSED` as for host tasks.
 - Guest exit (round 10): QEMU exits 0 however the guest's service ended, so `hortus-agent` writes its exit code to `out/ended` last; a guest that left none exits 1 with `guest died: …` (an image older than round 10 reports every session so: rebuild it).
-- Guest crashes (round 11): `panic=1` on the kernel line, so a panic reboots and ends QEMU (`-no-reboot`) instead of spinning until `hours`; any virtiofsd exit ends the VM (`virtiofsd exited: …`); a signal on QEMU names itself. A guest that hangs without panicking runs until `hours` or a STOP (v7 › Review round 11).
+- Guest crashes (round 11): `panic=1` on the kernel line, so a panic reboots and ends QEMU (`-no-reboot`) instead of spinning until `hours`; any virtiofsd exit ends the VM (`virtiofsd exited: …`), unless the guest has written `out/ended` (round 12: QEMU still freeing its memory is a good exit); a signal on QEMU names itself. A guest that hangs without panicking runs until `hours` or a STOP (v7 › Review round 11).
 - Boot timeout (round 5): the guest's hortus-agent writes `out/booted` at its start; without it after `vm.boot_timeout_s` (120) the VM is killed and the task waits with `boot timeout: …` and the `console.log` tail.
 
 ### Planner VM (`planner.runtime = "vm"`)

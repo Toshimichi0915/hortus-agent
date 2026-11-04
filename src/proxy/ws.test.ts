@@ -217,6 +217,14 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     ["POST", "discord.com", "/api/v10/channels/300//messages/bulk%2Ddelete/"],
     // no method in the path: the Bot API server takes it from the `method` argument (its Query.cpp)
     ["GET", "api.telegram.org", `${bot}/?method=deleteMessage&chat_id=1&message_id=2`],
+    // kept for old bots (Bot API 5.3), and what the first pass left
+    ["POST", "api.telegram.org", `${bot}/kickChatMember`],
+    ["POST", "api.telegram.org", `${bot}/banChatSenderChat`],
+    ["POST", "discord.com", "/api/channels/300/messages/bulk_delete"],
+    ["POST", "discord.com", "/api/v10/guilds/1/bulk-ban"],
+    // a `/` the first pass could not see: decoded second, then trailing or doubled
+    ["POST", "api.telegram.org", `${bot}/deleteMessage%2f`],
+    ["POST", "discord.com", "/api/v10/channels/300/messages%2f/bulk-delete"],
   ] as const) {
     assert.equal(await worker(method, host, path), 403, path);
     assert.equal(consequential(), true, path);

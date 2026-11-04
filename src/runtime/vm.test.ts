@@ -230,6 +230,32 @@ test("a virtiofsd gone under a running guest ends the VM, the exit says so", {
   assert.notEqual(spawnSync("pgrep", ["-f", tag]).status, 0, "QEMU and the other virtiofsds are gone");
 });
 
+test("a clean end, virtiofsd gone first: QEMU still freeing its guest stays a good exit", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "a clean end, virtiofsd"), /# pass 1/);
+  const home = tempDir("hortus-vfshome-");
+  process.env.HORTUS_HOME = home;
+  process.env.HORTUS_NO_NET = "1";
+  const tag = `hortus-vfs-${process.pid}`;
+  fakeVm(home, tag, "sleep 2.5; exit 0");
+  const dir = setup({ paths: { dof: join(home, "dof"), work: "unused" } });
+  mkdirSync(join(home, "tasks"));
+  symlinkSync(dir, join(home, "tasks", "t1"));
+  const task = JSON.parse(readFileSync(join(dir, "ctl", "task.json"), "utf8")) as TaskJson;
+  const vm = await startVm({
+    task,
+    config: { vm: { cpus: 1, mem_mb: 64, max_concurrent: 1, fallback_host: true, boot_timeout_s: 30 } },
+    deadlineMs: 60_000,
+  });
+  writeFileSync(join(dir, "out", "ended"), "0");
+  spawnSync("pkill", ["-9", "-o", "-f", tag]);
+  const exit = await vm.wait();
+  assert.equal(exit.error, undefined);
+  assert.equal(exit.code, 0);
+});
+
 const enabled = process.env.HORTUS_TEST_VM === "1";
 const offline = process.env.HORTUS_NO_NET === "1";
 const inner = process.env.HORTUS_TEST_VM_INNER === "1";

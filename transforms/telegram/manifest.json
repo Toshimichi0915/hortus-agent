@@ -7,7 +7,9 @@
     "* api.telegram.org/bot*",
     "* api.telegram.org/bot*/delete*",
     "* api.telegram.org/bot*/leaveChat",
-    "* api.telegram.org/bot*/banChatMember",
+    "* api.telegram.org/bot*/remove*",
+    "* api.telegram.org/bot*/ban*",
+    "* api.telegram.org/bot*/kick*",
     "* api.telegram.org/bot*/setWebhook",
     "* api.telegram.org/bot*/logOut"
   ]

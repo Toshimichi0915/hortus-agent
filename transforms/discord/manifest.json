@@ -9,8 +9,8 @@
   },
   "consequential": [
     "DELETE discord.com/api/**",
-    "POST discord.com/api/**/messages/bulk-delete",
+    "POST discord.com/api/**/messages/bulk*",
     "PUT discord.com/api/**/bans/*",
-    "POST discord.com/api/**/bulk-ban"
+    "POST discord.com/api/**/bulk*ban"
   ]
 }

@@ -22,8 +22,8 @@ import {
 } from "../types.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
-/** What a stop or a reload leaves the calls in flight: a mirror mostly finishes (a Telegram message has no second
- * chance), then whatever is left is cut, a stalled upstream or a 429's Retry-After included. */
+/** What a stop or a reload leaves the calls in flight: a mirror mostly finishes (a Telegram file has no second chance),
+ * then whatever is left is cut, a stalled upstream or a 429's Retry-After included. */
 export const timing = { graceMs: 3000 };
 
 export interface GatewayDeps {
@@ -70,7 +70,7 @@ export interface Gateway {
 interface Runner {
   cfg: DofConfig;
   ac: AbortController;
-  /** aborted `graceMs` after `ac`: every upstream call of this runner, and the events still queued */
+  /** aborted `graceMs` after `ac`: every upstream call of this runner, and a history-less connector's queued events */
   calls: AbortController;
   conn?: Connector;
   error?: string;
@@ -98,7 +98,9 @@ export function createGateway(deps: GatewayDeps): Gateway {
     while (!signal.aborted) {
       try {
         for await (const { event, ack } of conn.events(signal)) {
-          if (r.calls.signal.aborted) break; // not inserted, not acked: Slack and Telegram send it again
+          // past the grace. Telegram has no history: not inserted, not acked, its update comes again and whole. The others
+          // go in, or Discord's queue (no redelivery) lost the owner's message: reconcile heals a mirror cut below
+          if (r.calls.signal.aborted && !conn.history) break;
           const cfg = deps.config().dofs[name] ?? r.cfg;
           let inserted: boolean;
           try {
