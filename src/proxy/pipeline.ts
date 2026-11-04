@@ -10,6 +10,7 @@ import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { PassThrough, pipeline, Readable, type Transform } from "node:stream";
 import zlib from "node:zlib";
+import { taint } from "../db.ts";
 import { logger } from "../log.ts";
 import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
@@ -316,6 +317,7 @@ const utf8 = (b: Buffer): string | undefined => {
 };
 
 const STREAM_REQUEST = /^application\/(x-git-|octet-stream)/i;
+const HTML = /^\s*(text\/html|application\/xhtml\+xml)/i;
 const STREAM_RESPONSE = /^(text\/event-stream|application\/x-git-)/i;
 const HOP = new Set([
   "connection",
@@ -931,6 +933,11 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
     res.resume();
     return { status, headers, body: "" };
   }
+  // a web page (any HTML response, credentialed or not: the browser's loads, a forge's issue page) taints the task for
+  // good (v7 › Review round 6). ponytail: HTML only; a stranger's text in JSON, plain text or an API response is not
+  // tracked (npm, PyPI and Go would taint every build, Slack's history every messenger task); add types if that bites
+  if (p.client.task && p.client.role === "worker" && HTML.test(ct))
+    taint(ctx().db, p.client.task, `read a web page: ${p.host}`);
   // `accept-encoding: identity` is only a request: a compressed body would hide every value from the scrubber
   let src: Readable = res;
   const enc = String(res.headers["content-encoding"] ?? "identity")

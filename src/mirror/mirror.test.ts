@@ -12,16 +12,17 @@ import { tempDir } from "../test/until.ts";
 process.env.HORTUS_HOME = tempDir("hortus-mirror-");
 
 const { Config } = await import("../config.ts");
-const { openDb } = await import("../db.ts");
+const { openDb, taint, taintOf } = await import("../db.ts");
 const { logger } = await import("../log.ts");
 const paths = await import("../paths.ts");
-const { serveSocket } = await import("../rpc.ts");
-const { commit, mirrorModule, parse, publishLog, render, search } = await import("./index.ts");
+const { call, serveSocket } = await import("../rpc.ts");
+const { commit, mirrorModule, parse, publishLog, render, search, writeLog } = await import("./index.ts");
 const { unsafe } = await import("./repo.ts");
 
 const db = openDb(paths.db());
+const config = Config.parse({ dofs: { slack: { type: "slack" }, gh: { type: "github" } } });
 await mirrorModule.start({
-  config: Config.parse({ dofs: { slack: { type: "slack" }, gh: { type: "github" } } }),
+  config,
   db,
   paths,
   log: logger,
@@ -448,4 +449,29 @@ test("publishLog: a Worker's 48 MB of user turns renders and indexes capped, in 
   assert.ok(row.n <= 4 * 1024 * 1024, String(row.n));
   // uncapped: ~1.5 s here and ~4.5 s at the 256 MB read budget
   assert.ok(ms < 1000, `${ms} ms`);
+});
+
+test("dof.search taints a Worker's task with each untrusted hit it is shown; owner hits, owner callers do not", async () => {
+  const add = db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES (?, 'unattended', ?, 'running')");
+  for (const id of ["W1", "W2", "W3"]) add.run(id, id);
+  await commit("slack", [msg("C9/T/1.md", "taintprobe from the owner", { user: "UOWN (me)" })], "owner");
+  await commit("slack", [msg("C9/T/2.md", "taintprobe from a stranger", { user: "U999 (eve)" })], "stranger");
+  const slack = config.dofs.slack as { owner?: string };
+  slack.owner = "UOWN";
+  try {
+    await call("dof.search", { q: "taintprobe", author: "UOWN" }, { role: "worker", task: "W1" });
+    assert.deepEqual(taintOf(db, "W1"), [], "the owner's own message");
+    await call("dof.search", { q: "taintprobe" }, { role: "owner" });
+    await call("dof.search", { q: "taintprobe" }, { role: "worker", task: "W2" });
+    assert.deepEqual(taintOf(db, "W2"), ["searched the mirror: slack:U999 (untrusted)"]);
+    // a tainted task's session log is untrusted to the next reader; an untainted one's is not
+    writeLog("W2", { "session.md": "taintprobe in a log" }, "w2");
+    writeLog("W1", { "session.md": "taintprobe in a log" }, "w1");
+    await call("dof.search", { q: "taintprobe", in: "logs" }, { role: "worker", task: "W3" });
+    assert.deepEqual(taintOf(db, "W3"), ["searched the mirror: logs:W2 (tainted)"]);
+    for (let i = 0; i < 9; i++) taint(db, "W3", `r${i}`);
+    assert.equal(taintOf(db, "W3").length, 5, "at most five reasons are kept");
+  } finally {
+    slack.owner = undefined;
+  }
 });

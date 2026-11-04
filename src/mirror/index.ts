@@ -6,10 +6,11 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
-import type { DatabaseSync } from "../db.ts";
+import { trusted } from "../connectors/trust.ts";
+import { type DatabaseSync, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
-import { type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
+import { type Caller, type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
 import * as fts from "./fts.ts";
 import * as logs from "./logs.ts";
 import * as repo from "./repo.ts";
@@ -46,6 +47,37 @@ export function search(q: SearchQuery): SearchHit[] {
   return fts.search(db(), q);
 }
 
+/**
+ * The hits a Worker must not read as the owner's (v7 › Review round 6), as `<dof>:<author> (untrusted)`: a connector
+ * DOF's author its trust rule does not trust (no author, a bot's file, a stranger), a session log of a tainted task.
+ * `transforms` is the owner's (approved code). ponytail: a `members` DOF trusts an author only if an event of theirs was
+ * from a member (the index keeps no membership); the trust rule is the gateway's.
+ */
+function untrustedHits(hits: SearchHit[]): string[] {
+  const out = new Set<string>();
+  const member = db().prepare("SELECT 1 FROM events WHERE dof = ? AND author = ? AND member = 1 LIMIT 1");
+  for (const h of hits) {
+    if (h.dof === "transforms") continue;
+    if (h.dof === "logs") {
+      const task = h.path.split("/")[0] ?? "";
+      if (taintOf(db(), task).length) out.add(`logs:${task} (tainted)`);
+      continue;
+    }
+    const cfg = ctx?.config.dofs[h.dof];
+    const author = h.author ? { user: h.author, member: member.get(h.dof, h.author) !== undefined } : null;
+    if (!cfg || !trusted({ author, bot: false }, cfg)) out.add(`${h.dof}:${h.author || "?"} (untrusted)`);
+  }
+  return [...out];
+}
+
+/** dof.search for a caller: a Worker's task is tainted by each untrusted hit it is shown. */
+function searchAs(q: SearchQuery, caller: Caller): SearchHit[] {
+  const hits = search(q);
+  if (caller.role === "worker" && caller.task)
+    for (const u of untrustedHits(hits)) taint(db(), caller.task, `searched the mirror: ${u}`);
+  return hits;
+}
+
 const Query = z.object({
   q: z.string().min(1),
   in: z.string().optional(),
@@ -67,7 +99,7 @@ export const mirrorModule: Module = {
     } catch {}
     for (const n of names)
       await repo.recover(c.db, n).catch((e) => c.log("mirror").error("recovery failed", e, { dof: n }));
-    define("dof.search", { roles: ["owner", "worker", "planner"], input: Query, run: (q) => search(q) });
+    define("dof.search", { roles: ["owner", "worker", "planner"], input: Query, run: searchAs });
   },
   async stop() {},
 };

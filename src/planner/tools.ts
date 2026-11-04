@@ -6,11 +6,12 @@
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { dirOf } from "../connectors/forge.ts";
+import { taint, taintOf } from "../db.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
 import { tasks } from "../runtime/index.ts";
 import { missingImage } from "../runtime/vm.ts";
-import { RpcError } from "../types.ts";
+import { type Caller, RpcError } from "../types.ts";
 import { read as readVault } from "../vault/vault.ts";
 import { type EventRow, isOwner, pctx, refsOf, renderEvent } from "./planner.ts";
 
@@ -37,6 +38,24 @@ function task(id: string): tasks.TaskRow {
   return t;
 }
 
+/**
+ * Why the calling batch is tainted for the tasks it writes to (v7 › Review round 6): its untrusted events, its results
+ * from tainted tasks. A brief or note is the Planner's own text, so a stranger's instruction in the same batch may be
+ * in it; undefined: the batch held owner-vouched input only (the open-task list aside, data in the prompt).
+ */
+function batchTaint(caller: Caller): string | undefined {
+  const n = /^planner-(\d+)$/.exec(caller.task ?? "")?.[1];
+  if (n === undefined) return undefined;
+  const db = pctx().db;
+  const strangers = db.prepare("SELECT 1 FROM events WHERE consumed = ? AND trusted = 0 LIMIT 1").get(Number(n));
+  const results = db.prepare("SELECT DISTINCT task_id FROM outbox WHERE consumed = ?").all(Number(n)) as {
+    task_id: string;
+  }[];
+  return strangers || results.some((r) => taintOf(db, r.task_id).length)
+    ? `created from a batch with untrusted events (${caller.task})`
+    : undefined;
+}
+
 function route(taskId: string, evs: EventRow[]): void {
   const db = pctx().db;
   for (const e of evs) {
@@ -60,7 +79,7 @@ define("task_create", {
       })
       .default({}),
   }),
-  run({ title, brief, event_ids, scope }) {
+  run({ title, brief, event_ids, scope }, caller) {
     const c = pctx().config;
     const evs = events(event_ids);
     for (const e of evs) if (!e.trusted) throw new RpcError("forbidden", `untrusted event e${e.id}`);
@@ -102,6 +121,8 @@ define("task_create", {
       event_keys: [...new Set(evs.flatMap(refsOf))],
     });
     route(t.id, evs);
+    const why = batchTaint(caller);
+    if (why) taint(pctx().db, t.id, why);
     return { id: t.id, runtime };
   },
 });
@@ -141,8 +162,10 @@ define("event_ignore", {
 define("task_message", {
   roles: planner,
   input: z.object({ task_id: z.string(), text: z.string().min(1) }),
-  run({ task_id, text }) {
+  run({ task_id, text }, caller) {
     task(task_id);
+    const why = batchTaint(caller);
+    if (why) taint(pctx().db, task_id, why.replace("created from", "a note from"));
     // a routing note, not the owner: rendered quoted (agent/inbox.ts); the Planner reads untrusted events, so its note
     // is never `trusted=true` (an injected Planner must not hand a Worker a trusted request)
     return { seq: tasks.inboxWrite(task_id, { from: "planner", trusted: false, text }) };

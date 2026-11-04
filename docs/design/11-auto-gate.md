@@ -17,11 +17,12 @@ if request carries a consequential pattern → per-request entry (pending → 40
 if policy human → as F3
 if policy auto:
   grant exists (durable or for this task)? no → pending grant entry (403 {approval}); the owner approves once, durable unless the entry was task-scoped
-  yes, and the task was given an untrusted author's event (events.task_id, trusted = 0)? → pending request entry, no judge call (v7 › round 5)
+  yes, and the task is tainted (db.ts › taintOf: an untrusted author's event routed to it, a Planner batch, or a
+    recorded tasks.taint reason)? → pending request entry, no judge call (v7 › rounds 5 and 6)
   yes → judge(summary) → allow: pass (a `request` row with status "allowed", decided_by "judge", prompt_hash) | escalate: pending request entry (403)
 ```
 
-Every pending entry of a task given untrusted events carries `payload.untrusted` (`<dof>:<author>`, at most 5): the Approvals page shows "this task read messages from untrusted authors (…)" above the request, and the owner.notify DM ends with "; the task read untrusted messages".
+Taint (v7 › Review round 6) is recorded in `tasks.taint` (a JSON array, at most 5 reasons, never cleared) by what hortusd observes: an HTML response to a Worker (`read a web page: <host>`, proxy/pipeline.ts › respond; the browser's loads included), a `dof.search` hit whose author the DOF's trust rule does not trust or a tainted task's session log (`searched the mirror: slack:U999 (untrusted)`, mirror/index.ts), a Planner `task_create` / `task_message` from a batch with untrusted events (planner/tools.ts). Every pending entry of a tainted task carries `payload.untrusted` (the reasons): the Approvals page shows "tainted: <reasons>. Make sure the request is what you asked for…" above the request, the task card a "Tainted" row, and the owner.notify DM ends with "; tainted: <reasons>". Not tracked: file reads of `dof/` inside the sandbox, JSON/plain-text/API responses.
 
 Task scope: a handle whose credential name is not in `task.scope.credentials` → a task-scoped `grant` entry (`task_id = task`), whatever the policy; approval adds the name to the task's `scope.credentials` (row updated; the running Worker learns it from the inbox decision and retries). Chat tasks start with every configured name.
 
