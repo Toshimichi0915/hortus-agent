@@ -24,7 +24,6 @@ import {
   type Out,
   type Prepared,
   prepare,
-  REQUEST_BUFFER,
   refuse,
   upstream,
 } from "./pipeline.ts";
@@ -52,7 +51,7 @@ const { Receiver: ReceiverCtor, Sender: SenderCtor } = wsLib as unknown as {
 const MAX_FRAME = 16 * 1024 * 1024;
 /** A client frame is a request body: the pipeline's 1 MB bound (16 MB × MAX_INFLIGHT upgrades was 4 GB of one
  * Worker's buffers; Discord takes ≤ 4 KB from a client). Upstream frames (a big guild's GUILD_CREATE) keep 16 MB. */
-const MAX_CLIENT_FRAME = REQUEST_BUFFER;
+const MAX_CLIENT_FRAME = 1024 * 1024; // REQUEST_BUFFER: not imported, pipeline.ts and ws.ts import each other
 /** the body of an upgrade the upstream answered without upgrading */
 const MAX_REFUSAL = 1024 * 1024;
 

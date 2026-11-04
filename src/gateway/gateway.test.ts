@@ -100,7 +100,8 @@ test("an event is inserted, acked, committed, and wakes the Planner", async () =
     },
   );
   assert.equal(S.wakes(), 1);
-  assert.equal(fake.acks.at(-1), [...fake.sent.keys()].at(-1));
+  // the ack crosses a socket to the fake: it can land after the commit (seen once under a loaded suite)
+  await until(() => fake.acks.at(-1) === [...fake.sent.keys()].at(-1), 3000, "ack");
 });
 
 test("dedupe: a replayed envelope is acked, inserts no row and commits nothing", async () => {
