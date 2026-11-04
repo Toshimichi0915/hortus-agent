@@ -37,5 +37,8 @@ export async function main(argv: string[]): Promise<number> {
   // chat starts in its scratch dir (v6 Chat); a project task in its clone once it exists
   const clone = task.paths.clone;
   process.chdir(task.kind !== "chat" && clone && existsSync(clone) ? clone : task.paths.work);
-  return runTask(dir, task, pluginFor(task, dir));
+  const code = await runTask(dir, task, pluginFor(task, dir));
+  // a VM's exit is QEMU's: this is how hortusd tells this exit from a Worker that died (vm.ts)
+  writeFileSync(join(dir, "out", "ended"), String(code));
+  return code;
 }

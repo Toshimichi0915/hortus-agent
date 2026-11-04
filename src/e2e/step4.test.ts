@@ -56,6 +56,7 @@ const complete = async (req, onText) => {
     return { role: "assistant", text, toolCalls: [], usage };
   }
   const content = last.content ?? "";
+  if (content.includes("!crash")) process.exit(3);
   const calls = [];
   for (const line of content.split("\\n")) {
     const m = /^!(bash|done|send) ?(.*)$/.exec(line.trim());
@@ -190,7 +191,7 @@ const eventRow = (text: string) =>
 const waitEvent = (text: string) => until(() => eventRow(text), 15_000, `event ${text}`);
 const taskRow = (id: string) =>
   db((d) => d.prepare("SELECT * FROM tasks WHERE id = ?").get(id)) as
-    | { id: string; status: string; brief: string; project: string | null; runtime: string }
+    | { id: string; status: string; brief: string; project: string | null; runtime: string; error: string | null }
     | undefined;
 
 before(async () => {
@@ -834,4 +835,132 @@ test("recovery: a batch killed with hortusd is not re-run; the next event's batc
   assert.doesNotMatch(text, /the slow one/);
   assert.match(text, /after the restart/);
   assert.match(text, new RegExp(`## Open tasks\\n(.*\\n)*- ${fooTask} "README line" \\(`));
+});
+
+/** the owner's DMs about failures, from the fake Slack's side */
+const failureDms = () =>
+  slack.calls
+    .filter((c) => c.method === "chat.postMessage" && c.params.channel === "D1")
+    .map((c) => c.params.text ?? "")
+    .filter((t) => /failed|over budget/.test(t));
+const allResults = (from: number) =>
+  batches()
+    .slice(from)
+    .map(batchText)
+    .map((t) => t.slice(0, t.indexOf("## Open tasks")))
+    .join("\n");
+const killDaemon = async () => {
+  const exited = new Promise((r) => daemon?.once("exit", r));
+  spawnSync("systemctl", ["--user", "kill", "-s", "KILL", `${unit}.scope`]);
+  await exited;
+  spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  startDaemon();
+  await up();
+};
+
+test("failures reach the owner once: a coalesced DM and one Planner row each, not for a chat, a STOP, a close or a restart", {
+  skip,
+}, async () => {
+  planner(`export default ({ n, events }) => {
+    if (n > 0 || !events.length) return { text: "left for the owner" };
+    return { calls: events.map((e) => ({ name: "task_create", input: { title: e.text.slice(-20), event_ids: [e.id], scope: { project: "foo" },
+      brief: e.text.includes("spend") ? "spend" : e.text.includes("sleeper") ? "!bash sleep 100" : "!crash" } })) };
+  };`);
+  const id = async (text: string) => {
+    await until(() => eventRow(text)?.task_id, 20_000, `the task of ${text}`);
+    return eventRow(text)?.task_id as string;
+  };
+  const before = failureDms().length;
+  const count = batches().length;
+
+  // a chat: the owner is at the keyboard, the stream says it; nothing else
+  const { id: chat } = await api<{ id: string }>("task.open", { text: "!crash" });
+  await until(() => taskRow(chat)?.error, 15_000, "the chat's error");
+  await sleep(3500);
+  assert.equal(failureDms().length, before, "no DM for a chat");
+  assert.equal(batches().length, count, "no batch for a chat");
+
+  // a burst: Workers that die, one that runs out of tokens
+  await configure((c) => {
+    (c.worker as { budget: { tokens: number } }).budget.tokens = 1;
+  });
+  const names = ["crash one", "crash two", "crash three", "crash four", "spend it"];
+  for (const text of names) slack.post("C1", { user: "U1", text });
+  const ids = await Promise.all(names.map(id));
+  await until(() => ids.every((i) => taskRow(i)?.error), 20_000, "every failure on its card");
+  await configure((c) => {
+    (c.worker as { budget: { tokens: number } }).budget.tokens = 2e6;
+  });
+  assert.deepEqual(failureDms().length - before, 1, `the burst's first DM: ${failureDms().slice(before)}`);
+  assert.match(
+    failureDms().at(-1) ?? "",
+    new RegExp(`^task \\S+ (failed|is over budget) http://127\\.0\\.0\\.1:${port}/tasks$`),
+  );
+  const spent = ids.at(-1) as string;
+  assert.match(taskRow(spent)?.error ?? "", /^budget_exceeded: budget exceeded: /);
+
+  // what the owner asked for is no failure: a STOP killed after its 30 s, a close
+  for (const text of ["sleeper one", "sleeper two"]) slack.post("C1", { user: "U1", text });
+  const [stopped, closed] = await Promise.all(["sleeper one", "sleeper two"].map(id));
+  await until(() => taskRow(stopped as string)?.status === "running", 15_000, "the first sleeper");
+  await until(() => taskRow(closed as string)?.status === "running", 15_000, "the second sleeper");
+  await sleep(1000); // inside the tool
+  await api("task.stop", { id: stopped });
+  await api("task.close", { id: closed, outcome: "failed" });
+  await until(() => taskRow(stopped as string)?.status === "waiting", 45_000, "the STOP's kill");
+  assert.equal(taskRow(stopped as string)?.error, null);
+
+  // the rest of the burst when the minute is up: one DM, in words about failures
+  await until(() => failureDms().length - before === 2, 70_000, "the coalesced DM");
+  assert.match(failureDms().at(-1) ?? "", new RegExp(`^4 more tasks failed http://127\\.0\\.0\\.1:${port}/tasks$`));
+
+  // once into a batch, as a result the Planner reads like any other
+  await until(() => ids.every((i) => allResults(count).includes(`[${i}]`)), 20_000, "every failure in a batch");
+  for (const i of ids.slice(0, -1)) {
+    assert.equal(allResults(count).split(`[${i}] result:`).length, 2, i);
+    assert.match(allResults(count), new RegExp(`\\[${i}\\] result:\\n<<<quoted\\nfailed: `));
+  }
+  assert.equal(allResults(count).split(`[${spent}] budget_exceeded:`).length, 2);
+  assert.equal(allResults(count).includes(`[${stopped}]`), false);
+  assert.equal(allResults(count).includes(`[${closed}]`), false);
+  assert.equal(allResults(count).includes(`[${chat}]`), false);
+
+  // a daemon restart tells nobody again
+  const dms = failureDms().length;
+  const seen = batches().length;
+  await killDaemon();
+  await sleep(4000);
+  assert.equal(failureDms().length, dms, "no DM after the restart");
+  assert.equal(batches().length, seen, "no batch after the restart");
+
+  // the owner starts one again and it fails again (this time it cannot start): a new failure
+  await configure((c) => {
+    (c.worker as { provider: string }).provider = "ghost";
+  });
+  try {
+    const again = ids[0] as string;
+    await api("task.send", { id: again, text: "try once more" });
+    await until(() => failureDms().length === dms + 1, 15_000, "the new failure's DM");
+    assert.match(failureDms().at(-1) ?? "", new RegExp(`^task ${again} failed `));
+    await until(() => allResults(seen).includes(`[${again}] result:`), 20_000, "the new failure's row");
+    assert.match(allResults(seen), /failed: worker\.provider ghost is not a credential/);
+  } finally {
+    await configure((c) => {
+      (c.worker as { provider: string }).provider = "fake";
+    });
+  }
+});
+
+test("a Planner batch that dies: one DM, no Planner row, its events stay consumed", { skip }, async () => {
+  await killDaemon(); // a fresh notify window
+  planner("export default () => process.exit(3);");
+  const before = failureDms().length;
+  const count = batches().length;
+  slack.post("C1", { user: "U1", text: "the batch dies on this" });
+  await until(() => failureDms().length === before + 1, 20_000, "the DM");
+  assert.match(failureDms().at(-1) ?? "", /^a Planner batch failed: its events may be unrouted /);
+  planner(IGNORE_ALL);
+  await sleep(3500);
+  assert.equal(batches().length, count + 1, "not re-run, nothing fed back");
+  assert.ok((eventRow("the batch dies on this")?.consumed ?? 0) > 0);
 });

@@ -225,6 +225,8 @@ test("scope: a chat parent's run on a project is an unattended host task (never 
 });
 
 test("run exit: usage charged to the parent, summary kept as last-summary.md; over budget → no more firings", async () => {
+  const told: string[] = [];
+  tasks.hooks.failed = (t) => void told.push(t);
   const p = parent({ tokens: 100, hours: 10 });
   const { id } = await set(p.id, { every: 300 });
   T += 5 * MIN;
@@ -239,14 +241,32 @@ test("run exit: usage charged to the parent, summary kept as last-summary.md; ov
   runs.onExit(tasks.get(r.id), []); // a second exit of the same run is not charged twice
   assert.deepEqual(JSON.parse(tasks.get(p.id).usage ?? ""), { tokens: 150, runs: 150 });
   assert.match(tasks.get(p.id).error ?? "", /^budget_exceeded: .*150\/100 tokens/);
+  assert.deepEqual(told, [`task ${p.id} is over budget`], "once");
+  const rows = () =>
+    ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ? ORDER BY seq DESC").all(p.id) as {
+      seq: number;
+      body: string;
+    }[];
+  assert.equal(rows().length, 1, "the Planner gets budget_exceeded for the parent");
+  assert.match(rows()[0]?.body ?? "", /"type":"budget_exceeded","text":"budget_exceeded: runs of its schedules/);
   assert.equal(readFileSync(join(paths.schedule(id), "last-summary.md"), "utf8"), "found one");
   T += 5 * MIN;
   tick();
   assert.equal(runsOf(p.id).length, 1);
   assert.ok(row(id)?.fire_at && Date.parse(row(id)?.fire_at as string) <= T, "stays due");
   tasks.budget(p.id, { tokens: 1000 });
+  assert.equal(tasks.get(p.id).error, null, "the raise answers it");
   tick();
   assert.equal(runsOf(p.id).length, 2);
+
+  // the next overrun is a new failure; a run that hit the limit itself has told the owner, the parent's row still comes
+  const r2 = runsOf(p.id).find((x) => x.id !== r.id);
+  assert.ok(r2);
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":2000}', status = 'waiting' WHERE id = ?`).run(r2.id);
+  runs.onExit(tasks.get(r2.id), [{ seq: 1, type: "budget_exceeded", text: "budget exceeded", ts: "" }]);
+  assert.equal(rows().length, 2);
+  assert.equal(told.length, 1);
+  tasks.hooks.failed = () => {};
 });
 
 test("an empty result: the run is closed at once and leaves no logs entry; one that never called the model is deleted", async () => {

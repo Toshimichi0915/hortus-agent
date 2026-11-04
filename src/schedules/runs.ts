@@ -90,14 +90,14 @@ export function onExit(run: tasks.TaskRow, msgs: OutboxMsg[]): void {
   const own = (u.tokens ?? 0) - (u.runs ?? 0);
   d.prepare("UPDATE tasks SET usage = ? WHERE id = ?").run(JSON.stringify({ tokens: own + n, runs: n }), parent.id);
   const charged = tasks.get(parent.id);
-  if (overBudget(charged) && !charged.error?.startsWith("budget_exceeded")) {
-    // recorded on the card only: the Planner has nothing to decide (the schedules stop; the owner raises the budget)
+  if (overBudget(charged) && !charged.error?.startsWith("budget_exceeded") && !tasks.isClosed(charged.status)) {
     const b = parse(charged.budget, { tokens: 0 });
-    d.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(
-      `budget_exceeded: runs of its schedules used ${tokensOf(charged)}/${b.tokens} tokens; its schedules stop firing`,
-      parent.id,
-    );
+    const error = `budget_exceeded: runs of its schedules used ${tokensOf(charged)}/${b.tokens} tokens; its schedules stop firing`;
+    d.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(error, parent.id);
     log().info("parent over budget: schedules stop firing", { task: parent.id, run: run.id });
+    // v6 › Schedules › Cost: the Planner gets it for the parent. A run that hit the same limit told the owner already
+    tasks.failureRow(parent.id, "budget_exceeded", error);
+    if (!msgs.some((m) => m.type === "budget_exceeded")) tasks.hooks.failed(`task ${parent.id} is over budget`);
   }
   bus.emit("tasks", { id: parent.id });
 

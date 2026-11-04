@@ -65,7 +65,7 @@ messenger, one forge and the Planner's (and Workers') model:
 
 - `dofs.<name>`: a source; `type` is the connector, `owner` your user id there (only your messages are trusted by
   default: `trust`). Forges list `repos`; a self-hosted one sets `host`.
-- `owner.notify`: the DOF whose DM tells you about new approvals.
+- `owner.notify`: the DOF whose DM tells you about new approvals and failed tasks.
 - `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
   `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.

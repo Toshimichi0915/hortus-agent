@@ -10,7 +10,7 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Config } from "../config.ts";
-import { openAppend } from "../hostile.ts";
+import { openAppend, readCapped } from "../hostile.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import type { Role, TaskJson } from "../types.ts";
@@ -303,9 +303,16 @@ export async function startVm(o: VmOpts): Promise<Child> {
     });
     // a hostile earlier guest may have left anything here (a directory, a link): removed, never followed
     const booted = join(out, "booted");
-    rmSync(booted, { force: true, recursive: true });
+    const ended = join(out, "ended");
+    for (const f of [booted, ended]) rmSync(f, { force: true, recursive: true });
     log.info("starting", { task: id, tap: link?.tap, vm: link?.vmAddr });
     const qemu = spawn("qemu-system-x86_64", args, { stdio: ["ignore", "ignore", "pipe", logFd] });
+    // at once: a QEMU gone during the await below (or never spawned) has no later `exit`, and the task stayed `running`
+    const exited = new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+      qemu.on("error", reject);
+      qemu.on("exit", (code, signal) => resolve([code, signal]));
+    });
+    exited.catch(() => {});
     await attach(qemu);
     let bootError: string | undefined;
     const bootMs = o.config.vm.boot_timeout_s * 1000;
@@ -336,14 +343,23 @@ export async function startVm(o: VmOpts): Promise<Child> {
         deadlineClear();
         clearInterval(boot);
       };
-      qemu.on("error", (e) => {
+      const failed = (e: unknown) => {
         clear();
         cleanup().then(() => reject(e), reject);
-      });
-      qemu.on("exit", (code, signal) => {
+      };
+      exited.then(([code, signal]) => {
         clear();
-        cleanup().then(() => resolve({ code, signal, ...(bootError && { error: bootError }) }), reject);
-      });
+        // QEMU exits 0 however the guest's service ended (ExecStopPost reboots): its exit is out/ended, written last by
+        // hortus-agent, so a Worker that died without one (OOM, an uncaught throw) is not a clean, silent exit
+        const said = code === 0 ? readCapped(ended, 16)?.text : undefined;
+        const exit: Exit =
+          code !== 0
+            ? { code, signal, ...(bootError && { error: bootError }) }
+            : said === undefined
+              ? { code: 1, signal, error: "guest died: the Worker ended without a result (console.log below)" }
+              : { code: Number(said) || 0, signal };
+        cleanup().then(() => resolve(exit), reject);
+      }, failed);
     });
     done.catch(() => {});
     return { pid: qemu.pid ?? -1, wait: () => done, kill: () => cleanup() };

@@ -262,8 +262,13 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       // could not start (no Landlock, no session address, no provider): waiting with the reason, no retry loop
       const message = e instanceof Error ? e.message : String(e);
       log().error("start failed", e, { task: row.id });
-      if (!stopping)
+      if (!stopping) {
         tasks.setStatus(row.id, "waiting", { error: message, hours: row.hours + (Date.now() - startedAt) / 3.6e6 });
+        if (row.kind !== "chat" && !tasks.closing.has(row.id)) {
+          tasks.failureRow(row.id, "result", `failed: ${message}`);
+          tasks.hooks.failed(`task ${row.id} failed`);
+        }
+      }
       reply(row.id, { type: "error", message });
     } finally {
       clearTimeout(entry.stopTimer);
@@ -331,16 +336,21 @@ async function finish(
   // the Worker gave up (its model calls failed 4 times: `result` "failed: …"): on the card too, so only the owner
   // starts it again (tasks.inboxWrite), not every approval or note re-running the failure
   const gaveUp = msgs.find((m) => m.type === "result" && m.text.startsWith("failed: "))?.text;
-  // a session hortusd or the owner ended (shutdown, close) did not fail: killed, it exits non-zero with no result, and
-  // the card said so; after a restart that error also stopped approvals starting the chat (tasks.ts › restarts)
+  // and an exhausted budget likewise: nothing but the owner's raise makes a new start worth anything
+  const spent = msgs.find((m) => m.type === "budget_exceeded")?.text;
+  // a session hortusd or the owner ended (shutdown, close, a STOP killed after 30 s) did not fail: killed, it exits
+  // non-zero with no result, and the card said so; after a restart that error also stopped approvals starting the chat
+  // (tasks.ts › restarts)
   const error =
-    stopping || tasks.closing.has(id)
+    stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
         ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
         : failed
           ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
-          : (gaveUp?.slice(0, 2000) ?? null);
+          : spent !== undefined
+            ? `budget_exceeded: ${spent.slice(0, 2000)}`
+            : (gaveUp?.slice(0, 2000) ?? null);
   const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
     n: number;
   };
@@ -367,6 +377,14 @@ async function finish(
     tasks.setStatus(id, exit.code === 0 && inbox > cursor && !halted ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
+  // `error` is this session's, so once per failure, and no restart re-reads it. A chat's owner is at the keyboard and
+  // the stream shows it; a Worker's own `result`/`budget_exceeded` already is the Planner's row
+  if (error && row.kind !== "chat") {
+    const budget = error.startsWith("budget_exceeded");
+    if (!msgs.some((m) => m.type !== "reply"))
+      tasks.failureRow(id, budget ? "budget_exceeded" : "result", budget ? error : `failed: ${error}`);
+    tasks.hooks.failed(`task ${id} ${budget ? "is over budget" : "failed"}`);
+  }
   log().info("session ended", { task: id, code: exit.code, signal: exit.signal, outbox: msgs.length });
   await publishLog(id, row.title, tasks.get(id).status).catch((e) => log().error("publishLog failed", e, { task: id }));
   if (!stopping)
@@ -398,6 +416,10 @@ const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => 
   vm: (task) => startVm({ task, config: ctx?.config as Config, deadlineMs: task.budget.hours * 3.6e6 }),
 };
 
+/** Not a task, so no Planner row (a batch that dies on its own failure would be fed it again); its events stay consumed
+ * (15-planner.md › Wake and batch), so the owner's message may have gone unanswered: the DM is what says so. */
+const BATCH_FAILED = "a Planner batch failed: its events may be unrouted";
+
 /**
  * One Planner batch: `row` (kind planner, inserted `running` by the planner module, which deletes it and its directory
  * afterwards) runs to its exit as role `planner`; returns the tokens its session used. Stdout goes to console.log only.
@@ -414,7 +436,11 @@ export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "h
     const exit = await entry.child.wait();
     const { tokens } = scan(join(paths.out(row.id), "sessions"));
     log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
+    if (exit.code !== 0 && !stopping) tasks.hooks.failed(BATCH_FAILED);
     return tokens;
+  } catch (e) {
+    if (!stopping) tasks.hooks.failed(BATCH_FAILED);
+    throw e;
   } finally {
     releaseLinks(row.id);
     running.delete(row.id);

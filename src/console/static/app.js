@@ -18,12 +18,6 @@ async function post(method, input) {
   return j.result;
 }
 
-function sse(name, handler, q = "") {
-  const es = new EventSource(`/events/${name}${q}`);
-  es.onmessage = (e) => handler(JSON.parse(e.data));
-  return es;
-}
-
 /** <time datetime> (rendered in UTC) in the browser's own time zone; a relative one ("in 12 min", data-rel) stays. */
 const pad = (n) => String(n).padStart(2, "0");
 function localTimes(root = document) {
@@ -225,38 +219,53 @@ function toEnd() {
   st.scrollTop = st.scrollHeight;
   scrollTo(0, document.documentElement.scrollHeight);
 }
-if (st) {
-  const atBottom = () => st.scrollHeight - st.scrollTop - st.clientHeight < 40;
-  toEnd();
-  // the stream's connection state: EventSource retries by itself (Last-Event-ID), the owner sees that it does
-  const conn = $("#conn");
-  conn.textContent = "connecting…";
-  const es = sse(
-    "chat",
-    (d) => {
-      const stick = atBottom();
-      st.insertAdjacentHTML("beforeend", d.html);
-      if (stick) toEnd();
-    },
-    `?task=${encodeURIComponent(st.dataset.task)}&after=${st.dataset.last}`,
-  );
-  es.addEventListener("open", () => (conn.textContent = ""));
-  es.addEventListener("error", () => (conn.textContent = "reconnecting…"));
-}
-/** A stream that dropped missed its events: once it is back, re-render as if one came. */
-function resyncing(name, handler) {
-  let lost = false;
-  const es = sse(name, handler);
-  es.addEventListener("error", () => (lost = true));
+const atBottom = () => st.scrollHeight - st.scrollTop - st.clientHeight < 40;
+if (st) toEnd();
+const conn = $("#conn");
+// every page: the nav badge follows; pages showing approvals re-render
+const onApprovals = ["approvals", "chat", "tasks", "task"].includes(page) ? refresh : refreshNav;
+const onTasks = ["tasks", "chat", "task"].includes(page) ? refresh : null;
+const channels = ["approvals", ...(onTasks ? ["tasks"] : []), ...(st ? ["chat"] : [])].join(",");
+let last = st?.dataset.last;
+let es = null;
+let lost = false;
+/** The page's one stream (server.ts › events). EventSource retries by itself (Last-Event-ID), the owner sees that it
+ * does; a stream that dropped missed its events, so once it is back the page re-renders as if one came. */
+function connect() {
+  es = new EventSource(`/events/${channels}${st ? `?task=${encodeURIComponent(st.dataset.task)}&after=${last}` : ""}`);
+  if (conn) conn.textContent = "connecting…";
+  es.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    const stick = atBottom();
+    st.insertAdjacentHTML("beforeend", d.html);
+    last = d.seq;
+    if (stick) toEnd();
+  };
+  es.addEventListener("approvals", () => onApprovals());
+  if (onTasks) es.addEventListener("tasks", () => onTasks());
+  es.addEventListener("error", () => {
+    lost = true;
+    if (conn) conn.textContent = "reconnecting…";
+  });
   es.addEventListener("open", () => {
+    if (conn) conn.textContent = "";
     if (!lost) return;
     lost = false;
-    handler();
+    onApprovals();
+    onTasks?.();
   });
 }
-// every page: the nav badge follows; pages showing approvals re-render
-resyncing("approvals", ["approvals", "chat", "tasks", "task"].includes(page) ? refresh : refreshNav);
-if (["tasks", "chat", "task"].includes(page)) resyncing("tasks", refresh);
+connect();
+// a hidden tab holds no connection, so open tabs never add up to the origin's six; back, it catches up from `last`
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    if (!es) connect();
+    return;
+  }
+  es?.close();
+  es = null;
+  lost = true;
+});
 
 // Settings › Remote: the enrolment code's countdown
 setInterval(() => {

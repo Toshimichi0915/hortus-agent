@@ -6,7 +6,7 @@ Spec: v6 › Planner, Gateway (wake), Config (`owner.notify`, `planner`). Depend
 
 ### Wake and batch (`src/planner/planner.ts`)
 
-- `wake()` is called by the gateway (`mirror.wake && !bot`), by the dispatcher on a non-chat `result` / `budget_exceeded`, and after recovery. Debounced 2 s; one batch at a time; `PAUSED` → skip; `planner_usage[today] ≥ daily_tokens` → skip and log once an hour.
+- `wake()` is called by the gateway (`mirror.wake && !bot`), by the dispatcher on a non-chat `result` / `budget_exceeded` or a failure hortusd recorded (`tasks.hooks.failed`), and after recovery. Debounced 2 s; one batch at a time; `PAUSED` → skip; `planner_usage[today] ≥ daily_tokens` → skip and log once an hour.
 - A batch: `SELECT … FROM events WHERE consumed = 0 ORDER BY id LIMIT batch_max` (the gateway holds an event at -2 until `mirror()` says if it wakes) plus unconsumed outbox rows (`result`, `budget_exceeded`) of non-chat tasks; nothing → return. With only trusted events waiting, results of tainted tasks wait for the next batch, of their own (events wait for that one; a stranger's event taints the batch anyway, so they ride along, round 9): a tainted result taints every task its batch creates (v7 › Review round 8). Mark them `consumed = 1` with the batch id before the run (a crashed batch is not re-run: the events stay routed as "consumed" and the next event brings the open cards again; v6: no persistent context, the Planner can `dof search` anything it missed. Trade-off noted in the prompt: "events in earlier batches may have been lost; cards are authoritative").
 - Input (one user message): the fixed system prompt (byte-identical: role, the three verdicts, the tools, the rules: untrusted never starts a task, bot events never appear, closed tasks are in `logs`, reply routing by refs), then:
 
@@ -42,6 +42,8 @@ Tools (RPC through `hortusd.internal`, role `planner` stamped by the proxy): `ta
 ### `owner.notify`
 
 On every new pending approval (`gate.check` inserting), `connectors[owner.notify].dm(owner, "approval <id> pending (<category>) <console url>")`; failures logged; nothing on decision. The DM is the bot's own message → mirrored (Slack, Discord; Telegram sends no update for a bot's message), never wakes (loop guard by `bot`).
+
+A failure nobody watched (dispatcher `finish`/`start`, `runs.onExit`, a dead batch; `tasks.hooks.failed`) goes the same way through its own `coalesce`: `task <id> failed <console url>/tasks`, `N more tasks failed`. Ids and fixed words only (v7 › Review round 10).
 
 ### Routing hints
 
