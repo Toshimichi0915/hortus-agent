@@ -126,12 +126,14 @@ export function invoke(
   const rt = QuickJS.newRuntime();
   rt.setMemoryLimit(MEMORY);
   // the deadline is the thread's work, not the clock: with the CPUs full (a Worker's build) a descheduled call passed
-  // 100 ms of wall time doing nothing and answered 502. Both must pass: process CPU alone counts V8's helper threads
+  // 100 ms of wall time doing nothing and answered 502. Both must pass: a Node without threadCpuUsage counts the whole
+  // process, V8's helpers and, for a submission's tests, hortusd's loop
+  const usage = process.threadCpuUsage ?? process.cpuUsage;
   const end = Date.now() + DEADLINE_MS;
-  const cpu0 = process.cpuUsage();
+  const cpu0 = usage();
   rt.setInterruptHandler(() => {
     if (Date.now() <= end) return false;
-    const c = process.cpuUsage(cpu0);
+    const c = usage(cpu0);
     return c.user + c.system > DEADLINE_MS * 1000;
   });
   const vm = rt.newContext();
