@@ -70,6 +70,21 @@ export function granted(category: string, task: string | null): boolean {
 const grantName = (category: string): string => category.replace(/^credential:/, "");
 
 /**
+ * The untrusted authors (`<dof>:<user>`) whose events were routed to the task (task_attach): its context holds text
+ * the owner did not vouch for, so the owner decides its requests and the entry says why.
+ * ponytail: routed events only; mirror files and web pages a Worker reads itself are not tracked (v7 › round 5)
+ */
+export function untrustedOf(task: string | null): string[] {
+  if (!task) return [];
+  const rows = ctx()
+    .db.prepare(
+      "SELECT DISTINCT dof, COALESCE(author, '?') AS author FROM events WHERE task_id = ? AND trusted = 0 LIMIT 5",
+    )
+    .all(task) as { dof: string; author: string }[];
+  return rows.map((r) => `${r.dof}:${r.author}`);
+}
+
+/**
  * The gate for a credentialed request (pipeline step 9). Role core passes; a consequential request or a `human`
  * category goes to the owner per request (`check`); under `auto` a grant is needed once (durable), then the judge
  * allows or escalates. Reads `ctx().config` per call, so a policy edit applies to the next request.
@@ -96,6 +111,9 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
     )
     .get(input.hash, task);
   if (open) return check(input);
+  const tainted = untrustedOf(task);
+  if (tainted.length)
+    return check({ ...input, judged: { reason: `the task read untrusted messages (${tainted.join(", ")})` } });
   const v = await judge(input.category, input.summary, task);
   if (v.verdict === "escalate") return check({ ...input, judged: v });
   const t = new Date().toISOString();
@@ -137,6 +155,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
   // ponytail: a durable grant entry pending for one task is shared; only its requester hears the decision
   const pending = rows.find((r) => r.status === "pending");
   if (pending) return { pending: pending.id };
+  const untrusted = untrustedOf(requester);
   const r = db
     .prepare(
       "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload, prompt_hash) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
@@ -152,6 +171,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
         consequential: input.consequential,
         ...(input.durable ? { task: requester } : {}),
         ...(input.judged ? { judge: input.judged.reason } : {}),
+        ...(untrusted.length ? { untrusted } : {}),
       }),
       input.judged?.prompt_hash ?? null,
     );
@@ -159,7 +179,9 @@ export function check(input: CheckInput): "pass" | { pending: number } {
   log.info("approval pending", { id, kind, category: input.category, task: requester });
   bus.emit("approvals", { id, task: requester }); // the Approvals page, a chat's inline entries, the nav badge
   try {
-    deps.notify(`approval ${id} pending (${input.category})`);
+    deps.notify(
+      `approval ${id} pending (${input.category})${untrusted.length ? "; the task read untrusted messages" : ""}`,
+    );
   } catch (e) {
     log.error("notify failed", e, { id });
   }

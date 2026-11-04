@@ -152,7 +152,8 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
       n: number;
     };
     if (timers) what.push(`${timers} timer${timers > 1 ? "s" : ""}`);
-    const summary = t.summary ? ` — ${oneLine(t.summary, 300)}` : "";
+    // a Worker's record (it may restate what a stranger wrote): a JSON string, data like the title
+    const summary = t.summary ? ` — summary ${JSON.stringify(oneLine(t.summary, 300))}` : "";
     return `- ${t.id} ${JSON.stringify(t.title)} (${what.filter(Boolean).join(", ")})${summary}`;
   });
   const section = (title: string, lines: string[]) => `## ${title}\n${lines.length ? lines.join("\n") : "none"}`;

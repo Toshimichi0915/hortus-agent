@@ -165,7 +165,10 @@ export function outbox(dir: string): OutboxMsg[] {
     .map((n) => JSON.parse(readFileSync(join(box, n), "utf8")));
 }
 
-export function writeInbox(dir: string, msg: { seq: number; from: string; trusted: boolean; text: string }): void {
+export function writeInbox(
+  dir: string,
+  msg: { seq: number; from: string; author?: string; trusted: boolean; text: string },
+): void {
   const name = `${String(msg.seq).padStart(6, "0")}.json`;
   json(join(dir, "ctl", "inbox", name), { ts: new Date().toISOString(), ...msg });
 }

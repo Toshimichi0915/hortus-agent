@@ -17,8 +17,11 @@ if request carries a consequential pattern → per-request entry (pending → 40
 if policy human → as F3
 if policy auto:
   grant exists (durable or for this task)? no → pending grant entry (403 {approval}); the owner approves once, durable unless the entry was task-scoped
+  yes, and the task was given an untrusted author's event (events.task_id, trusted = 0)? → pending request entry, no judge call (v7 › round 5)
   yes → judge(summary) → allow: pass (a `request` row with status "allowed", decided_by "judge", prompt_hash) | escalate: pending request entry (403)
 ```
+
+Every pending entry of a task given untrusted events carries `payload.untrusted` (`<dof>:<author>`, at most 5): the Approvals page shows "this task read messages from untrusted authors (…)" above the request, and the owner.notify DM ends with "; the task read untrusted messages".
 
 Task scope: a handle whose credential name is not in `task.scope.credentials` → a task-scoped `grant` entry (`task_id = task`), whatever the policy; approval adds the name to the task's `scope.credentials` (row updated; the running Worker learns it from the inbox decision and retries). Chat tasks start with every configured name.
 
