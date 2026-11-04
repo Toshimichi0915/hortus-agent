@@ -20,7 +20,7 @@ async function rpc(client: Client, req: IncomingRequest, method: string): Promis
   let input: unknown;
   if (req.body) {
     // the pipeline's own request bound: at 16 MB, a Worker's MAX_INFLIGHT RPCs buffered 4 GB (review round 7).
-    // ponytail: 256 × 1 MB per client is still buffered at once (both paths); a per-client byte budget if that bites
+    // and at most BODY_BUDGET (16 MB) of a client's bodies at once (server.ts › admit, review round 8)
     const r = await readUpTo(req.body, REQUEST_BUFFER);
     if ("rest" in r) {
       r.rest.resume();

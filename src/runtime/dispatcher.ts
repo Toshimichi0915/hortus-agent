@@ -324,11 +324,14 @@ async function finish(
   const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? null;
   // a crash after a `send` still shows its error; a `result` (failed: …) or budget_exceeded already says why
   const failed = exit.code !== 0 && !msgs.some((m) => m.type === "result" || m.type === "budget_exceeded");
+  // the Worker gave up (its model calls failed 4 times: `result` "failed: …"): on the card too, so only the owner
+  // starts it again (tasks.inboxWrite), not every approval or note re-running the failure
+  const gaveUp = msgs.find((m) => m.type === "result" && m.text.startsWith("failed: "))?.text;
   const error = overBudget
     ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
     : failed
       ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
-      : null;
+      : (gaveUp?.slice(0, 2000) ?? null);
   const { n: inbox } = d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM inbox WHERE task_id = ?").get(id) as {
     n: number;
   };

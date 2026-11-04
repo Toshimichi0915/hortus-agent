@@ -6,7 +6,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { createHmac, generateKeyPairSync, randomBytes, randomUUID, verify } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -155,6 +155,7 @@ export class FakeGitHub {
   async close(): Promise<void> {
     this.server.closeAllConnections();
     await new Promise((r) => this.server.close(r));
+    rmSync(this.root, { recursive: true, force: true }); // its repos: else every run left one in /tmp
   }
 
   // ---- state and events ----------------------------------------------------------------------------------------
