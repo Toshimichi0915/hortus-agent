@@ -10,7 +10,7 @@ import { z } from "zod";
 import { quote } from "../agent/inbox.ts";
 import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
-import { parse, tokens } from "../console/html.ts";
+import { errorLine, parse, tokens } from "../console/html.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { now, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
@@ -156,7 +156,12 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
     if (timers) what.push(`${timers} timer${timers > 1 ? "s" : ""}`);
     // a Worker's record (it may restate what a stranger wrote): a JSON string, data like the title
     const summary = t.summary ? ` — summary ${JSON.stringify(oneLine(t.summary, 300))}` : "";
-    return `- ${t.id} ${JSON.stringify(t.title)} (${what.filter(Boolean).join(", ")})${summary}`;
+    // a note would wait in its inbox (tasks.ts › restarts): the Planner sees why, as data like the summary
+    const failed =
+      t.error && t.status === "waiting"
+        ? ` — failed, only the owner starts it again: ${JSON.stringify(oneLine(errorLine(t.error), 300))}`
+        : "";
+    return `- ${t.id} ${JSON.stringify(t.title)} (${what.filter(Boolean).join(", ")})${summary}${failed}`;
   });
   const section = (title: string, lines: string[]) => `## ${title}\n${lines.length ? lines.join("\n") : "none"}`;
   return [section("Events", ev), section("Results", res), section("Open tasks", open)].join("\n\n");
@@ -202,12 +207,13 @@ async function batch(): Promise<boolean> {
     .all() as unknown as (ResultRow & { seq: number })[];
   // v7 › Review round 8: a tainted task's result taints every task the batch creates (tools.ts › batchTaint), and on
   // a busy day nearly every batch carries one; so with events waiting, those results get the next batch of their own
-  // (events wait for it, so a steady stream of events cannot hold results back for more than one batch)
+  // (events wait for it, so a steady stream of events cannot hold results back for more than one batch). Not when a
+  // stranger's event taints these events anyway: a second batch would keep nothing clean and spend daily_tokens
   const tainted = (r: ResultRow) => taintOf(c.db, r.task_id, c.config).length > 0;
   if (owed) {
     owed = false;
     if (results.some(tainted)) events = [];
-  } else if (events.length && results.some(tainted)) {
+  } else if (events.length && events.every((e) => e.trusted) && results.some(tainted)) {
     results = results.filter((r) => !tainted(r));
     owed = again = true;
   }

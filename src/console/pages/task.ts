@@ -91,7 +91,7 @@ export const task: Page = (ctx, { m, q }) => {
     "tasks",
     t.title || id,
     h`<div data-refresh id="card">
-${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${t.kind === "chat" ? "a message" : "a note"} from you starts it again` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
+${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${t.error.startsWith("budget_exceeded") ? "raise its budget, then " : ""}${t.kind === "chat" ? "a message" : "a note"} from you starts it again` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 ${t.brief ? details("Brief", t.brief) : ""}
 <table class="kv">

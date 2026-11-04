@@ -440,6 +440,43 @@ echo end
   assert.doesNotMatch(out, /FAIL|SANDBOX/, out);
 });
 
+test("a restart and a close are no failures: no error on the card; an exhausted VM budget's card says raise it", {
+  skip,
+}, async () => {
+  const inTool = (id: string) => {
+    const dir = join(paths.out(id), "sessions");
+    return (
+      existsSync(dir) &&
+      readdirSync(dir).some((f) => readFileSync(join(dir, f), "utf8").includes('"command":"sleep 31"'))
+    );
+  };
+  const { id: closed } = await api<{ id: string }>("task.open", { text: "!bash sleep 31" });
+  await until(() => inTool(closed), 15_000, "in its tool");
+  await api("task.close", { id: closed });
+  assert.equal((await card(closed)).task.error ?? null, null);
+
+  const { id } = await api<{ id: string }>("task.open", { text: "!bash sleep 31" });
+  await until(() => inTool(id), 15_000, "in its tool");
+  const exited = new Promise((r) => daemon?.once("exit", r));
+  daemon?.kill("SIGTERM");
+  await exited;
+  spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  startDaemon();
+  await up();
+  const c = await card(id);
+  assert.equal(c.task.status, "waiting");
+  assert.equal(c.task.error ?? null, null);
+  assert.equal(c.replies.filter((r) => r.body.type === "error").length, 0);
+
+  const db = openDb(paths.db());
+  db.prepare(
+    "UPDATE tasks SET error = 'budget_exceeded: the VM was stopped after 1.00 h (budget hours)' WHERE id = ?",
+  ).run(id);
+  db.close();
+  const page = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
+  assert.match(page, /waiting: raise its budget, then a message from you starts it again/);
+});
+
 test("recovery after SIGKILL: running chat → waiting, unattended → queued and resumes with its context", {
   skip,
 }, async () => {

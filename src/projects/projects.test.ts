@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -24,7 +24,7 @@ import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { gate } from "../vault/index.ts";
 import { bind } from "../vault/vault.ts";
-import { prepareClone, sync } from "./origin.ts";
+import { prepareClone, startSync, sync } from "./origin.ts";
 
 const root = tempDir("hortus-projects-");
 process.env.HORTUS_HOME = join(root, "home");
@@ -193,6 +193,25 @@ test("sync: owner commits fast-forward; a rewritten main is refused until force;
   await sync("g");
   assert.equal(g(origin, "show", "main:README.md"), "hello");
   g(checkout, "checkout", "--", "README.md");
+});
+
+test("a sync that fails at a task's start: the card says so; with nothing to clone the task does not start", async () => {
+  const { main } = await sync("plain");
+  const origin = paths.project("plain");
+  const shadow = paths.shadow("plain");
+  renameSync(shadow, `${shadow}.away`);
+  writeFileSync(shadow, ""); // the snapshot has nowhere to go
+  try {
+    const notes: string[] = [];
+    await startSync("plain", (t) => notes.push(t));
+    assert.match(notes[0] ?? "", /working from the last synced main/);
+    g(origin, "update-ref", "-d", "refs/heads/main");
+    await assert.rejects(startSync("plain", () => {}));
+  } finally {
+    rmSync(shadow);
+    renameSync(`${shadow}.away`, shadow);
+    g(origin, "update-ref", "refs/heads/main", main);
+  }
 });
 
 test("non-git: snapshots skip excluded paths; the clone never sees them; restore deletes files added since", async () => {

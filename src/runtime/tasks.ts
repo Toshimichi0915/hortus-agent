@@ -157,8 +157,25 @@ export function create(i: CreateInput): TaskRow {
   return get(id);
 }
 
-/** Next seq, file temp+rename into ctl/inbox, `inbox` row; `waiting` → `queued`. Synchronous, so seqs never race. */
-export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">): number {
+/**
+ * What starts a task whose last start or session failed (`error`): the owner (task.send, task.message, an approval they
+ * approved, `owner`: their own event through the Planner) and a one-shot timer (each fires once, and nothing else would
+ * run it; a recurring one starts its own `run`). A Planner note, a rejection, an expiry, a merge or rebase notice or a
+ * stranger's event re-ran the failure once per message (review round 8: a task without its provider credential
+ * restarted once a second); they wait in its inbox.
+ */
+const restarts = (msg: Omit<InboxMsg, "seq" | "ts">, owner: boolean): boolean =>
+  owner ||
+  msg.from === "owner" ||
+  msg.from === "console" ||
+  msg.from.startsWith("schedule:") ||
+  (msg.from === "approval" && (msg.data as { decision?: string } | undefined)?.decision === "approved");
+
+/**
+ * Next seq, file temp+rename into ctl/inbox, `inbox` row; `waiting` → `queued`. Synchronous, so seqs never race.
+ * `owner`: an event of the owner's that the Planner routed here (`from` is its thread).
+ */
+export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">, owner = false): number {
   const db = ctx().db;
   const t = get(id);
   if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is ${t.status}`);
@@ -173,10 +190,7 @@ export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">): numbe
   writeFileSync(join(dir, `.${name}.tmp`), json(full));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
   db.prepare("INSERT INTO inbox(task_id, seq, body, created) VALUES (?, ?, ?, ?)").run(id, n, json(full), full.ts);
-  // a task whose last start or session failed (`error`) waits for the owner (task.send, task.message): an approval
-  // decided, a Planner note or a schedule re-ran the failure once per message (review round 8: a task without its
-  // provider credential restarted once a second while its approvals were decided); the message waits in its inbox
-  if (t.status === "waiting" && (!t.error || msg.from === "owner" || msg.from === "console")) setStatus(id, "queued");
+  if (t.status === "waiting" && (!t.error || restarts(msg, owner))) setStatus(id, "queued");
   else bus.emit("tasks", { id });
   for (const h of inboxHooks) h(t, full);
   hooks.wake();

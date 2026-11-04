@@ -144,13 +144,17 @@ define("task_attach", {
       const ref = refsOf(e)[0];
       // a thread outside the task's scope.dofs is not mounted: no pointer to it
       const where = ref && can.includes(e.dof) ? `\n(the thread: ${ref.split(":").join("/")}/ under the DOF root)` : "";
-      return tasks.inboxWrite(task_id, {
-        from: ref ?? `${e.dof}:${e.key}`,
-        ...(e.author ? { author: e.author } : {}),
-        trusted: !!e.trusted,
-        text: `${e.summary ?? ""}${where}`,
-        data: { event: e.id, dof: e.dof, key: e.key, refs: refsOf(e) },
-      });
+      return tasks.inboxWrite(
+        task_id,
+        {
+          from: ref ?? `${e.dof}:${e.key}`,
+          ...(e.author ? { author: e.author } : {}),
+          trusted: !!e.trusted,
+          text: `${e.summary ?? ""}${where}`,
+          data: { event: e.id, dof: e.dof, key: e.key, refs: refsOf(e) },
+        },
+        isOwner(pctx().config, e),
+      );
     });
     route(task_id, evs);
     return { seqs };

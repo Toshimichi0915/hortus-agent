@@ -270,6 +270,28 @@ test("auto: the first post asks for a durable grant; after one click every later
   assert.doesNotMatch(await approvalsPage(ctx, { m: [], q: new URLSearchParams("judge=hide") }), /allowed by judge/);
 });
 
+test("a decide that throws inside a caller's transaction: its savepoint is gone, the transaction goes on", () => {
+  const db = ctx.db;
+  const t = new Date().toISOString();
+  const add = (cat: string) =>
+    Number(
+      db
+        .prepare(
+          "INSERT INTO approvals(kind, category, hash, status, requested_at) VALUES ('request', ?, ?, 'pending', ?)",
+        )
+        .run(cat, cat, t).lastInsertRowid,
+    );
+  const one = add("sp:one");
+  gate.decide(one, "reject", "owner");
+  db.exec("BEGIN");
+  const two = add("sp:two");
+  assert.throws(() => gate.decide(one, "approve", "owner"), /already decided/);
+  gate.decide(two, "approve", "owner");
+  db.exec("COMMIT");
+  const row = db.prepare("SELECT status FROM approvals WHERE id = ?").get(two) as { status: string };
+  assert.equal(row.status, "approved");
+});
+
 test("consequential: chat.delete asks per request and never reaches the judge, even one that would allow", async () => {
   mode = "allow";
   const before = llmSeen.length;

@@ -231,3 +231,26 @@ test("v6 done-when: a host Worker on a non-git project delivers hortus/<id>; an 
   await until(() => reqs(chat).length > 0, 30_000, "the chat's model call");
   assert.ok(!reqs(chat)[0]?.tools.includes("merge"));
 });
+
+test("a 50 MB pack (chunked: over git's http.postBuffer) goes through the proxy to the origin", { skip }, async () => {
+  process.env.HORTUS_HOME = home;
+  const id = `p${Date.now().toString(36)}b`;
+  const brief = `!bash head -c 50000000 /dev/urandom > big.bin && git add -A && git commit -qm big && ${PUSH}`;
+  const db = openDb(paths.db());
+  const t = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, project, runtime, event_keys, created, updated, hours)
+     VALUES (?, 'unattended', 'big', ?, 'queued', ?, ?, '{"tokens":0}', 'site', 'host', '[]', ?, ?, 0)`,
+  ).run(
+    id,
+    brief,
+    JSON.stringify({ credentials: [], repos: [], project: "site" }),
+    JSON.stringify({ tokens: 1e6, hours: 1 }),
+    t,
+    t,
+  );
+  db.close();
+  await pushed(id, 1);
+  const size = spawnSync("git", ["--git-dir", paths.project("site"), "cat-file", "-s", `hortus/${id}:big.bin`]);
+  assert.equal(size.stdout.toString().trim(), "50000000", size.stderr.toString());
+});
