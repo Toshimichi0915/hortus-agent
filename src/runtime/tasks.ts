@@ -21,6 +21,7 @@ import { z } from "zod";
 import { jar } from "../browser/jar.ts";
 import type { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
+import { crashPoint } from "../crash.ts";
 import type { Ctx } from "../ctx.ts";
 import { now, readable } from "../db.ts";
 import { taskId } from "../ids.ts";
@@ -198,23 +199,33 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
   try {
     await hooks.kill(id);
     setStatus(id, outcome, { closed: now() });
-    await publishLog(id, t.title, outcome).catch((e) => ctx().log("tasks").error("publishLog failed", e, { id }));
-    const db = ctx().db;
-    const schedules = db.prepare("SELECT id FROM schedules WHERE task_id = ?").all(id) as { id: number }[];
-    for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))])
-      rmSync(dir, { recursive: true, force: true });
-    db.prepare("DELETE FROM schedules WHERE task_id = ?").run(id);
-    // its requests and task grants wait for no one now (a merge or a transform outlives the task; a login holds a
-    // view the login module closes on its decision: kept)
-    const r = db
-      .prepare(
-        "UPDATE approvals SET status = 'expired', decided_at = ?, reason = 'the task closed' WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
-      )
-      .run(now(), id);
-    if (r.changes) bus.emit("approvals", { task: id });
+    await finishClose(id);
   } finally {
     closing.delete(id);
   }
+}
+
+/**
+ * After the row is closed: its requests, log, directories and schedules. Recovery runs it again for a closed task whose
+ * `tasks/<id>` is still there (round 8: a crash inside close left the log unpublished and the directories behind).
+ */
+export async function finishClose(id: string): Promise<void> {
+  const db = ctx().db;
+  // its requests and task grants wait for no one now (a merge or a transform outlives the task; a login holds a
+  // view the login module closes on its decision: kept); in the same turn as the status, before any await
+  const r = db
+    .prepare(
+      "UPDATE approvals SET status = 'expired', decided_at = ?, reason = 'the task closed' WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
+    )
+    .run(now(), id);
+  if (r.changes) bus.emit("approvals", { task: id });
+  const t = get(id);
+  crashPoint("tasks.close.after-status");
+  await publishLog(id, t.title, t.status).catch((e) => ctx().log("tasks").error("publishLog failed", e, { id }));
+  const schedules = db.prepare("SELECT id FROM schedules WHERE task_id = ?").all(id) as { id: number }[];
+  for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))])
+    rmSync(dir, { recursive: true, force: true });
+  db.prepare("DELETE FROM schedules WHERE task_id = ?").run(id);
 }
 /** ids being closed: the dispatcher does not start them */
 export const closing = new Set<string>();
