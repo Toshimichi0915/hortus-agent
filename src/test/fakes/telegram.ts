@@ -17,7 +17,7 @@ export interface TUser {
 }
 export interface TChat {
   id: number;
-  type: "private" | "group" | "supergroup";
+  type: "private" | "group" | "supergroup" | "channel";
   title?: string;
   username?: string;
   is_forum?: boolean;
@@ -34,6 +34,7 @@ export interface TMsg {
   is_topic_message?: boolean;
   reply_to_message?: TMsg;
   document?: { file_id: string; file_unique_id: string; file_name: string; file_size: number };
+  location?: { latitude: number; longitude: number };
 }
 export interface PostOpts {
   user?: number;
@@ -58,6 +59,16 @@ interface Update extends Json {
   update_id: number;
 }
 
+const METHODS = {
+  getMe: 1,
+  getUpdates: 1,
+  getChatMember: 1,
+  getFile: 1,
+  sendMessage: 1,
+  deleteMessage: 1,
+  leaveChat: 1,
+};
+
 export class FakeTelegram {
   token = "123456:telegram-fake-token";
   bot: TUser = { id: 999, is_bot: true, first_name: "hortus", username: "hortus_bot" };
@@ -73,6 +84,7 @@ export class FakeTelegram {
   /** getUpdates calls answered so far */
   polls = 0;
   url = "";
+  private allowed = ["message", "edited_message", "channel_post", "edited_channel_post", "my_chat_member"];
   private limits = new Map<string, number>();
   private waiters = new Set<() => void>();
   private again: Update[] = [];
@@ -162,7 +174,7 @@ export class FakeTelegram {
     }
     c.messages.push(m);
     if (from && chat === from.id) c.started = true;
-    if (!o.quiet && from?.id !== this.bot.id) this.emit({ message: m });
+    if (!o.quiet && from?.id !== this.bot.id) this.emit(c.type === "channel" ? { channel_post: m } : { message: m });
     return m;
   }
 
@@ -172,6 +184,12 @@ export class FakeTelegram {
     m.edit_date = ++this.date;
     this.emit({ edited_message: { ...m } });
     return m;
+  }
+
+  /** A live location moving: an `edited_message` with no text. */
+  move(chat: number, id: number): void {
+    const { text: _t, ...m } = this.msg(chat, id);
+    this.emit({ edited_message: { ...m, location: { latitude: 1, longitude: 2 }, edit_date: ++this.date } });
   }
 
   /** Telegram sends no update for deletions: state only. */
@@ -283,7 +301,8 @@ export class FakeTelegram {
     const raw = Buffer.concat(chunks).toString();
     const params: Json = Object.fromEntries(u.searchParams);
     if (raw) Object.assign(params, JSON.parse(raw));
-    const method = m[2];
+    // "All methods in the Bot API are case-insensitive"
+    const method = Object.keys(METHODS).find((k) => k.toLowerCase() === m[2]?.toLowerCase()) ?? m[2];
     this.calls.push({ method, params, authorization: req.headers.authorization });
     if (m[1] !== this.token) return json({ ok: false, error_code: 401, description: "Unauthorized" }, 401);
     const left = this.limits.get(method) ?? 0;
@@ -304,6 +323,8 @@ export class FakeTelegram {
       case "getMe":
         return { ok: true, result: this.bot };
       case "getUpdates": {
+        // the default allowed_updates leaves these out; a type not asked for is not delivered
+        this.allowed = (p.allowed_updates as string[] | undefined) ?? this.allowed;
         const offset = Number(p.offset ?? 0);
         if (offset) this.queue = this.queue.filter((x) => x.update_id >= offset);
         const again = this.again.splice(0);
@@ -320,6 +341,8 @@ export class FakeTelegram {
           });
         }
         this.polls++;
+        const wanted = (x: Update) => Object.keys(x).some((k) => this.allowed.includes(k));
+        this.queue = this.queue.filter(wanted);
         return { ok: true, result: [...this.queue] };
       }
       case "getChatMember": {

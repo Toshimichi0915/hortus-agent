@@ -31,6 +31,7 @@ import {
   captured,
   ctx,
   effectiveHosts,
+  hostIn,
   manifestEntry,
   PREFIX,
   read as readVault,
@@ -618,7 +619,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       const entry = Object.hasOwn(vault, name) ? vault[name] : undefined;
       if (!entry) return refuse(403, `unknown credential ${name}`, { host });
       const manifest = transforms.credentialManifest(name, entry, tf?.manifest);
-      if (!effectiveHosts(name, entry, manifest).includes(host))
+      if (!hostIn(effectiveHosts(name, entry, manifest), host))
         return refuse(403, `destination: ${name} does not go to ${host}`, { host });
       if (!declares(manifestEntry(name, entry, manifest)?.locations ?? [], loc))
         return refuse(403, `location: ${name} may not ride in ${loc}`, { host });
@@ -650,7 +651,8 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const blind = found.length > 0 && template.stream && template.body === null && !/^application\/x-git-/i.test(ct);
   const consequential =
     blind ||
-    [...manifests].some((m) => (m.consequential ?? []).some((p) => glob(p).test(line))) ||
+    // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
+    [...manifests].some((m) => (m.consequential ?? []).some((p) => new RegExp(glob(p), "i").test(line))) ||
     (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
   if (found.length && client.task) {
     // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a

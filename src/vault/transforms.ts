@@ -10,7 +10,7 @@ import { isDeepStrictEqual } from "node:util";
 import { newQuickJSWASMModule, type QuickJSWASMModule, shouldInterruptAfterDeadline } from "quickjs-emscripten";
 import { z } from "zod";
 import type { Manifest, Req, Res, ResponseResult, Template } from "../types.ts";
-import { ctx, read } from "./vault.ts";
+import { ctx, hostIn, read } from "./vault.ts";
 
 export interface Loaded {
   manifest: Manifest;
@@ -104,11 +104,11 @@ export const all = (): Map<string, Loaded> => loaded;
 export function byHost(host: string): { name: string; manifest: Manifest; credential: string } | undefined {
   for (const [cred, e] of Object.entries(read())) {
     const t = e.transform && loaded.get(e.transform);
-    if (t && e.hosts?.includes(host)) return { name: t.manifest.name, manifest: t.manifest, credential: cred };
+    if (t && e.hosts && hostIn(e.hosts, host)) return { name: t.manifest.name, manifest: t.manifest, credential: cred };
   }
   for (const t of loaded.values()) {
     for (const [cred, c] of Object.entries(t.manifest.credentials))
-      if (c.hosts.includes(host)) return { name: t.manifest.name, manifest: t.manifest, credential: cred };
+      if (hostIn(c.hosts, host)) return { name: t.manifest.name, manifest: t.manifest, credential: cred };
   }
   return undefined;
 }

@@ -57,7 +57,8 @@ type Params = Record<string, string>;
 interface Envelope {
   envelope_id: string;
   type: string;
-  payload: { event_id: string; event: Record<string, unknown> };
+  accepts_response_payload: boolean;
+  payload: { type: "event_callback"; event_id: string; event_time: number; event: Record<string, unknown> };
 }
 
 const cmpTs = (a: string, b: string) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
@@ -82,6 +83,8 @@ export class FakeSlack {
   connects = 0;
   /** send `hello` on connect */
   hello = true;
+  /** `debug_info.approximate_connection_time` of `hello`, in seconds */
+  connectionTime = 3600;
   /** caps every page (pagination tests) */
   pageSize = 1000;
   url = "";
@@ -115,7 +118,14 @@ export class FakeSlack {
       ws.on("close", () => this.sockets.delete(ws));
       if (!this.hello) return;
       this.sockets.add(ws);
-      ws.send(JSON.stringify({ type: "hello", num_connections: 1 }));
+      ws.send(
+        JSON.stringify({
+          type: "hello",
+          connection_info: { app_id: "A1" },
+          num_connections: 1,
+          debug_info: { host: "applink-1", build_number: 54, approximate_connection_time: this.connectionTime },
+        }),
+      );
       for (const env of this.pending.splice(0)) ws.send(JSON.stringify(env));
     });
   }
@@ -215,7 +225,15 @@ export class FakeSlack {
     m.text = text;
     const now = this.ts();
     m.edited = { user: m.user ?? this.botUser, ts: now };
-    this.emit({ type: "message", subtype: "message_changed", channel, message: { ...m }, event_ts: now, ts: now });
+    this.emit({
+      type: "message",
+      subtype: "message_changed",
+      hidden: true,
+      channel,
+      message: { ...m },
+      event_ts: now,
+      ts: now,
+    });
     return m;
   }
 
@@ -227,6 +245,7 @@ export class FakeSlack {
     this.emit({
       type: "message",
       subtype: "message_deleted",
+      hidden: true,
       channel,
       deleted_ts: ts,
       previous_message: m,
@@ -251,8 +270,21 @@ export class FakeSlack {
       type: remove ? "reaction_removed" : "reaction_added",
       user,
       reaction: name,
-      item: { type: "message", channel, ts },
+      item: { type: "message", channel, ts, channel_type: "channel" },
       event_ts: this.ts(),
+    });
+  }
+
+  /** message_replied as delivered: no `subtype` (the docs' bug alert), the parent nested, `ts` the event's own. */
+  replied(channel: string, ts: string): void {
+    const now = this.ts();
+    this.emit({
+      type: "message",
+      message: { ...this.msg(channel, ts) },
+      hidden: true,
+      channel,
+      event_ts: now,
+      ts: now,
     });
   }
 
@@ -265,7 +297,12 @@ export class FakeSlack {
   /** Emit any event (wrapped in a fresh envelope); queued until a socket has said hello. */
   emit(event: Record<string, unknown>): Envelope {
     const id = ++this.n;
-    const env: Envelope = { envelope_id: `env-${id}`, type: "events_api", payload: { event_id: `Ev${id}`, event } };
+    const env: Envelope = {
+      envelope_id: `env-${id}`,
+      type: "events_api",
+      accepts_response_payload: false,
+      payload: { type: "event_callback", event_id: `Ev${id}`, event_time: 1730000000 + id, event },
+    };
     this.sent.set(env.envelope_id, env);
     if (this.sockets.size) for (const ws of this.sockets) ws.send(JSON.stringify(env));
     else this.pending.push(env);

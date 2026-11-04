@@ -7,21 +7,26 @@ import type { Change, Connector, ConnectorDeps, ConnectorStatus, Event, Incoming
 import { backoff, sleep } from "./retry.ts";
 
 /** Tunables tests shorten. */
-export const timing = { helloMs: 10_000 };
+export const timing = { helloMs: 10_000, fatalMs: 3_600_000 };
 const MAX_FILE = 20 * 1024 * 1024;
 // GUILDS | GUILD_MEMBERS | GUILD_MESSAGES | GUILD_MESSAGE_REACTIONS | DIRECT_MESSAGES | DIRECT_MESSAGE_REACTIONS |
 // MESSAGE_CONTENT
 const INTENTS = 1 | 2 | 512 | 1024 | 4096 | 8192 | 32768;
 const THREAD = new Set([10, 11, 12]);
 const TEXT = new Set([0, 5]);
-/** default and reply; system messages (pins, joins, thread created) are not mirrored */
-const MIRRORED = new Set([0, 19]);
+/** parents of public threads that hold no messages of their own: forum and media */
+const FORUM = new Set([15, 16]);
+/** default, reply, and a slash or context command's answer; system messages (pins, joins, thread created) are not */
+const MIRRORED = new Set([0, 19, 20, 23]);
 const EVENTS = new Set([
   "MESSAGE_CREATE",
   "MESSAGE_UPDATE",
   "MESSAGE_DELETE",
+  "MESSAGE_DELETE_BULK",
   "MESSAGE_REACTION_ADD",
   "MESSAGE_REACTION_REMOVE",
+  "MESSAGE_REACTION_REMOVE_ALL",
+  "MESSAGE_REACTION_REMOVE_EMOJI",
   "THREAD_CREATE",
   "THREAD_UPDATE",
   "CHANNEL_CREATE",
@@ -30,8 +35,22 @@ const EVENTS = new Set([
   "GUILD_MEMBER_ADD",
   "GUILD_MEMBER_REMOVE",
 ]);
-/** close codes after which the session cannot be resumed */
-const FRESH = new Set([4004, 4007, 4009, 4010, 4011, 4012, 4013, 4014]);
+/** close codes that start a new session */
+const FRESH = new Set([4007, 4009]);
+/** close codes the docs say not to reconnect on, and what the owner has to do */
+const FATAL = new Map([
+  [4004, "authentication failed: check the bot token"],
+  [4010, "invalid shard"],
+  [4011, "sharding required: the bot is in too many guilds for one session"],
+  [4012, "invalid API version"],
+  [4013, "invalid intents"],
+  [
+    4014,
+    "disallowed intents: enable Server Members Intent and Message Content Intent on the bot's page in the Developer Portal",
+  ],
+]);
+/** Discord asks for this form; a client without it may be blocked at Cloudflare (Reference › User Agent). */
+const USER_AGENT = "DiscordBot (https://github.com/hortus-agent, 1)";
 
 interface DUser {
   id: string;
@@ -57,6 +76,8 @@ interface DMsg {
   attachments?: DAttachment[];
   message_reference?: { message_id?: string };
   reactions?: { emoji: { id: string | null; name: string | null } }[];
+  /** a forward: `content` is empty, the text is here */
+  message_snapshots?: { message: { content?: string } }[];
 }
 interface DChannel {
   id: string;
@@ -66,6 +87,7 @@ interface DChannel {
   guild_id?: string;
   parent_id?: string | null;
   recipients?: DUser[];
+  thread_metadata?: { archive_timestamp?: string };
 }
 interface Frame {
   op: number;
@@ -98,6 +120,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
   let gatewayUrl: string | undefined;
   let session: { id: string; seq: number; url: string } | undefined;
   let lastAck: number | undefined;
+  /** set by a close code that must not be retried at once */
+  let fatal: string | undefined;
 
   /** JSON REST. 429 → wait Retry-After and retry, 5 times, then throw. */
   async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -106,6 +130,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         method,
         headers: {
           authorization: `Bot hortus-secret-${name}`,
+          "user-agent": USER_AGENT,
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -198,7 +223,8 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     if (files.length) fm.files = files;
     const r = await reactions(m);
     if (r) fm.reactions = r;
-    return [{ op: "put", path: `${dir}/${m.id}.md`, frontmatter: fm, body: m.content ?? "" }, ...out];
+    const body = m.content || m.message_snapshots?.[0]?.message.content || "";
+    return [{ op: "put", path: `${dir}/${m.id}.md`, frontmatter: fm, body }, ...out];
   }
 
   function channelChange(c: DChannel): Change {
@@ -268,8 +294,9 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     ws.onclose = (e) => {
       closed = true;
       st.connected = false;
-      if (FRESH.has(e.code)) session = undefined;
-      if (e.code === 4004) st.error = "authentication failed (4004)";
+      const why = FATAL.get(e.code);
+      if (why) fatal = `${why} (${e.code})`;
+      if (why || FRESH.has(e.code)) session = undefined;
       notify();
     };
     ws.onerror = () => {};
@@ -285,12 +312,17 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         case 10: {
           clearTimeout(timer);
           const every = (f.d as { heartbeat_interval: number }).heartbeat_interval;
-          beat = setInterval(() => {
+          const tick = () => {
             // no ACK since the last beat: a zombie connection, reconnect and resume
             if (!acked) return close();
             acked = false;
             send({ op: 1, d: session?.seq ?? null });
-          }, every);
+          };
+          // the first beat after `heartbeat_interval * jitter`, then every interval
+          beat = setTimeout(() => {
+            tick();
+            beat = setInterval(tick, every);
+          }, every * Math.random());
           const token = `hortus-secret-${name}`;
           if (session) send({ op: 6, d: { token, session_id: session.id, seq: session.seq } });
           else
@@ -340,7 +372,9 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         void api("POST", path, { type: 5 }).catch((e) => log.error(`${name}: interaction ack failed`, e));
         return;
       }
-      if (t.startsWith("THREAD_") || t.startsWith("CHANNEL_")) remember(d as unknown as DChannel);
+      // only these four carry a channel object: THREAD_MEMBER(S)_UPDATE also has an `id`, with no type or parent_id, and
+      // would turn the thread's cache entry into a plain channel
+      if (/^(THREAD|CHANNEL)_(CREATE|UPDATE)$/.test(t)) remember(d as unknown as DChannel);
       if (!EVENTS.has(t) || !session || typeof f.s !== "number") return;
       queue.push({ session_id: session.id, s: f.s, t, d });
       notify();
@@ -382,9 +416,17 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         } catch (e) {
           st.error = e instanceof Error ? e.message : String(e);
           log.error(`${name}: gateway failed`, e);
+          // "or the reconnect fails": back to the cached URL and a new session (a resume host gone, a session expired)
+          if (attempt >= 3) session = undefined;
         }
         st.connected = false;
-        if (!signal.aborted) await sleep(backoff(attempt), signal);
+        if (fatal) {
+          // ponytail: retried hourly, not never: nothing restarts a connector when the owner fixes the token or the
+          // portal; 60 s backoff is 1440 IDENTIFYs a day, and at 1000 Discord resets the token
+          st.error = fatal;
+          fatal = undefined;
+          await sleep(timing.fatalMs, signal);
+        } else if (!signal.aborted) await sleep(backoff(attempt), signal);
       }
     },
 
@@ -411,8 +453,18 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
           // full resync drops nothing either, the mirror keeps them until the owner prunes
           return { changes: [{ op: "delete", path: `${dir}/${d.id}.md` }], wake: false };
         }
+        case "MESSAGE_DELETE_BULK": {
+          const changes: Change[] = [];
+          for (const id of d.ids as string[]) {
+            const { dir } = await where(String(d.channel_id), id);
+            changes.push({ op: "delete", path: `${dir}/${id}.md` });
+          }
+          return { changes, wake: false };
+        }
         case "MESSAGE_REACTION_ADD":
-        case "MESSAGE_REACTION_REMOVE": {
+        case "MESSAGE_REACTION_REMOVE":
+        case "MESSAGE_REACTION_REMOVE_ALL":
+        case "MESSAGE_REACTION_REMOVE_EMOJI": {
           const m = await api<DMsg>("GET", `/channels/${d.channel_id}/messages/${d.message_id}`);
           const { dir } = await where(m.channel_id, m.id);
           const r = (await reactions(m)) ?? null;
@@ -442,9 +494,21 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         for (const c of text) out.add(c.id);
         const active = await api<{ threads: DChannel[] }>("GET", `/guilds/${g.id}/threads/active`);
         for (const c of active.threads) out.add(remember(c, g.id).id);
-        for (const c of text) {
-          const archived = await api<{ threads: DChannel[] }>("GET", `/channels/${c.id}/threads/archived/public`);
-          for (const th of archived.threads) out.add(remember(th, g.id).id);
+        for (const c of list.filter((x) => TEXT.has(x.type) || FORUM.has(x.type))) {
+          try {
+            for (let before = ""; ; ) {
+              const path = `/channels/${c.id}/threads/archived/public?limit=100${before}`;
+              const r = await api<{ threads: DChannel[]; has_more?: boolean }>("GET", path);
+              for (const th of r.threads) out.add(remember(th, g.id).id);
+              const last = r.threads.at(-1)?.thread_metadata?.archive_timestamp;
+              if (!r.has_more || !last) break;
+              before = `&before=${encodeURIComponent(last)}`;
+            }
+          } catch (e) {
+            // a 403 on a channel the bot cannot read: it has no history to fetch, and must not cost the other scopes
+            log.info(`${name}: skipping channel ${c.id}: ${e instanceof Error ? e.message : e}`);
+            out.delete(c.id);
+          }
         }
       }
       if (ownerDm) out.add(ownerDm);

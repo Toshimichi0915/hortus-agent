@@ -95,6 +95,10 @@ export function coreSocket(url: string): globalThis.WebSocket {
   return new WebSocket(`ws://${u.host}${u.pathname}${u.search}`, {
     createConnection: () => {
       const [mine, theirs] = duplexPair();
+      // a pair does not pass on a destroy: `ws` sat out its 30 s close timeout on every close, and a dropped upstream
+      // (no close frame) was seen only by the heartbeat
+      theirs.once("close", () => mine.destroy());
+      mine.once("close", () => theirs.destroy());
       coreUpgrades.emit("connection", theirs);
       // ws calls these on its socket after the handshake; a stream pair has no Nagle or idle timer
       return Object.assign(mine, { setNoDelay: () => mine, setTimeout: () => mine, setKeepAlive: () => mine });

@@ -15,7 +15,7 @@ import type { Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { HANDLE, handles, resolvable, resolveHandle } from "../vault/ops.ts";
 import * as transforms from "../vault/transforms.ts";
-import { effectiveHosts, manifestEntry, PREFIX, read as readVault, touch } from "../vault/vault.ts";
+import { effectiveHosts, hostIn, manifestEntry, PREFIX, read as readVault, touch } from "../vault/vault.ts";
 import type { Client } from "./links.ts";
 import {
   bound,
@@ -86,7 +86,7 @@ export function frameOut(p: Prepared, text: string): { text: string } | { refuse
     // ponytail: captured (`c-`) credentials never ride in frames; a cookie-session WebSocket service would add them
     if (!entry) return { refuse: `unknown credential ${h.name}` };
     const manifest = transforms.credentialManifest(h.name, entry, p.tf?.manifest);
-    if (!effectiveHosts(h.name, entry, manifest).includes(host)) return { refuse: `destination: ${h.name}` };
+    if (!hostIn(effectiveHosts(h.name, entry, manifest), host)) return { refuse: `destination: ${h.name}` };
     if (!manifestEntry(h.name, entry, manifest)?.locations.includes("ws:text"))
       return { refuse: `location: ${h.name} may not ride in ws:text` };
     const why = resolvable(h, { entry });

@@ -131,6 +131,10 @@ export function scrubber(host = ""): Scrubber {
   return s;
 }
 
+/** `*.x.y` covers subdomains of x.y: a shipped manifest only (Hostname refuses it from a submission or the console). */
+export const hostIn = (hosts: string[], host: string): boolean =>
+  hosts.some((h) => h === host || (h.startsWith("*.") && host.endsWith(h.slice(1))));
+
 /** The credential's `hosts`, else the manifest entry of the same name, else the manifest entry of the same type (v7). */
 export function effectiveHosts(name: string, entry: VaultEntry, manifest: Manifest | undefined): string[] {
   if (entry.hosts) return entry.hosts;

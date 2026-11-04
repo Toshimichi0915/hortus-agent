@@ -3,9 +3,14 @@
   "credentials": {
     "discord": {
       "type": "token",
-      "hosts": ["discord.com", "gateway.discord.gg"],
+      "hosts": ["discord.com", "gateway.discord.gg", "*.discord.gg"],
       "locations": ["header:Authorization", "ws:text"]
     }
   },
-  "consequential": ["DELETE discord.com/api/**"]
+  "consequential": [
+    "DELETE discord.com/api/**",
+    "POST discord.com/api/**/messages/bulk-delete",
+    "PUT discord.com/api/**/bans/*",
+    "POST discord.com/api/**/bulk-ban"
+  ]
 }

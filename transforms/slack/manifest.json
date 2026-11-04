@@ -4,5 +4,9 @@
     "slack": { "type": "token", "hosts": ["slack.com", "files.slack.com"], "locations": ["header:Authorization"] },
     "slack-app": { "type": "token", "hosts": ["slack.com"], "locations": ["header:Authorization"] }
   },
-  "consequential": ["POST slack.com/api/chat.delete", "POST slack.com/api/files.delete"]
+  "consequential": [
+    "* slack.com/api/chat.delete",
+    "* slack.com/api/chat.deleteScheduledMessage",
+    "* slack.com/api/files.delete"
+  ]
 }
