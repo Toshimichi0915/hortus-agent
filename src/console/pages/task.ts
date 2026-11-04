@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { taintOf } from "../../db.ts";
 import { readCapped } from "../../hostile.ts";
 import { budget, button, details, h, isOpen, layout, type Page, parse, time } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
@@ -44,6 +45,7 @@ export const task: Page = (ctx, { m }) => {
     .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
   const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
   const open = isOpen(t.status);
+  const tainted = taintOf(ctx.db, id);
   const up =
     t.runtime === "vm" && t.status === "running" && t.started
       ? ` · up ${Math.round((Date.now() - Date.parse(t.started)) / 60_000)} min`
@@ -62,6 +64,7 @@ ${t.brief ? details("Brief", t.brief) : ""}
 <tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Runtime</th><td>${t.runtime ?? "host"}${up}</td></tr>
 <tr><th>Project</th><td>${t.project ?? "—"}</td></tr>
 ${origin ? h`<tr><th>Origin</th><td>${origin.dof} · channel ${channel} · author ${origin.author ?? "—"}<br><span class="pre">${origin.summary ?? ""}</span></td></tr>` : ""}
+${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join("; ")} (the owner decides its gated requests)</td></tr>` : ""}
 <tr><th>Budget</th><td>${budget(t)}</td></tr><tr><th>Created</th><td>${time(t.created)}</td></tr>
 <tr><th>Updated</th><td>${time(t.updated)}</td></tr>${t.closed ? h`<tr><th>Closed</th><td>${time(t.closed)}</td></tr>` : ""}
 </table>

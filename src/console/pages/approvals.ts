@@ -131,7 +131,7 @@ export function approvalEntry(a: ApprovalRow): Raw {
   } · ${time(a.requested_at)}</header>
 ${
   untrusted.length
-    ? h`<p class="hint untrusted">this task read messages from untrusted authors (${untrusted.join(", ")}): make sure the request is what you asked for, not what they asked for</p>`
+    ? h`<p class="hint untrusted">tainted: ${untrusted.join("; ")}. Make sure the request is what you asked for, not what they asked for</p>`
     : ""
 }
 ${escalated ? h`<p class="hint">escalated${untrusted.length ? "" : " by judge"}: ${escalated.slice(0, 200)}</p>` : ""}

@@ -61,7 +61,47 @@ const migrations: string[] = [
   // step 4: the Planner's batch line (Event.summary, Event.refs as JSON) and which result rows a batch has read
   `ALTER TABLE events ADD COLUMN summary TEXT; ALTER TABLE events ADD COLUMN refs TEXT;
   ALTER TABLE outbox ADD COLUMN consumed INTEGER DEFAULT 0;`,
+  // review round 6: why a task's context holds text the owner did not vouch for (a JSON array of reasons)
+  "ALTER TABLE tasks ADD COLUMN taint TEXT;",
 ];
+
+const TAINT_MAX = 5;
+
+/**
+ * Marks the task tainted (v7 › Review round 6): from now on the owner decides its gated requests, never the judge.
+ * At most TAINT_MAX distinct reasons are kept; the first ones say enough.
+ */
+export function taint(db: DatabaseSync, task: string, reason: string): void {
+  const r = db.prepare("SELECT taint FROM tasks WHERE id = ?").get(task) as { taint: string | null } | undefined;
+  if (!r) return;
+  const list = r.taint ? (JSON.parse(r.taint) as string[]) : [];
+  if (list.includes(reason) || list.length >= TAINT_MAX) return;
+  db.prepare("UPDATE tasks SET taint = ? WHERE id = ?").run(JSON.stringify([...list, reason]), task);
+}
+
+/**
+ * Why the task's context holds untrusted text: untrusted events routed to it (task_attach), the Planner batch it is
+ * (every batch reads strangers), and what `taint()` recorded. Empty: untainted, as far as hortusd can see.
+ */
+export function taintOf(db: DatabaseSync, task: string | null | undefined): string[] {
+  if (!task) return [];
+  const t = db.prepare("SELECT kind, taint FROM tasks WHERE id = ?").get(task) as
+    | { kind: string | null; taint: string | null }
+    | undefined;
+  if (!t) return [];
+  const authors = (
+    db
+      .prepare(
+        "SELECT DISTINCT dof, COALESCE(author, '?') AS author FROM events WHERE task_id = ? AND trusted = 0 LIMIT 5",
+      )
+      .all(task) as { dof: string; author: string }[]
+  ).map((r) => `${r.dof}:${r.author}`);
+  return [
+    ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
+    ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),
+    ...(t.taint ? (JSON.parse(t.taint) as string[]) : []),
+  ];
+}
 
 export function openDb(path: string): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
