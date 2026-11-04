@@ -62,7 +62,7 @@ End-to-end with `scripts/dev-run.sh`, the fake Slack, DeepSeek through `dev.upst
 - `PAUSED`: a queued task does not start; removing the file starts it within 2 s.
 - Reload: changing `dofs.slack.trust` restarts only slack (the fake counts one reconnect); changing `worker.model` does not restart anything and the next task start uses it.
 
-Edge cases: two `task.send` within 10 ms get seq 1 and 2 (serialized); an owner message while the task is `queued` (not yet started) is in the first drain; `task.open` with `cwd` outside every project sets no project; a project path that is a symlink matches by `realpath`; the Worker exits before writing any session (model key invalid) → `waiting` with the error on the card, not a crash loop (no automatic restart without a new inbox message).
+Edge cases: two `task.send` within 10 ms get seq 1 and 2 (serialized); an owner message while the task is `queued` (not yet started) is in the first drain; `task.open` with `cwd` outside every project sets no project; a project path that is a symlink matches by `realpath`; the Worker exits before writing any session (model key invalid) → `waiting` with the error on the card, not a crash loop (no automatic restart without a new inbox message; round 8: while `tasks.error` is set only the owner's message or note starts it, so approvals, Planner notes and schedules wait in the inbox; a Worker that gave up after four failed model calls sets it too).
 
 ## UI/UX verification
 

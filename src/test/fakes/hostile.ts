@@ -119,7 +119,7 @@ interface Ask {
 function get(
   a: Ask,
   host: string,
-  o: { path?: string; method?: string; body?: string; max?: number } = {},
+  o: { path?: string; method?: string; body?: string; max?: number; hold?: boolean } = {},
 ): Promise<string> {
   return new Promise((resolve) => {
     let got = 0;
@@ -153,7 +153,9 @@ function get(
       r.destroy();
       resolve("gave up");
     }, a.ms).unref();
-    r.end(o.body);
+    // hold: the body is written but never ended (a Worker holding its request open)
+    if (o.hold) r.write(o.body ?? "");
+    else r.end(o.body);
   });
 }
 
@@ -228,6 +230,24 @@ async function run(a: Ask): Promise<unknown> {
             ...Array.from({ length: a.n }, () => get(w, "never.test").then((r) => `never ${r}`)),
             ...Array.from({ length: 4 }, () => get(w, "endless.test", { max: 24 * MB }).then((r) => `endless ${r}`)),
           ]);
+        }),
+      );
+      return tally(each.flat());
+    }
+    case "bodies": {
+      // `clients` Workers, each holding a.n request bodies of just under 1 MB open (written, never ended), half as
+      // RPCs and half through the pipeline to a buffering host
+      const body = "x".repeat(MB - 1024);
+      const each = await Promise.all(
+        Array.from({ length: a.clients ?? 1 }, (_, i) => {
+          const w = { ...a, from: `127.0.0.${2 + i}` };
+          return Promise.all(
+            Array.from({ length: a.n }, (_, j) =>
+              j % 2
+                ? get(w, "never.test", { method: "POST", body, hold: true })
+                : get(w, "hortusd.internal", { method: "POST", path: "/rpc/ping", body, hold: true }),
+            ),
+          );
         }),
       );
       return tally(each.flat());

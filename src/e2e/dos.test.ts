@@ -24,7 +24,7 @@ import { upsert } from "../mirror/fts.ts";
 import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
-import { MAX_INFLIGHT } from "../proxy/server.ts";
+import { BODY_BUDGET, MAX_INFLIGHT } from "../proxy/server.ts";
 import { tempDir, until } from "../test/until.ts";
 import { transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
@@ -198,4 +198,13 @@ test("20 Workers at once, each flooding RPCs and proxy requests: the console sta
   // before round 6's turns and global buffering bound: hold 1.3 s, task.list p95 550 ms, rss +1.4 GB
   const r = await measure("swarm", 64, 60_000, 700, 20);
   assert.deepEqual(r, { "search 200": 20 * 64, "never gave up": 20 * 64, "endless 200 read 24 MB": 20 * 4 });
+});
+
+test("20 Workers each holding 64 request bodies open: a byte budget per client", opts, async () => {
+  // half RPCs, half pipeline requests, just under 1 MB each, written and never ended. Before the budget (16 MB a
+  // client): rss +239 MB for one Worker, +4.98 GB for 20; with it +48 and +293 MB
+  // 64 each in the suite (over the budget 4×; MAX_INFLIGHT each held the loop ~650 ms with 4,800 refusals at once)
+  const r = await measure("bodies", 64, 15_000, 600, 20);
+  const each = BODY_BUDGET / (1024 * 1024);
+  assert.deepEqual(r, { "gave up": 20 * each, 429: 20 * (64 - each) });
 });

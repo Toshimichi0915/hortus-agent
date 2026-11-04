@@ -104,3 +104,35 @@ test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch
     await dispatcherModule.stop();
   }
 });
+
+test("a task that cannot start fails once: approvals and notes from others wait in its inbox, the owner restarts it", async () => {
+  // review round 8: worker.provider names no vault credential; every approval decided re-ran the failed start
+  writeFileSync(paths.vault(), "{}", { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ worker: { provider: "ghost", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  await dispatcherModule.start(ctx);
+  try {
+    const t = tasks.create({ kind: "chat", title: "c", brief: "b", scope: { credentials: [] } });
+    const errors = () =>
+      (ctx.db.prepare("SELECT body FROM replies WHERE task_id = ?").all(t.id) as { body: string }[]).filter((r) =>
+        r.body.includes('"error"'),
+      ).length;
+    await until(() => tasks.get(t.id).status === "waiting" && errors() === 1, 3000, "the failed start");
+    assert.match(tasks.get(t.id).error ?? "", /worker\.provider ghost is not a credential in vault\.json/);
+    for (const from of ["approval", "planner", "merge", "schedule:s1"])
+      tasks.inboxWrite(t.id, { from, trusted: from !== "planner", text: "x" });
+    await new Promise((r) => setTimeout(r, 1500)); // more than one tick
+    assert.equal(tasks.get(t.id).status, "waiting");
+    assert.equal(errors(), 1, "no restart");
+    tasks.inboxWrite(t.id, { from: "owner", trusted: true, text: "try again" });
+    await until(() => errors() === 2, 3000, "the owner's message starts it again");
+    await until(() => tasks.get(t.id).status === "waiting", 3000, "waiting again");
+  } finally {
+    await dispatcherModule.stop();
+  }
+});

@@ -44,6 +44,7 @@ const complete = async (req, onText) => {
   }
   const content = last.content ?? "";
   if (content.includes("!fail")) throw new Error("fake failure");
+  if (req.messages.some((m) => (m.content ?? "").includes("!failhard"))) throw new Error("fake failure, every time");
   const calls = [];
   for (const line of content.split("\\n")) {
     const m = /^!(bash|done|send) ?(.*)$/.exec(line.trim());
@@ -347,6 +348,22 @@ test("a Worker that dies before any model call: waiting with the error on the ca
   } finally {
     await api("settings.set", { config });
   }
+});
+
+test("a Worker whose model calls keep failing gives up once: the error on the card, a message starts it again", {
+  skip,
+}, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "!failhard" });
+  await waitStatus(id, "waiting", 30_000);
+  const c = await card(id);
+  assert.match(c.task.error ?? "", /^failed: .*fake failure/);
+  assert.equal(reqs(id).length, 4, "four tries, then it gives up");
+  const page = await (await fetch(`http://127.0.0.1:${port}/chat/${id}`)).text();
+  assert.match(page, /fake failure/);
+  const taskPage = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
+  assert.match(taskPage, /a message from you starts it again/);
+  await api("task.send", { id, text: "again" });
+  await until(() => reqs(id).length > 4, 15_000, "the owner's message starts it again");
 });
 
 test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof search --in logs", {

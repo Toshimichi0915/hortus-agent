@@ -12,7 +12,7 @@ import { logger } from "../log.ts";
 import { sniCallback } from "../vault/ca.ts";
 import { dnsServer } from "./dns.ts";
 import { type Client, lookup, turn } from "./links.ts";
-import { handle, type IncomingRequest, type Out } from "./pipeline.ts";
+import { handle, type IncomingRequest, type Out, REQUEST_BUFFER } from "./pipeline.ts";
 import { relay } from "./ws.ts";
 
 const log = logger("proxy");
@@ -57,15 +57,36 @@ export function writeOut(res: http.ServerResponse, out: Out): void {
 export const MAX_INFLIGHT = 256;
 const inflight = new Map<Client, number>();
 
-/** Counts one open request of `client` until `done` closes; false (and nothing counted) over MAX_INFLIGHT. */
-function admit(client: Client, done: { once(ev: "close", f: () => void): unknown }): boolean {
-  const n = inflight.get(client) ?? 0;
-  if (n >= MAX_INFLIGHT) return false;
-  inflight.set(client, n + 1);
+/** Request-body bytes one client may have buffered in hortusd at once (review round 8: MAX_INFLIGHT bodies of just
+ * under REQUEST_BUFFER, held open, were +239 MB for one Worker and +4.98 GB for 20). A request is charged its
+ * `content-length` up to REQUEST_BUFFER (a longer one streams), a chunked one and a WebSocket upgrade (its client frame
+ * bound) REQUEST_BUFFER, until it closes; over the budget it is a 429. ponytail: charged by the declared size, not the
+ * bytes read; count them in readUpTo if a Worker's legitimate chunked bodies hit the budget. */
+export const BODY_BUDGET = 16 * 1024 * 1024; // 16 × REQUEST_BUFFER, a literal: server.ts and pipeline.ts may meet in a cycle
+const bodies = new Map<Client, number>();
+
+const charge = (h: http.IncomingHttpHeaders, upgrade: boolean): number => {
+  if (upgrade || h["transfer-encoding"] !== undefined) return REQUEST_BUFFER;
+  const n = Number(h["content-length"] ?? 0);
+  return n > REQUEST_BUFFER ? 0 : n;
+};
+
+/** Counts `n` of `max` for `client` in `counts` until `done` closes; false (and nothing counted) over `max`. */
+function admit(
+  client: Client,
+  done: { once(ev: "close", f: () => void): unknown },
+  counts = inflight,
+  n = 1,
+  max = MAX_INFLIGHT,
+): boolean {
+  if (!(n > 0)) return true;
+  const had = counts.get(client) ?? 0;
+  if (had + n > max) return false;
+  counts.set(client, had + n);
   done.once("close", () => {
-    const left = (inflight.get(client) ?? 1) - 1;
-    if (left > 0) inflight.set(client, left);
-    else inflight.delete(client);
+    const left = (counts.get(client) ?? n) - n;
+    if (left > 0) counts.set(client, left);
+    else counts.delete(client);
   });
   return true;
 }
@@ -94,6 +115,15 @@ function serve(tls: boolean, proxyAddress: string) {
         body: `hortus: over ${MAX_INFLIGHT} requests in flight\n`,
       });
     }
+    if (!admit(client, res, bodies, charge(req.headers, false), BODY_BUDGET)) {
+      req.resume();
+      log.info("refused", { status: 429, msg: "too many request bodies in flight", task: client.task });
+      return writeOut(res, {
+        status: 429,
+        headers: { "content-type": "text/plain", "retry-after": "1" },
+        body: `hortus: over ${BODY_BUDGET / REQUEST_BUFFER} MB of request bodies in flight\n`,
+      });
+    }
     // the client hanging up ends the upstream request (else it held its socket until the upstream gave up)
     const ac = new AbortController();
     res.once("close", () => {
@@ -112,7 +142,7 @@ function serve(tls: boolean, proxyAddress: string) {
   const onUpgrade = (req: http.IncomingMessage, socket: Socket, head: Buffer) => {
     const client = clientOf(socket);
     if (!client) return socket.end("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
-    if (!admit(client, socket))
+    if (!admit(client, socket) || !admit(client, socket, bodies, charge(req.headers, true), BODY_BUDGET))
       return socket.end("HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
     turn(client)
       .then(() => (socket.destroyed ? undefined : relay(client, toIncoming(req, tls), socket, head)))

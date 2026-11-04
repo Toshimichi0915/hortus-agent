@@ -172,7 +172,10 @@ export function inboxWrite(id: string, msg: Omit<InboxMsg, "seq" | "ts">): numbe
   writeFileSync(join(dir, `.${name}.tmp`), json(full));
   renameSync(join(dir, `.${name}.tmp`), join(dir, name));
   db.prepare("INSERT INTO inbox(task_id, seq, body, created) VALUES (?, ?, ?, ?)").run(id, n, json(full), full.ts);
-  if (t.status === "waiting") setStatus(id, "queued");
+  // a task whose last start or session failed (`error`) waits for the owner (task.send, task.message): an approval
+  // decided, a Planner note or a schedule re-ran the failure once per message (review round 8: a task without its
+  // provider credential restarted once a second while its approvals were decided); the message waits in its inbox
+  if (t.status === "waiting" && (!t.error || msg.from === "owner" || msg.from === "console")) setStatus(id, "queued");
   else bus.emit("tasks", { id });
   for (const h of inboxHooks) h(t, full);
   hooks.wake();
