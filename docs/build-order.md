@@ -79,7 +79,7 @@ Solid arrows are hard dependencies; dotted ones improve the done-when (no click 
 | 4 | Planner: batch loop, tools, `scope.project`, `owner.notify`, guards, `planner.runtime` | as v6 step 4 | 4b | done with a scripted Planner (`src/e2e/step4.test.ts`); live Planner opt-in (`step4live`); the Planner VM end to end over taps opt-in (`src/e2e/vm.test.ts`, `HORTUS_TEST_VM=1 HORTUS_TEST_NET=1`); the Planner VM takes a `vm.max_concurrent` slot but never waits for one; round 5: `task_message` is `trusted=false`, open-task summaries rendered as data |
 | 4b | `discord`, `telegram`, `ws:text` | as v6 step 4b | 4 | done against fake Discord/Telegram; real services pending credentials |
 | 6 | Forge interface, `github` | as v6 step 6 | — | done against the fake GitHub (`src/e2e/step6.test.ts`, Planner-routed); a real GitHub App pending credentials |
-| 6b | `gitlab`, `bitbucket`, `equals`, `host` | as v6 step 6b | — | done against fake GitLab/Bitbucket (`src/connectors/forges.test.ts`, parameterized over the three forges); real services pending credentials |
+| 6b | `gitlab`, `bitbucket`, `equals`, `host` | as v6 step 6b | — | done against fake GitLab/Bitbucket (`src/connectors/forges.test.ts`, parameterized over the three forges; `src/e2e/step6b.test.ts`, Planner-routed on the real daemon); real services pending credentials |
 
 Critical path: F0 → {F1, F2} → 1 → 2 → 3 → 4 → 6. Everything in wave 3b–3h is off it.
 

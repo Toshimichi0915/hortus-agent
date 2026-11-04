@@ -852,12 +852,16 @@ function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | un
   const task = p.client.task;
   if (!task) return;
   const dofs = ctx().config.dofs;
+  // a transform names refs after its type; the DOF is the one whose credential the request carried (`gle`, type gitlab)
+  const type = p.tf?.name ?? "";
+  const dof = [...p.secrets.keys()].find((n) => dofs[n]?.type === type);
+  const named = (r: string) => (dof && r.startsWith(`${type}:`) ? `${dof}${r.slice(type.length)}` : r);
   const own = (r: string) => {
     const d = r.split(":", 1)[0] ?? "";
     return r.includes(":") && Object.hasOwn(dofs, d) && dofs[d]?.type === p.tf?.name;
   };
-  const refs = all?.filter(own);
-  const repos = allRepos?.filter(own);
+  const refs = all?.map(named).filter(own);
+  const repos = allRepos?.map(named).filter(own);
   const db = ctx().db;
   for (const r of refs ?? []) db.prepare("INSERT OR IGNORE INTO task_refs(ref, task_id) VALUES (?, ?)").run(r, task);
   if (repos?.length && p.consequential && p.approved) {

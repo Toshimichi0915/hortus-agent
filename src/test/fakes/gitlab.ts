@@ -53,6 +53,12 @@ export class GitHost {
   sha(full: string, branch: string): Promise<string> {
     return this.git(full, "rev-parse", "--verify", `refs/heads/${branch}`);
   }
+  /** what a forge shows for an MR/PR: `head` against its merge base with `base` */
+  diff(full: string, base: string, head: string): Promise<string> {
+    return run("git", ["--git-dir", this.dir(full), "diff", `${base}...${head}`], { env: gitEnv }).then(
+      (r) => r.stdout,
+    );
+  }
   /** `ok` false → 401 (no credential) or 403 */
   serve(req: IncomingMessage, res: ServerResponse, full: string, rest: string, query: string, ok: boolean): void {
     if (!ok) {
@@ -389,8 +395,10 @@ export class FakeGitLab {
   ) {
     const p = this.get(path);
     const sha = await this.sha(path, o.head).catch(() => "0".repeat(40));
+    const base = o.base ?? "main";
+    const diff = o.diff ?? (await this.git.diff(path, base, o.head).catch(() => ""));
     const t = this.newThing(p, true, o);
-    t.mr = { source_branch: o.head, target_branch: o.base ?? "main", sha, diff: o.diff ?? "", approvals: [] };
+    t.mr = { source_branch: o.head, target_branch: base, sha, diff, approvals: [] };
     const x = await this.send("merge_request", p, o.user, { object_attributes: this.hookAttrs(t, "open") }, d);
     return { ...x, n: t.iid, sha };
   }
@@ -519,23 +527,16 @@ export class FakeGitLab {
     if (x) {
       const mr = x[1] === "merge_requests";
       if (M === "POST") {
-        const t = this.newThing(p, mr, {
-          user: this.self,
-          title: String(body.title ?? ""),
-          body: String(body.description ?? ""),
-        });
-        if (mr) {
-          const head = String(body.source_branch);
-          const sha = await this.sha(p.path, head).catch(() => "0".repeat(40));
-          t.mr = {
-            source_branch: head,
-            target_branch: String(body.target_branch ?? "main"),
-            sha,
-            diff: "",
-            approvals: [],
-          };
-        }
-        return json(201, this.restJson(p, t));
+        const o = { user: this.self, title: String(body.title ?? ""), body: String(body.description ?? "") };
+        // as GitLab: the API's own writes fire the hooks too
+        const { n } = mr
+          ? await this.openMR(p.path, {
+              ...o,
+              head: String(body.source_branch),
+              base: String(body.target_branch ?? "main"),
+            })
+          : await this.openIssue(p.path, o);
+        return json(201, this.restJson(p, this.thing(p.path, n, mr)));
       }
       const st = q("state");
       const branch = q("source_branch");
@@ -557,18 +558,8 @@ export class FakeGitLab {
       if (x[3] === "/approvals")
         return json(200, { approved_by: (t.mr?.approvals ?? []).map((user) => ({ user })), updated_at: t.updated_at });
       if (M === "POST") {
-        const now = this.ts();
-        const n: Note = {
-          id: this.ids++,
-          iid: t.iid,
-          mr,
-          body: String(body.body ?? ""),
-          author: this.user(this.self),
-          created_at: now,
-          updated_at: now,
-        };
-        p.notes.push(n);
-        return json(201, this.noteJson(n));
+        const { id } = await this.note(p.path, t.iid, mr, { user: this.self, body: String(body.body ?? "") });
+        return json(201, this.noteJson(p.notes.find((n) => n.id === id) as Note));
       }
       return json(
         200,
