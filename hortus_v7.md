@@ -882,3 +882,11 @@ Ceilings and nits, not changed:
 - **With an `origins` list**, LFS and Slack uploads need their transfer hosts listed (`files.slack.com`, `lfs.github.com`, `github-cloud.s3.amazonaws.com`, `github-cloud.githubusercontent.com`, `media.githubusercontent.com`, `api.media.atlassian.com`, the store behind gitlab.com); the refusal names the host.
 - **A file naming a placeholder or a handle** (`hortus-secret-x`, `{secret:x}`) is refused as a text upload and passes as a binary one: the pipeline's steps 5 and 7, not new.
 - Not run: cargo, Maven, Gradle (no binaries here). Real services: as ever, pending.
+
+## Review round 14 — the runs and what is left
+
+- **Final runs,** all on `1006741` (the docs alone changed after it), image rebuilt on that tree. `pnpm lint` clean. Default, `KEEP` unset, 3 × (597 tests: 568 pass, 0 fail, 29 skipped); `--test-concurrency=64` beside `stress -c 32`, 2 × 568/0; `HORTUS_TEST_NET=1` 569/0; `HORTUS_TEST_LLM=1` 576/0; VM 22 pass, 0 fail, 3 skipped; VM with NET 13 pass, 0 fail, 12 skipped. A per-file 20-minute bound ran beside them and never fired. An earlier loaded run hung on the crashpad handler (above) and does not count.
+- Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors, with this round's GraphQL shapes, LFS flows and upload flows; a real phone passkey.
+- Owner's decisions this round leaves open: a shared `$HORTUS_HOME/cache` is still a channel from a tainted Worker to a clean one (table above; task-local caches close it at the price of every download); `/tmp` read-only and no pty are v6 changes that a project may need `policy.cache` or a VM for.
+- Not exercised: cargo, Maven, Gradle (not installed; `curl -Z` stood in for cargo's fetches, and `MAVEN_OPTS`, `GOMODCACHE` are set but no fetch ran through them).
+
