@@ -6,6 +6,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { X509Certificate, createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 
 export const CHROMIUM = process.env.HORTUS_CHROMIUM ?? "/usr/bin/chromium";
@@ -59,7 +60,7 @@ export function flags(o: LaunchOpts): string[] {
     "--disable-domain-reliability",
     "--disable-client-side-phishing-detection",
     "--no-pings",
-    // crashpad writes under ~/.config/chromium, which every Landlock domain denies
+    // no uploads; the handler itself still starts, see launch
     "--disable-crash-reporter",
     "--disable-breakpad",
     "--password-store=basic",
@@ -77,8 +78,14 @@ export async function launch(o: LaunchOpts): Promise<Browser> {
   const [bin = CHROMIUM, ...pre] = o.cmd ?? [CHROMIUM];
   const proc = spawn(bin, [...pre, ...flags(o)], {
     stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
-    // a Worker's TMPDIR is under HORTUS_HOME, and past 62 bytes the singleton socket in it (sun_path) is a FATAL at start
-    ...(o.noSandbox ? { env: { ...process.env, TMPDIR: "/dev/shm" } } : {}),
+    env: {
+      ...process.env,
+      // crashpad starts whatever the flags say (only --disable-crashpad-for-testing stops it, and crashes the network
+      // service); this keeps its database, and dumps of a login page, out of the owner's ~/.config/chromium
+      BREAKPAD_DUMP_LOCATION: join(o.userDataDir, "crash"),
+      // a Worker's TMPDIR is under HORTUS_HOME, and past 62 bytes the singleton socket in it (sun_path) is a FATAL at start
+      ...(o.noSandbox ? { TMPDIR: "/dev/shm" } : {}),
+    },
   });
   let stderr = "";
   proc.stderr?.on("data", (c: Buffer) => {
@@ -86,7 +93,14 @@ export async function launch(o: LaunchOpts): Promise<Browser> {
   });
   // a missing binary emits `error` and never `exit`: connect reports it, close must not wait for an exit
   const exited = new Promise<void>((r) => {
-    proc.once("exit", () => r());
+    proc.once("exit", () => {
+      r();
+      // crashpad's handler daemonizes holding stderr: one that outlives the browser kept these open, an fd leak per
+      // launch in hortusd and a test process that never ended. A second for what the browser last wrote.
+      setTimeout(() => {
+        for (const s of proc.stdio) s?.destroy();
+      }, 1000).unref();
+    });
     proc.once("error", (e) => {
       stderr = `${e.message}${stderr ? `\n${stderr}` : ""}`;
       r();

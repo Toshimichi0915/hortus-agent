@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -599,6 +599,26 @@ test("cdp: DevTools over a pipe, never a TCP port (sessions reach 127.0.0.0/8)",
   const f = flags({ userDataDir: "/x" });
   assert.ok(f.includes("--remote-debugging-pipe"));
   assert.ok(!f.some((x) => x.startsWith("--remote-debugging-port")));
+});
+
+test("a handler that outlives the browser holds nothing of ours; its database stays in the profile", async () => {
+  const dir = tempDir("hortus-crashpad-");
+  const bin = join(dir, "chromium");
+  // as crashpad does: a daemon holding the browser's stderr, past the browser's death
+  writeFileSync(
+    bin,
+    `#!/bin/sh\necho "$BREAKPAD_DUMP_LOCATION" > ${dir}/db\nsleep 60 3>&- 4>&- &\necho $! > ${dir}/pid\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  const b = await launch({ userDataDir: join(dir, "u"), cmd: [bin] });
+  await until(() => existsSync(join(dir, "pid")), 5_000, "the handler");
+  await b.close();
+  try {
+    await until(() => b.proc.stderr?.destroyed, 5_000, "stderr let go");
+    assert.equal(readFileSync(join(dir, "db"), "utf8").trim(), join(dir, "u", "crash"));
+  } finally {
+    process.kill(Number(readFileSync(join(dir, "pid"), "utf8")), "SIGKILL");
+  }
 });
 
 test("cdp: a missing chromium fails connect at once, naming the binary (no 15 s wait, close does not hang)", async () => {
