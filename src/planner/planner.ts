@@ -166,7 +166,7 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
             ? `${r.task_id} (${r.status}${r.project ? `, project ${r.project}` : ""})`
             : // open, but no card below says so: the Planner took it for closed and made a stranger of the reply, 2 of 2
               r.kind === "chat"
-              ? `${r.task_id} (open chat)`
+              ? `${r.task_id} (open chat: task_attach it there)`
               : r.task_id,
         );
     return renderEvent(c.config, e, [...m]);

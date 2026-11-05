@@ -32,7 +32,7 @@ test("a reply in a chat's thread says the chat is open, as no card does", () => 
   db.prepare("INSERT INTO tasks(id, kind, title, brief, status) VALUES ('C', 'chat', 't', 'b', 'waiting')").run();
   db.prepare("INSERT INTO task_refs(ref, task_id) VALUES ('s:c:1', 'C')").run();
   const e = { id: 1, dof: "s", key: "k", ts: "t", author: "U", trusted: 1, summary: "x", refs: '["s:c:1"]', task_id: null };
-  assert.match(renderBatch(c, [e], []), /matches task C \(open chat\)/);
+  assert.match(renderBatch(c, [e], []), /matches task C \(open chat: task_attach it there\)/);
 });
 
 test("a follow-up's tag names a closed task's project; the prompt names the DOF root its hits are under", () => {
