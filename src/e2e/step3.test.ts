@@ -323,6 +323,10 @@ test("over budget with an undrained message: waiting, no restart loop", { skip }
   const c = await card(id);
   assert.equal(c.task.status, "waiting");
   assert.equal(c.replies.filter((r) => r.body.text === "started").length, 2, "one start per message, no loop");
+  // the raise is what the Worker waited for: it starts it, once
+  assert.match(c.task.error ?? "", /^budget_exceeded: budget exceeded/);
+  await api("task.budget", { id, tokens: 1e6 });
+  await until(async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3, 15_000, "go on");
 });
 
 test("hostile out/: a link planted at summary.md is never followed by hortusd", { skip }, async () => {

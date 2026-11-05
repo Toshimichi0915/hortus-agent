@@ -171,10 +171,12 @@ export async function publishLog(
   events?: string[],
 ): Promise<void> {
   const out = paths.out(taskId);
-  const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? "No summary.\n";
-  const t = db.prepare("SELECT created, event_keys FROM tasks WHERE id = ?").get(taskId) as
-    | { created: string | null; event_keys: string | null }
+  // the row: a card's `## Ended` belongs in the record the Planner reads for a follow-up, and only the row has it (the
+  // file is the Worker's). A log saying "open, not merged" of a merged PR sent 2 of 2 follow-ups to its dead branch
+  const t = db.prepare("SELECT summary, created, event_keys FROM tasks WHERE id = ?").get(taskId) as
+    | { summary: string | null; created: string | null; event_keys: string | null }
     | undefined;
+  const summary = t?.summary ?? readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? "No summary.\n";
   const keys = events ?? (t?.event_keys ? (JSON.parse(t.event_keys) as string[]) : undefined);
   const header = { title, status, ...(keys ? { events: keys } : {}), ...(t?.created ? { opened: t.created } : {}), updated: now() };
   writeLog(

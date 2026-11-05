@@ -98,7 +98,7 @@ messenger, one forge and the Planner's (and Workers') model:
 
 - `dofs.<name>`: a source; `type` is the connector, `owner` your user id there (only your messages are trusted by
   default: `trust`; `trust: "members"` on Telegram and Discord counts only chats and guilds you are in yourself). Forges list `repos`; a self-hosted one sets `host`.
-- `owner.notify`: the DOF whose DM tells you about new approvals and failed tasks.
+- `owner.notify`: the DOF whose DM tells you about new approvals, failed tasks and tasks that stopped with nothing left to wake them.
 - `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
 - `policy`: `human` (the default) asks you for **every** credentialed request, one decision each, as v6 says. It is
   many: a clone is 3 decisions, a push 3, and a PR from issue to merge took 25-55 clicks and 1-2M tokens in a live walk,

@@ -78,6 +78,7 @@ let ctx: Ctx | undefined;
 let timer: NodeJS.Timeout | undefined;
 let ticking = false;
 let stopping = false;
+export const isStopping = (): boolean => stopping;
 
 const db = () => {
   if (!ctx) throw new Error("dispatcher not started");
@@ -431,13 +432,15 @@ const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => 
 
 /** Not a task, so no Planner row (a batch that dies on its own failure would be fed it again); its events stay consumed
  * (15-planner.md › Wake and batch), so the owner's message may have gone unanswered: the DM is what says so. */
-const BATCH_FAILED = "a Planner batch failed: its events may be unrouted";
-
 /**
  * One Planner batch: `row` (kind planner, inserted `running` by the planner module, which deletes it and its directory
  * afterwards) runs to its exit as role `planner`; returns the tokens its session used. Stdout goes to console.log only.
  */
-export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "host" | "vm"): Promise<number> {
+export async function runPlanner(
+  row: tasks.TaskRow,
+  task: TaskJson,
+  runtime: "host" | "vm",
+): Promise<{ tokens: number; ok: boolean }> {
   if (!ctx || stopping) throw new Error("dispatcher not started");
   tasks.prepare(ctx.config, task);
   const consoleLog = join(paths.out(row.id), "console.log");
@@ -450,11 +453,7 @@ export async function runPlanner(row: tasks.TaskRow, task: TaskJson, runtime: "h
     const exit = await entry.child.wait();
     const { tokens } = scan(join(paths.out(row.id), "sessions"));
     log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
-    if (exit.code !== 0 && !stopping) tasks.hooks.failed(BATCH_FAILED);
-    return tokens;
-  } catch (e) {
-    if (!stopping) tasks.hooks.failed(BATCH_FAILED);
-    throw e;
+    return { tokens, ok: exit.code === 0 };
   } finally {
     releaseLinks(row.id);
     running.delete(row.id);

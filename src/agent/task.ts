@@ -19,7 +19,12 @@ export const TaskSchema = z.object({
   kind: z.enum(["chat", "unattended", "run", "planner"]),
   title: z.string(),
   brief: z.string(),
-  scope: z.object({ credentials: z.array(z.string()), repos: z.array(z.string()), project: z.string().optional() }),
+  scope: z.object({
+    credentials: z.array(z.string()),
+    repos: z.array(z.string()),
+    project: z.string().optional(),
+    dofs: z.array(z.string()).optional(),
+  }),
   origins: z.union([z.literal("*"), z.array(z.string())]),
   budget: z.object({ tokens: z.number(), hours: z.number() }),
   hours_used: z.number(),

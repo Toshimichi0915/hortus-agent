@@ -538,7 +538,12 @@ define("task.budget", {
     hours: z.number().nonnegative().optional(),
   }),
   run({ id, ...b }) {
+    const t = get(id);
+    // the raise means go on, and nothing else would start it: the page just said "ok". Not a schedule's parent over
+    // budget: its timers fire again by themselves
+    const spent = t.status === "waiting" && /^budget_exceeded: (budget exceeded|the VM)/.test(t.error ?? "");
     budget(id, b);
+    if (spent) inboxWrite(id, { from: "console", trusted: true, text: "The owner raised the budget: go on." });
     return { ok: true };
   },
 });

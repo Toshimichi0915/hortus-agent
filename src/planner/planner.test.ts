@@ -33,6 +33,15 @@ test("renderBatch: a request no open task counts (a merge outliving its task) is
   assert.match(renderBatch(c, [], []), /1 approval waiting for the owner in all/);
 });
 
+test("a reply in a chat's thread says the chat is open, as no card does", () => {
+  const db = openDb(`${tempDir("hortus-batch-")}/db.sqlite`);
+  const c = { config: Config.parse({}), db, log: logger } as unknown as Ctx;
+  db.prepare("INSERT INTO tasks(id, kind, title, brief, status) VALUES ('C', 'chat', 't', 'b', 'waiting')").run();
+  db.prepare("INSERT INTO task_refs(ref, task_id) VALUES ('s:c:1', 'C')").run();
+  const e = { id: 1, dof: "s", key: "k", ts: "t", author: "U", trusted: 1, summary: "x", refs: '["s:c:1"]', task_id: null };
+  assert.match(renderBatch(c, [e], []), /matches task C \(open chat: task_attach it there\)/);
+});
+
 test("a follow-up's tag names a closed task's project; the prompt names the DOF root its hits are under", () => {
   const db = openDb(`${tempDir("hortus-batch-")}/db.sqlite`);
   const c = { config: Config.parse({}), db, log: logger } as unknown as Ctx;
@@ -58,4 +67,8 @@ test("a follow-up's tag names a closed task's project; the prompt names the DOF 
   assert.match(system.join(), /hits are under: \/d\/dof/);
   // reviews and CI reach a PR's task only while it is open
   assert.match(system.join(), /not complete while that stays open/);
+  // "no more than the owner asked" read as "do not merge" left 6 of 7 project tasks' work off main, one lost with its clone
+  assert.match(system.join(), /a brief never says not to commit, push or merge unless the owner said so/);
+  // 3 of 3 late answers on a merged PR were ignored: "no actionable work named"
+  assert.match(system.join(), /a late answer to its question included/);
 });

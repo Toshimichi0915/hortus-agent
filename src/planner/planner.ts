@@ -16,22 +16,28 @@ import type { Ctx, Module } from "../ctx.ts";
 import { type DatabaseSync, now, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
-import { runPlanner, tasks } from "../runtime/index.ts";
+import { isStopping, runPlanner, tasks } from "../runtime/index.ts";
 import { missingImage } from "../runtime/vm.ts";
 import type { OutboxMsg, TaskJson } from "../types.ts";
 import { read as readVault } from "../vault/vault.ts";
 
 export const DEBOUNCE_MS = 2000;
-/** What a guard skipped has no wake of its own: the day's cap over at midnight, a provider's credential added */
-const RETRY_MS = 10 * 60_000;
 const CAP_LOG_MS = 3600_000;
+/** what no event wakes: yesterday's events past the cap, a credential or image that arrived */
+const RECHECK_MS = () => Number(process.env.HORTUS_PLANNER_RECHECK_MS ?? 600_000);
+/** a batch that died is run again, after this times the failures in a row, RETRIES times */
+const RETRY_MS = () => Number(process.env.HORTUS_PLANNER_RETRY_MS ?? 30_000);
+const RETRIES = 2;
+const BATCH_FAILED = "a Planner batch failed: its events may be unrouted";
 
 let ctx: Ctx | undefined;
 let timer: NodeJS.Timeout | undefined;
-let retry: NodeJS.Timeout | undefined;
 let running = false;
 let again = false;
 let capLogged = 0;
+let capTold: string | undefined;
+let died = 0;
+let recheck: NodeJS.Timeout | undefined;
 let lastBatch: string | undefined;
 /** a batch left tainted tasks' results for one of their own (`batch`) */
 let owed = false;
@@ -134,34 +140,45 @@ interface ResultRow {
 
 const oneLine = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);
 
+interface PrEnd {
+  id: number;
+  /** set once attached: the Worker has heard of it */
+  task_id: string | null;
+  summary: string;
+  trusted: number;
+}
+
 /** The batch's one user message (15-planner.md › Input). The fixed system prompt is the planner plugin's. */
 /** Each PR/MR of a task (a `!<n>` in its refs) and its end, if its last turn is one (a reopening undoes it). A ref the
  * task only commented on counts too, and its PR may stay open: then the task reads as not ended, the safe side.
  * ponytail: a scan of `events` per PR of an open task, each batch; an index on `refs` if open PRs ever number hundreds. */
-export function prTurns(db: DatabaseSync, id: string): { ref: string; end?: { summary: string; trusted: number } }[] {
-  const turns = db.prepare("SELECT summary, trusted FROM events WHERE refs = json_array(?) ORDER BY id DESC");
+export function prTurns(db: DatabaseSync, id: string): { ref: string; end?: PrEnd }[] {
+  const turns = db.prepare("SELECT id, task_id, summary, trusted FROM events WHERE refs = json_array(?) ORDER BY id DESC");
   const refs = db.prepare("SELECT ref FROM task_refs WHERE task_id = ? AND ref LIKE '%:!%'").all(id) as {
     ref: string;
   }[];
   return refs.map(({ ref }) => {
-    const rows = turns.all(ref) as { summary: string | null; trusted: number }[];
-    const end = rows.find((r): r is { summary: string; trusted: number } => PR_TURN.test(r.summary ?? ""));
+    const rows = turns.all(ref) as (Omit<PrEnd, "summary"> & { summary: string | null })[];
+    const end = rows.find((r): r is PrEnd => PR_TURN.test(r.summary ?? ""));
     return end && !/^\S+reopen/.test(end.summary) ? { ref, end } : { ref };
   });
 }
 
 export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): string {
   const refStmt = c.db.prepare(
-    "SELECT r.task_id, t.status, t.project FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
+    "SELECT r.task_id, t.status, t.project, t.kind FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
   );
   const ev = events.map((e) => {
     const m = new Set<string>();
     for (const ref of refsOf(e))
-      for (const r of refStmt.all(ref) as { task_id: string; status: string; project: string | null }[])
+      for (const r of refStmt.all(ref) as { task_id: string; status: string; project: string | null; kind: string }[])
         m.add(
           tasks.isClosed(r.status)
             ? `${r.task_id} (${r.status}${r.project ? `, project ${r.project}` : ""})`
-            : r.task_id,
+            : // open, but no card below says so: the Planner took it for closed and made a stranger of the reply, 2 of 2
+              r.kind === "chat"
+              ? `${r.task_id} (open chat: task_attach it there)`
+              : r.task_id,
         );
     return renderEvent(c.config, e, [...m]);
   });
@@ -229,6 +246,11 @@ async function batch(): Promise<boolean> {
     if (Date.now() - capLogged > CAP_LOG_MS) {
       log().info("planner.daily_tokens reached: batches skipped until tomorrow", { used, cap: cfg.daily_tokens });
       capLogged = Date.now();
+    }
+    // an order that gets no answer and no word why reads as a dead daemon
+    if (capTold !== today(c.config) && pending() > 0) {
+      capTold = today(c.config);
+      tasks.hooks.failed("the Planner reached daily_tokens: what arrives waits until tomorrow");
     }
     return false;
   }
@@ -311,22 +333,47 @@ async function batch(): Promise<boolean> {
   bus.emit("tasks", { id, status: "running" });
   lastBatch = t;
   log().info("batch", { id, events: events.length, results: results.length });
+  let ok = false;
   try {
     const row = tasks.get(id);
     const asPlanner = { ...c.config, worker: { ...c.config.worker, provider: cfg.provider, model: cfg.model } };
     const task: TaskJson = { ...tasks.taskJson(asPlanner, row), effort: cfg.effort, features: [] };
-    const used = await runPlanner(row, task, runtime);
+    const run = await runPlanner(row, task, runtime);
+    ok = run.ok;
     c.db
       .prepare(
         "INSERT INTO planner_usage(day, tokens) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens",
       )
-      .run(today(c.config), used);
+      .run(today(c.config), run.tokens);
   } finally {
     c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     rmSync(paths.task(id), { recursive: true, force: true });
     bus.emit("tasks", { id });
+    if (ok) died = 0;
+    else if (isStopping()) release(c, n);
+    else if (++died > RETRIES) {
+      died = 0;
+      tasks.hooks.failed(BATCH_FAILED);
+    } else {
+      release(c, n);
+      setTimeout(wake, RETRY_MS() * died).unref();
+    }
   }
-  return true;
+  return ok;
+}
+
+/**
+ * What a dead batch left without a verdict goes back in the queue: a provider's blip or a restart during its half a
+ * minute took an order with it, and nothing reads an event again. RETRIES bounds it: a batch that dies on what it holds
+ * must not run for ever (v7 › Review round 22).
+ */
+function release(c: Ctx, n: number): void {
+  c.db.prepare("UPDATE events SET consumed = 0 WHERE consumed = ? AND task_id IS NULL AND ignored IS NULL").run(n);
+  c.db
+    .prepare(
+      "UPDATE outbox SET consumed = 0 WHERE consumed = ? AND task_id IN (SELECT id FROM tasks WHERE status NOT IN ('done', 'failed'))",
+    )
+    .run(n);
 }
 
 export interface PlannerStatus {
@@ -361,9 +408,11 @@ export const plannerModule: Module = {
   name: "planner",
   async start(c) {
     ctx = c;
-    // a batch killed with hortusd is not re-run: its events stayed consumed; the dispatcher never starts this kind
-    for (const { id } of c.db.prepare("SELECT id FROM tasks WHERE kind = 'planner'").all() as { id: string }[])
+    // a batch killed with hortusd: what it left goes back in the queue; the dispatcher never starts this kind
+    for (const { id } of c.db.prepare("SELECT id FROM tasks WHERE kind = 'planner'").all() as { id: string }[]) {
       c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+      release(c, Number(id.slice("planner-".length)));
+    }
     let dirs: string[] = [];
     try {
       dirs = readdirSync(join(paths.home(), "tasks")).filter((d) => d.startsWith("planner-"));
@@ -371,8 +420,8 @@ export const plannerModule: Module = {
     for (const d of dirs) rmSync(paths.task(d), { recursive: true, force: true });
     bus.on("tasks", onTasks);
     wake();
-    retry = setInterval(() => anything() && wake(), RETRY_MS);
-    retry.unref();
+    recheck = setInterval(() => anything() && wake(), RECHECK_MS());
+    recheck.unref();
   },
   async reload() {
     if (anything()) wake(); // a Settings save may be what a skipped batch waited for
@@ -380,7 +429,7 @@ export const plannerModule: Module = {
   async stop() {
     bus.off("tasks", onTasks);
     clearTimeout(timer);
-    clearInterval(retry);
+    clearInterval(recheck);
     timer = undefined;
     ctx = undefined;
   },
