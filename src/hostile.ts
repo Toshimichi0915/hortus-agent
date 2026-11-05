@@ -3,6 +3,7 @@
  * link (a planted `out/summary.md → ~/.hortus/vault.json` or `out/console.log → ~/.bashrc`), never a FIFO or device
  * (which would block the daemon), never more than asked.
  */
+import { spawnSync } from "node:child_process";
 import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, rmSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
 import { logger } from "./log.ts";
@@ -129,6 +130,17 @@ export function lines(input: Readable, max: number, fn: (line: string) => void):
     }
   });
   input.on("end", () => n > 0 && flush());
+}
+
+/** `rmSync` that a tree a session made read-only does not stop (a test's 0555 fixture, Go's module cache under a project's
+ * own GOPATH): the session's uid is hortusd's. `chmod -R` follows no link it finds on the way. */
+export function rmTree(path: string): void {
+  try {
+    rmSync(path, { force: true, recursive: true });
+  } catch {
+    spawnSync("chmod", ["-R", "u+rwx", path], { stdio: "ignore" });
+    rmSync(path, { force: true, recursive: true });
+  }
 }
 
 /** Replaces whatever `path` is (a link, say) with a new file holding `text`. */

@@ -25,6 +25,7 @@ import { bus } from "../console/events.ts";
 import { crashPoint } from "../crash.ts";
 import type { Ctx } from "../ctx.ts";
 import { now, readable } from "../db.ts";
+import { rmTree } from "../hostile.ts";
 import { taskId } from "../ids.ts";
 import { publishLog, renderSession } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
@@ -270,8 +271,7 @@ export async function finishClose(id: string): Promise<void> {
   crashPoint("tasks.close.after-status");
   await publishLog(id, t.title, t.status).catch((e) => ctx().log("tasks").error("publishLog failed", e, { id }));
   const schedules = db.prepare("SELECT id FROM schedules WHERE task_id = ?").all(id) as { id: number }[];
-  for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))])
-    rmSync(dir, { recursive: true, force: true });
+  for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))]) rmTree(dir);
   db.prepare("DELETE FROM schedules WHERE task_id = ?").run(id);
 }
 /** ids being closed: the dispatcher does not start them */

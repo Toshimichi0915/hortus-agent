@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --no-warnings=ExperimentalWarning
 /**
  * hortus-agent --task <dir>: the Worker (05-agent.md). @hortus/core reads homedir() once at import, so HOME points at
- * <dir>/ctl/home for that import only (v7 Process); tools and their children see the owner's real HOME.
+ * <dir>/ctl/home for that import only (v7 Process); tools and their children see the session's HOME.
  */
 import { join, resolve } from "node:path";
 
