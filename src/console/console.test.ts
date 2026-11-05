@@ -264,6 +264,13 @@ test("Schedules: a row shows its last run's summary (v6 › Console); a merge cu
   assert.equal((await get(`/approvals/${a}/diff`)).status, 404);
 });
 
+test("a link from another site (owner.notify's, in a messenger's web app) gets a link on, and nothing of the console", async () => {
+  const r = await get("/approvals?x=1", { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" });
+  assert.equal(r.status, 403);
+  assert.match(r.body, /<a href="\/approvals\?x=1">/);
+  assert.doesNotMatch(r.body, /<nav|pending/);
+});
+
 test("every route renders on an empty DB, missing RPCs become an error line", async () => {
   for (const path of ROUTES) {
     const r = await get(path);

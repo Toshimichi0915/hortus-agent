@@ -113,7 +113,7 @@ test("the DOF share is a view of scope.dofs: only those worktrees are visible to
     paths: { dof, work: root },
   };
   const share = shares(t).find((s) => s.tag === "dof");
-  assert.deepEqual(share?.only, ["slack"], "an absent DOF and a path-like name are left out");
+  assert.deepEqual(share?.only, ["slack", "slack.git"], "an absent DOF and a path-like name are left out");
   if (!share) return;
   // the real wrapper (unshare + bind mounts), with a fake virtiofsd that lists what its --shared-dir holds
   const bin = join(root, "bin");
@@ -124,7 +124,7 @@ test("the DOF share is a view of scope.dofs: only those worktrees are visible to
   );
   chmodSync(join(bin, "virtiofsd"), 0o755);
   const view = join(root, "view");
-  for (const d of ["", "slack"]) mkdirSync(join(view, d), { recursive: true });
+  for (const d of ["", "slack", "slack.git"]) mkdirSync(join(view, d), { recursive: true });
   const v = virtiofsd(share, join(root, "s.sock"), view);
   assert.equal(v.cmd, "unshare");
   assert.ok(v.args.includes("--readonly") && v.args.at(v.args.indexOf("--shared-dir") + 1) === view);
@@ -319,6 +319,7 @@ if (!enabled) {
     });
     mkdirSync(join(home, "dof", "slack"), { recursive: true });
     mkdirSync(join(home, "dof", "github")); // out of scope: not in the guest's /dof
+    execFileSync("git", ["init", "-q", "--bare", join(home, "dof", "slack.git")]);
     writeFileSync(join(home, "dof", "slack", "hello.md"), "hi from the DOF\n");
     mkdirSync(join(home, "tasks"));
     symlinkSync(dir, join(home, "tasks", "t1"));
@@ -332,6 +333,7 @@ if (!enabled) {
         { calls: [bash("touch /task/ctl/x")] },
         { calls: [bash("echo kept > /task/out/work/persist.txt && echo gone > ~/gone && cat /dof/slack/hello.md")] },
         { calls: [bash("touch /dof/x; ls /dof; ip -4 -o addr show eth0; systemd-analyze")] },
+        { calls: [bash("echo mirror-repo: $(git --git-dir /dof/slack.git rev-parse --is-bare-repository)")] },
         { calls: [{ name: "done", input: { summary: "booted" } }] },
       ]),
     );
@@ -362,6 +364,7 @@ if (!enabled) {
     assert.match(sessions, /touch: cannot touch '\/task\/ctl\/x': Read-only file system/);
     assert.match(sessions, /touch: cannot touch '\/dof\/x': Read-only file system/);
     assert.match(sessions, /hi from the DOF/);
+    assert.match(sessions, /mirror-repo: true/);
     assert.doesNotMatch(sessions, /github/, "a DOF outside scope.dofs is not in the guest's /dof");
     assert.ok(!existsSync(join(dir, "ctl", "x")));
     assert.equal(readFileSync(join(dir, "out", "work", "persist.txt"), "utf8"), "kept\n");
