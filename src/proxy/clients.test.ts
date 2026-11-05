@@ -12,9 +12,10 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
+import { createGzip } from "node:zlib";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
-import { openDb } from "../db.ts";
+import { openDb, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { tempDir } from "../test/until.ts";
@@ -67,9 +68,27 @@ const fake = http.createServer((req, res) => {
       res.writeHead(200, { "content-type": u.endsWith(".whl") ? "application/x-wheel" : "application/octet-stream" });
       return void res.write(Buffer.alloc(64 * 1024, "a"));
     }
-    if (u === "/cookie") {
-      res.writeHead(200, { "content-type": "text/plain", "set-cookie": "sid=real-cookie-value; Path=/" });
-      return res.end("ok");
+    if (u === "/cookie" || u === "/cookie?rotate") {
+      const v = u === "/cookie" ? "real-cookie-value" : "rotated-value";
+      res.writeHead(200, { "content-type": "text/plain", "set-cookie": `sid=${v}; Path=/` });
+      return res.end(v);
+    }
+    // a login page: gzipped, the cookie echoed in the body and cut in two by a flush
+    if (u === "/login") {
+      res.writeHead(200, {
+        "content-type": "text/html",
+        "content-encoding": "gzip",
+        "set-cookie": "sid=login-cookie-value; Path=/",
+      });
+      const z = createGzip();
+      z.pipe(res);
+      z.write("<p>login-coo");
+      return void z.flush(() => setTimeout(() => z.end("kie-value</p>"), 50));
+    }
+    if (u === "/cut") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("the first half");
+      return void setTimeout(() => res.destroy(), 50);
     }
     json({ ok: true, result: { message_id: 1, chat: { id: 5 } } });
   });
@@ -182,9 +201,42 @@ test("a multipart hash: the same upload whatever the boundary, and not another u
     hashTemplate(t("aaa", "--aaa\r\n\r\n--bbb--aaa--\r\n")),
     hashTemplate(t("bbb", "--bbb\r\n\r\n--aaa--bbb--\r\n")),
   );
+  // a delimiter is a part: the same bytes around it, with and without one, are two forms
+  assert.notEqual(
+    hashTemplate(t("aaa", "--aaa\r\n\r\nx\r\n--aaa\r\ny\r\n--aaa--\r\n")),
+    hashTemplate(t("aaa", "--aaa\r\n\r\nx\r\ny\r\n--aaa--\r\n")),
+  );
   // a boundary is framing on its own line, never text: approving "pay XX" with boundary=XX approves no "pay evil"
   const pay = (b: string, to: string) => `--${b}\r\n\r\npay ${to}\r\n--${b}--\r\n`;
   assert.notEqual(hashTemplate(t("XX", pay("XX", "XX"))), hashTemplate(t("evil", pay("evil", "evil"))));
+  // a line that only starts like a delimiter is text to every parser: `--to=alice 100` under boundary=to=alice
+  const line = (b: string, to: string) => `--${b}\r\n\r\nsend\r\n--to=${to} 100\r\n--${b}--\r\n`;
+  const send = (to: string) => t(`to=${to}`, line(`to=${to}`, to));
+  assert.notEqual(hashTemplate(send("alice")), hashTemplate(send("mallory")));
+  const close = (b: string, to: string) => `--${b}\r\n\r\nsend\r\n--to=${to}--more\r\n--${b}--\r\n`;
+  assert.notEqual(hashTemplate(t("to=a", close("to=a", "a"))), hashTemplate(t("to=m", close("to=m", "m"))));
+  // a decoy names one boundary here and another to the upstream's parser: nothing is cut
+  const decoy = (b: string, to: string) => ({
+    ...t("real", `--real\r\n\r\nsend\r\n--${to}\r\n--real--\r\n`),
+    headers: { "content-type": `multipart/form-data; ${b}; boundary=real` },
+  });
+  for (const d of [(x: string) => `x="boundary=${x}"`, (x: string) => `xboundary=${x}`, (x: string) => `boundary=${x}`])
+    assert.notEqual(hashTemplate(decoy(d("alice"), "alice")), hashTemplate(decoy(d("mallory"), "mallory")));
+  // padding, a preamble and an epilogue hash as they stand; so does each part's filename
+  const pad = (b: string, tail: string) => `pre\r\n--${b} \r\n\r\n1\r\n--${b}--${tail}`;
+  assert.equal(hashTemplate(t("aaa", pad("aaa", "\r\nend"))), hashTemplate(t("bbb", pad("bbb", "\r\nend"))));
+  assert.notEqual(hashTemplate(t("aaa", pad("aaa", "\r\nend"))), hashTemplate(t("bbb", pad("bbb", "\r\nother"))));
+  assert.notEqual(hashTemplate(t("aaa", `x${pad("aaa", "")}`)), hashTemplate(t("bbb", `y${pad("bbb", "")}`)));
+  const file = (b: string, n: string) =>
+    `--${b}\r\nContent-Disposition: form-data; filename="${n}"\r\n\r\n1\r\n--${b}--\r\n`;
+  assert.notEqual(hashTemplate(t("aaa", file("aaa", "a.txt"))), hashTemplate(t("bbb", file("bbb", "b.txt"))));
+  // quoted, or among other parameters, the upload is still one upload
+  const typed = (ct: string, b: string) => ({ ...t(b, form(b, "1")), headers: { "content-type": ct } });
+  for (const ct of [
+    (b: string) => `multipart/form-data; boundary="${b}"`,
+    (b: string) => `multipart/related; type="a/b"; boundary=${b}; charset=utf-8`,
+  ])
+    assert.equal(hashTemplate(typed(ct("aaa"), "aaa")), hashTemplate(typed(ct("bbb"), "bbb")));
 });
 
 test("Discord: a message with an attachment, multipart with payload_json; the token only in the header", async () => {
@@ -294,4 +346,28 @@ test("a text body keeps its bytes: curl --data-binary of a file with a BOM", asy
   const r = await curl("files.slack.com", "/upload/v1/x", "--data-binary", `@${bom}`, "-H", "content-type: text/csv");
   assert.equal(r.status, 200, r.body);
   assert.deepEqual(seen.at(-1)?.body, readFileSync(bom));
+});
+
+test("no transform, streamed: an upstream that dies mid-body fails the client's read, never a clean short file", async () => {
+  await assert.rejects(curl("cdn.test", "/cut"), /curl: \((18|56|92)\)/);
+});
+
+// last: it taints the task
+test("a cookie the site sets again is scrubbed too: same name, a new value, still the newest row", async () => {
+  await curl("cdn.test", "/cookie");
+  const r = await curl("cdn.test", "/cookie?rotate", "-i");
+  assert.match(r.body, /set-cookie: sid=hortus-secret-c-\d+/i);
+  assert.doesNotMatch(r.body, /rotated-value/);
+  assert.match(r.body, /hortus-secret-c-\d+$/);
+});
+
+test("no transform, streamed: gzip, a captured cookie echoed across chunks, and a page taints", async () => {
+  const r = await curl("cdn.test", "/login", "-i");
+  assert.equal(r.status, 200, r.body);
+  assert.doesNotMatch(r.body, /login-coo|kie-value/);
+  const placeholder = /set-cookie: sid=(hortus-secret-c-\d+)/i.exec(r.body)?.[1];
+  assert.ok(placeholder, r.body);
+  assert.ok(r.body.endsWith(`<p>${placeholder}</p>`), r.body);
+  assert.doesNotMatch(r.body, /content-encoding/i);
+  assert.deepEqual(taintOf(ctx.db, "T", ctx.config), ["read a web page: cdn.test"]);
 });

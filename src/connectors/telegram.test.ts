@@ -267,6 +267,6 @@ test("the shipped transform passes its tests", async () => {
   const transforms = await import("../vault/transforms.ts");
   await transforms.load();
   const r = transforms.runTests("telegram");
-  assert.equal(r.length, 4);
+  assert.equal(r.length, 5);
   for (const x of r) assert.ok(x.ok, `${x.file}: ${x.diff}`);
 });

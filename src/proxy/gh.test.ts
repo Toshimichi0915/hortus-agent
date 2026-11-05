@@ -336,6 +336,24 @@ describe("gh through the proxy", { skip: !existsSync(GH) }, () => {
     writeFileSync(file, '{"query":"{viewer{login}}"}');
     const q = await asks(["api", "-X", "POST", "graphql?query=mutation%7Bx%7D", "--input", file]);
     gate.decide(q.id, "reject", "owner");
+    // only a POST to GraphQL is vouched for: a `query` field in a REST body or under another verb says nothing
+    for (const [method, path] of [
+      ["POST", "repos/o/r/merges"],
+      ["PUT", "graphql"],
+    ] as const) {
+      const p = await asks(["api", "-X", method, path, "--input", file]);
+      gate.decide(p.id, "reject", "owner");
+    }
+    // Enterprise's path on the web host is the same rule: a write asks, a read reaches the judge
+    const enterprise = (query: string) => [
+      ...["-sSf", "--cacert", caCert(), "-X", "POST", "https://github.com/api/graphql"],
+      ...["-H", "authorization: Bearer hortus-secret-github", "-H", "content-type: application/json"],
+      ...["-d", JSON.stringify({ query })],
+    ];
+    const w = await asks(enterprise("mutation{x}"), "curl");
+    gate.decide(w.id, "reject", "owner");
+    await as("127.0.0.2", "curl", enterprise("{viewer{login}}"));
+    assert.equal(JSON.parse(allowed().at(-1)?.summary ?? "{}").path, "/api/graphql");
 
     // padding: a body the judge cannot read whole goes to the owner, told so
     const n = seen.length;

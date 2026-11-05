@@ -12,7 +12,7 @@ export function prompt(task: TaskJson): string {
   const where = [
     `- DOFs (mirrored sources, read-only Markdown): ${p.dof}; this task can read ${list(task.scope.dofs ?? [])}`,
     p.repos && `- forge repo mirrors (read-only): ${p.repos}`,
-    `- your scratch directory (cwd unless told otherwise): ${p.work}; temporary files go here too, as /tmp may be read-only`,
+    `- your scratch directory (cwd unless told otherwise): ${p.work}; temporary files go here too. A write refused under /tmp or your home (\`Permission denied\`) is the sandbox, not a fault: do not investigate it, put the file here, even if the brief named that path, and say so in your summary`,
     p.clone && `- the project clone: ${p.clone}${task.clone_url ? ` (origin ${task.clone_url})` : ""}`,
     p.schedule && `- this run's persistent directory (kept between runs of its schedule): ${p.schedule}`,
   ].filter(Boolean);

@@ -115,6 +115,13 @@ test("a thread message files under the parent channel; refs name the thread", as
   assert.equal(a.changes[0]?.frontmatter?.reply_to, root.id);
 });
 
+test("a forum post's first message, whose id is its thread's, also names the thread to answer in", async () => {
+  const t = fake.thread("300", { name: "forum" });
+  await mirrored();
+  fake.post(t.id, { user: "201", text: "first", id: t.id });
+  assert.deepEqual((await mirrored()).event.refs, [`discord:300:${t.id}`, `discord:${t.id}:${t.id}`]);
+});
+
 test("a brief shows every ref: a thread's `<thread>:<thread>` says where to answer", () => {
   const e = { id: 1, dof: "discord", key: "k", ts: "t", summary: "s", trusted: 1, author: "a", refs: '["discord:3:7","discord:7:7"]' };
   assert.match(renderEvent(Config.parse({}), e as unknown as EventRow), /^- \[e1\] discord:3:7 discord:7:7 \(/);

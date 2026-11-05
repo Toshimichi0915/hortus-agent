@@ -530,7 +530,7 @@ test("host config: {api}/{host} expand from the DOF config; the connector talks 
 
 test("the shipped transform passes its tests and renders pushes, PRs and DELETEs", () => {
   const r = transforms.runTests("github");
-  assert.equal(r.length, 7);
+  assert.equal(r.length, 8);
   for (const x of r) assert.ok(x.ok, `${x.file}: ${x.diff}`);
   const body = pkt(`${"0".repeat(40)} 3f2a1c9${"0".repeat(33)} refs/heads/hortus/t1\0 report-status`);
   const t = { headers: {}, stream: true };
@@ -547,6 +547,9 @@ test("the shipped transform passes its tests and renders pushes, PRs and DELETEs
     body: null,
   };
   assert.equal(transforms.render("github", del), "DELETE /repos/o/r/issues/comments/1");
+  const query = "mutation Safe{a} mutation Evil{b}";
+  const gql = { ...pr, url: "https://api.github.com/graphql", body: JSON.stringify({ query, operationName: "Evil" }) };
+  assert.equal(transforms.render("github", gql), `GraphQL: runs Evil: ${query} {}`);
 });
 
 test("sandboxEnv: one insteadOf entry per github DOF", () => {

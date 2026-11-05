@@ -62,6 +62,8 @@ export interface PostOpts {
   forward?: string;
   /** state only, no dispatch (history fixtures) */
   quiet?: boolean;
+  /** a forum post's first message has its thread's id */
+  id?: string;
 }
 interface Frame {
   op: number;
@@ -211,7 +213,7 @@ export class FakeDiscord {
     const author = this.users.get(o.user ?? "") ?? { id: o.user ?? "0", username: o.user ?? "?" };
     const guild = c.guild_id ?? (c.parent_id ? this.channels.get(c.parent_id)?.guild_id : undefined);
     const m: DMsg = {
-      id: this.id(),
+      id: o.id ?? this.id(),
       channel_id: channel,
       author,
       content: o.text ?? "",

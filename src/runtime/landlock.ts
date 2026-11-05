@@ -72,6 +72,7 @@ export function denySet(config: Pick<Config, "policy">): string[] {
       (p) => join(h, p),
     ),
     ...[".cargo/credentials", ".cargo/credentials.toml", ".gradle/gradle.properties"].map((p) => join(h, p)),
+    ...[".m2/settings.xml", ".m2/settings-security.xml"].map((p) => join(h, p)),
     ...[".local/share/keyrings", ".mozilla", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware"].map(
       (p) => join(h, p),
     ),
@@ -122,8 +123,6 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
     // there, `/tmp/x → ~/.bashrc`, would hand the next session rw on the target); its target's own path is walked from
     // `/` anyway. A read-only one only when the whole target is clear of the deny set.
     if (mode !== "ro") continue;
-    // /dev/stdout and the like are the shim's own fds there, a pipe no rule can name (add_rule fails, nothing runs)
-    if (dir === "/dev") continue;
     const real = resolve(p);
     if (existsSync(real) && !deny.some((d) => under(real, d) || under(d, real)) && !p.includes("\n"))
       out.push(`${mode} ${p}`);
@@ -134,15 +133,18 @@ const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "shm"].map((
 
 /** The directive text for one task under `kind`. */
 export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "policy">): string {
-  // ponytail: /dev/pts holds the owner's terminals, which a Worker could read keystrokes from and write to, and Landlock
-  // cannot tell its own pty from theirs: no pty on a host Worker (script, expect); a VM has its own
-  const deny = [...denySet(config), ...(kind === "unattended" ? ["/dev/pts"] : [])];
+  // ponytail: /dev/pts is the owner's terminals and /dev/input their keyboard (the `input` group, or a seat's ACL), keys
+  // read with no ioctl, and Landlock cannot tell a session's pty from theirs: no pty on a host Worker, chat or not (script,
+  // expect); hortus chat is pipes, and a VM has its own
+  const deny = [...denySet(config), "/dev/pts", "/dev/input"];
   const ro = readOnlySet().filter((p) => !deny.some((d) => under(p, d)));
   const denyRw = [...deny, ...ro]; // every write grant skips them; they are granted read-only below
   const out: string[] = [];
   if (task.cgroup) out.push(`cgroup ${task.cgroup}`);
   const base: Mode = kind === "chat" ? "rw" : "ro";
-  grant("/", base, base === "rw" ? denyRw : deny, out);
+  // unattended: of /dev, only RW_DEV: `ro` opened /dev/fb0 (the screen) and the owner's console /dev/tty<n>. /dev/stdout
+  // and /dev/fd are links, which need no rule. ponytail: a chat keeps the rest, the owner's boards and /dev/kvm with them
+  grant("/", base, base === "rw" ? denyRw : [...deny, "/dev"], out);
   if (kind === "unattended") {
     // ponytail: no /tmp (v7 › Host): what a session writes there any other can read and nothing removes, so TMPDIR is
     // out/tmp and a tool that hardcodes /tmp gets EACCES; `policy.cache: ["/tmp"]` gives it back, with the leak

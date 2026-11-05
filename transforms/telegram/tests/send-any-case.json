@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.telegram.org/bothortus-secret-telegram/SendDocument",
+    "headers": {
+      "content-type": "multipart/form-data; boundary=b"
+    },
+    "body": "--b\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n5\r\n--b--\r\n",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"ok\":true,\"result\":{\"message_id\":7,\"chat\":{\"id\":5},\"document\":{\"file_id\":\"F\"}}}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"ok\":true,\"result\":{\"message_id\":7,\"chat\":{\"id\":5},\"document\":{\"file_id\":\"F\"}}}"
+    },
+    "refs": ["telegram:5:7"]
+  }
+}

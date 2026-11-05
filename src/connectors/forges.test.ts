@@ -912,6 +912,12 @@ for (const h of H) {
         headers: { ...h.rest, "content-type": "multipart/form-data; boundary=b" },
         body: '--b\r\nContent-Disposition: form-data; name="_method"\r\n\r\nPUT\r\n--b--\r\n',
       },
+      {
+        // a decoy boundary hid the second part
+        path: inScope,
+        headers: { ...h.rest, "content-type": 'multipart/form-data; x="boundary=z"; boundary=b' },
+        body: '--b\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n--b\r\nContent-Disposition: form-data; name="_method"\r\n\r\nPUT\r\n--b--\r\n',
+      },
       { path: `${inScope}?_method=PUT`, headers: h.rest },
       { path: `${inScope}?a=1&%5Fmethod=PUT`, headers: h.rest },
     ]) {

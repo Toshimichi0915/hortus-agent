@@ -27,6 +27,7 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   assert.match(prompt(forge), /GIT_TRACE_CURL=1 git push … 2>&1 \| grep hortus:/); // git hides a refusal's body
   const signed = { ...forge, scope: { ...forge.scope, credentials: ["github"] } };
   assert.match(prompt(signed), /`GH_DEBUG=api` shows/); // gh hides one too, and every write of its waits
+  assert.match(prompt(forge), /\/tmp(?!\/)/); // read-only for an unattended session: the prompt says where temp files go
   assert.equal(b.system, a.system, "byte-identical across turns");
   assert.doesNotMatch(a.system, /coding agent/);
   assert.deepEqual(a.messages, [{ role: "user", content: "Do the test thing." }]);

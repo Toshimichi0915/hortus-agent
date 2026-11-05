@@ -417,13 +417,13 @@ function occupied(t: Template): string[] {
   return out;
 }
 
+const literal = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** `*` one segment, `**` anything, `{project}` one or more segments (captured). */
 function glob(p: string): RegExp {
   const src = p
     .split(/(\*\*|\*|\{project\})/)
-    .map((s) =>
-      s === "**" ? ".*" : s === "*" ? "[^/]*" : s === "{project}" ? "(.+?)" : s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-    )
+    .map((s) => (s === "**" ? ".*" : s === "*" ? "[^/]*" : s === "{project}" ? "(.+?)" : literal(s)))
     .join("");
   return new RegExp(`^${src}$`);
 }
@@ -459,8 +459,12 @@ const overrideHeader = (t: Template): boolean =>
 const hasKey = (s: string): boolean =>
   s.split(/[&;]/).some((p) => decoded(p.split("=", 1)[0] ?? "").trim() === "_method");
 
+const BOUNDARY = /;\s*boundary=("?)([^";,\s]+)\1/i;
+
+/** A multipart type's boundary, when only one can be meant: a decoy (`x="boundary=a"; boundary=b`, a second `boundary=`)
+ * says one thing here and another to the upstream's parser. */
 const boundaryOf = (ct: string): string | undefined =>
-  /^multipart\//i.test(ct) ? ct.match(/boundary="?([^";]+)/i)?.[1] : undefined;
+  /^multipart\//i.test(ct) && ct.split(/boundary=/i).length === 2 ? ct.match(BOUNDARY)?.[2] : undefined;
 
 /** A real `_method` field: in the query, a urlencoded body (Rack takes a POST with no type as one) or a multipart part's
  * own headers. Any other body is not a form, so nothing in it is a key. */
@@ -468,11 +472,11 @@ function overrideField(t: Template, ct: string, llmCall: boolean): boolean {
   if (hasKey((t.url.match(URL_PARTS)?.[3] ?? "").slice(1))) return true;
   if (llmCall || !t.body) return false;
   if (ct === "" || /^application\/x-www-form-urlencoded/i.test(ct)) return hasKey(t.body);
+  if (!/^multipart\//i.test(ct)) return false;
+  const field = /^content-disposition:.*\bname="?_method\b/im;
   const boundary = boundaryOf(ct);
-  if (!boundary) return false;
-  return t.body
-    .split(`--${boundary}`)
-    .some((part) => /^content-disposition:.*\bname="?_method\b/im.test(part.split(/\r?\n\r?\n/, 1)[0] ?? ""));
+  if (!boundary) return field.test(t.body);
+  return t.body.split(`--${boundary}`).some((part) => field.test(part.split(/\r?\n\r?\n/, 1)[0] ?? ""));
 }
 
 const sorted = (h: Record<string, string>) =>
@@ -489,12 +493,14 @@ export function hashTemplate(t: Template): string {
   const headers = sorted(t.headers);
   const ct = headers["content-type"] ?? "";
   const boundary = boundaryOf(ct);
+  // whole delimiter lines only (RFC 2046): cut anywhere, a body with "XX" in it under boundary=XX, or a line `--XX 100`,
+  // approved "evil" for "XX" as well. Left, a line that only starts like one is text, and hashes as it stands
+  const delimiter = boundary && new RegExp(`\\r\\n--${literal(boundary)}(?=(?:--)?[ \\t]*(?:\\r\\n|$))`);
   const canon = JSON.stringify({
     method: t.method.toUpperCase(),
     url: t.url,
-    headers: boundary ? { ...headers, "content-type": ct.replace(/boundary=\S+/i, "boundary=") } : headers,
-    // delimiter lines only: cut anywhere, approving a body with "XX" in it, boundary=XX, approved "evil" for "XX" as well
-    body: boundary ? (t.body === null ? null : `\r\n${t.body}`.split(`\r\n--${boundary}`)) : t.body,
+    headers: boundary ? { ...headers, "content-type": ct.replace(BOUNDARY, "; boundary=") } : headers,
+    body: delimiter && t.body !== null ? `\r\n${t.body}`.split(delimiter) : t.body,
   });
   return createHash("sha256").update(canon).digest("hex");
 }
@@ -1133,9 +1139,10 @@ const capturedBy = (id: number): string | null =>
 
 /**
  * Captures → `captured` rows named `c-<id>`, keyed by (origin, kind, cookie or token name, capturing task): a cookie the
- * site sets again replaces the value under the same name, so jars keep working. Replaced as delete + insert, so the row
- * id moves and the scrubber (keyed on count and max id) rebuilds. A capture for another site than the request's is
- * dropped.
+ * site sets again replaces the value under the same name, so jars keep working. Replaced as insert, then delete: the id
+ * moves up and the scrubber (keyed on count and max id) rebuilds; the other way round SQLite gives the newest row its id
+ * back, and a site that rotates its cookie handed the Worker the real value. A capture for another site than the
+ * request's is dropped.
  */
 function store(p: Prepared, list: Capture[]): void {
   const db = ctx().db;
@@ -1153,11 +1160,14 @@ function store(p: Prepared, list: Capture[]): void {
         "SELECT id, name, created FROM captured WHERE origin = ? AND kind IS ? AND json_extract(meta, '$.key') = ? AND json_extract(meta, '$.task') IS ?",
       )
       .get(c.origin, c.kind ?? null, key, task) as { id: number; name: string; created: string } | undefined;
-    if (old) db.prepare("DELETE FROM captured WHERE id = ?").run(old.id);
     const r = db
       .prepare("INSERT INTO captured(name, value, origin, kind, created, last_use, meta) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(old?.name ?? `c-new-${randomUUID()}`, c.value, c.origin, c.kind ?? null, old?.created ?? t, t, meta);
-    if (!old) db.prepare("UPDATE captured SET name = 'c-' || id WHERE id = ?").run(r.lastInsertRowid);
+      .run(`c-new-${randomUUID()}`, c.value, c.origin, c.kind ?? null, old?.created ?? t, t, meta);
+    if (old) db.prepare("DELETE FROM captured WHERE id = ?").run(old.id);
+    db.prepare("UPDATE captured SET name = coalesce(?, 'c-' || id) WHERE id = ?").run(
+      old?.name ?? null,
+      r.lastInsertRowid,
+    );
   }
 }
 

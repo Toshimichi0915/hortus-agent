@@ -5,9 +5,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -49,7 +51,7 @@ if (!inScope && hasSystemdRun) {
       {
         env: { ...process.env, HORTUS_TEST_SCOPE: "1", NODE_TEST_CONTEXT: undefined },
         encoding: "utf8",
-        timeout: 60_000,
+        timeout: 120_000,
       },
     );
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
@@ -216,14 +218,40 @@ function suite(): void {
         .filter((l) => /^r[wn] /.test(l) && l.slice(3).startsWith(`${h}/`) && !l.slice(3).startsWith(`${root}/`));
       assert.deepEqual(rw, []);
       denied(await shimSh(prof(), `touch ${h}/.cache/hortus-f4-x`));
+      // the Workers' own caches are the writable ones, under the denied HORTUS_HOME
+      mkdirSync(paths.cache(), { recursive: true });
+      ok(await shimSh(prof(), `touch ${paths.cache()}/x`));
     });
-    test("no terminal of the owner's: /dev/pts is unreachable, in an unattended session only", async () => {
-      assert.ok(!prof().includes("/dev/pts"));
-      assert.match(profile("chat", task, config), /^rw \/dev(\/pts)?$/m);
+    test("no terminal, keyboard or screen of the owner's: of /dev, only what a program needs; a chat loses pts and input", async () => {
+      const devs = prof()
+        .split("\n")
+        .filter((l) => l.includes(" /dev/"));
+      assert.deepEqual(
+        devs.sort(),
+        ["full", "null", "random", "shm", "tty", "urandom", "zero"].map((d) => `rn /dev/${d}`),
+      );
       denied(await shimSh(prof(), "ls /dev/pts"));
-      // walking /dev for that: its links are the shim's own fds, a pipe no rule can name, and still work
-      assert.ok(!prof().includes("/dev/stdout"));
-      ok(await shimSh(prof(), "echo x | cat /dev/stdin && ls /dev/fd/"));
+      denied(await shimSh(prof(), "exec 3<>/dev/ptmx"));
+      // what this machine has: the `input` group opened these under `ro`, and reading one needs no ioctl
+      for (const d of ["/dev/input/event0", "/dev/fb0", "/dev/tty2"])
+        if (existsSync(d)) denied(await shimSh(prof(), `cat ${d} > /dev/null`));
+      const chat = profile("chat", task, config);
+      assert.ok(!chat.split("\n").some((l) => /^\w+ \/dev(\/(pts|input)(\/.*)?)?$/.test(l)));
+      denied(await shimSh(chat, "ls /dev/pts"));
+      denied(await shimSh(chat, "ls /dev/input"));
+      ok(await shimSh(chat, "echo > /dev/null"));
+      // /dev/stdout and the rest are links to the shim's own fds, which no rule names and none needs
+      for (const p of [prof(), chat])
+        ok(await shimSh(p, "echo x | cat /dev/stdin && echo y | cat /dev/fd/0 && ls /dev/fd/"));
+      // with hortusd's own stdout on a file /dev/stdout resolves here, and the shim's (a pipe) is what a rule would name
+      const file = join(root, "stdout-file");
+      const fd = openSync(file, "w");
+      const landlock = new URL("./landlock.js", import.meta.url).href;
+      const js = `import(${JSON.stringify(landlock)}).then((l) => process.stdout.write(l.profile("unattended", ${JSON.stringify(task)}, { policy: {} })))`;
+      spawnSync(process.execPath, ["-e", js], { stdio: ["ignore", fd, "inherit"] });
+      closeSync(fd);
+      assert.match(readFileSync(file, "utf8"), /^rn \/dev\/null$/m);
+      assert.ok(!readFileSync(file, "utf8").includes("/dev/stdout"));
     });
     test("caches: task-local tool homes, shared caches linked, never through a planted link", () => {
       const out = join(root, "cache-out");
@@ -234,9 +262,15 @@ function suite(): void {
       assert.equal(env.npm_config_cache, join(out, "work/.cache/npm"));
       assert.equal(env.XDG_RUNTIME_DIR, join(out, "tmp"));
       assert.equal(env.XDG_CACHE_HOME, join(H, "cache/xdg"));
-      assert.equal(realpathSync(join(out, "work/.cache/cargo/registry")), realpathSync(join(H, "cache/cargo/registry")));
+      assert.equal(env.GOMODCACHE, join(H, "cache/go"));
+      assert.equal(env.MAVEN_OPTS, `-Duser.home=${join(out, "work/.cache")} -Dmaven.repo.local=${join(H, "cache/m2")}`);
+      assert.equal(
+        realpathSync(join(out, "work/.cache/cargo/registry")),
+        realpathSync(join(H, "cache/cargo/registry")),
+      );
       // the tools' plain-file tokens stay out of reach
-      for (const p of [".npmrc", ".config/gh", ".config/glab-cli"]) assert.ok(denySet(config).includes(join(homedir(), p)), p);
+      for (const p of [".npmrc", ".config/gh", ".config/glab-cli", ".m2/settings.xml"])
+        assert.ok(denySet(config).includes(join(homedir(), p)), p);
       const evil = join(root, "cache-evil");
       mkdirSync(evil);
       rmSync(out, { recursive: true });
@@ -404,6 +438,47 @@ function suite(): void {
       assert.equal(b.out, "");
       // close removes tasks/<id>, and the copy with it: nothing to find afterwards
       assert.equal(file.startsWith(paths.task("LA")), true);
+    });
+    test("what ignores TMPDIR and XDG_CACHE_HOME still writes: go's GOPATH, the JVM's temp, uv's tools", async () => {
+      const t = {
+        id: "TOOLS",
+        kind: "unattended",
+        scope: { credentials: [], repos: [] },
+        paths: { dof: join(H, "dof"), work: join(H, "tasks/TOOLS/out/work") },
+      } as unknown as TaskJson;
+      const out = paths.out("TOOLS");
+      mkdirSync(out, { recursive: true });
+      writeFileSync(
+        join(out, "Tmp.java"),
+        'class Tmp { public static void main(String[] a) throws Exception { System.out.println(java.io.File.createTempFile("abc", null)); } }',
+      );
+      const lines: string[] = [];
+      const c = await spawnSandboxed({
+        task: t,
+        kind: "unattended",
+        cmd: [
+          "bash",
+          "-ec",
+          // the first module fetch writes GOPATH/pkg/sumdb, `go install` GOPATH/bin; a JVM has /tmp compiled in
+          `if command -v go; then G=$(go env GOPATH); mkdir -p "$G/pkg/sumdb" "$G/bin"; echo "go $G"; fi
+           if command -v java; then java Tmp.java; fi
+           if command -v uv; then uv tool list; fi
+           echo finished`,
+        ],
+        cwd: out,
+        config,
+        onStdout: (l) => lines.push(l),
+      });
+      const exit = await c.wait();
+      assert.equal(exit.code, 0, readFileSync(join(out, "console.log"), "utf8"));
+      assert.equal(lines.at(-1), "finished");
+      const has = (x: string) => spawnSync("sh", ["-c", `command -v ${x}`]).status === 0;
+      if (has("go")) assert.ok(lines.includes(`go ${join(out, "work/.cache/go")}`), lines.join("\n"));
+      if (has("java"))
+        assert.ok(
+          lines.some((l) => l.startsWith(join(out, "tmp/abc"))),
+          lines.join("\n"),
+        );
     });
     test("no Landlock: spawnSandboxed throws with the shim's reason", async () => {
       const fake = join(root, "fake-shim");

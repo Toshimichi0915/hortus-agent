@@ -170,6 +170,7 @@ interface Sample {
   tasks: number;
   rss: number;
   heap: number;
+  heapTotal: number;
   external: number;
   buffers: number;
   resources: Record<string, number>;
@@ -229,6 +230,7 @@ test(`soak: ${MINUTES} min of churn (${[...ONLY].join(",")}), bounded growth`, {
       tasks,
       rss: rssMb(),
       heap: mb(s.memory.heapUsed),
+      heapTotal: mb(s.memory.heapTotal),
       external: mb(s.memory.external),
       buffers: mb(s.memory.arrayBuffers),
       resources: s.resources,
@@ -338,7 +340,10 @@ test(`soak: ${MINUTES} min of churn (${[...ONLY].join(",")}), bounded growth`, {
   // the bound (v7 › Review round 7 — soak): under 1 MB per 100 tasks after warm-up; the short run, still warming up,
   // under 10 (round 4's growth from 20 spawns in one turn was ~13)
   // and the short run does not count the JS heap: with the CPUs full no major GC finishes inside its minute (heap 34 →
-  // 84 MB, rss +19 MB/100 tasks; 6 min under the same load: heap flat, round 10); the long run does
-  const grew = LONG ? per100("rss") : per100("rss") - per100("heap");
+  // 84 MB, rss +19 MB/100 tasks; 6 min under the same load: heap flat, round 10); the long run does. What V8's peak in the
+  // window explains: rss keeps its high water, so subtracting the heap's end (a GC just before it) read a flat rss as
+  // +44 MB/100 tasks
+  const peak = Math.max(...samples.filter((s) => s.tasks >= warm.tasks).map((s) => s.heapTotal));
+  const grew = per100("rss") - (LONG ? 0 : ((peak - warm.heapTotal) / Math.max(1, n)) * 100);
   if (n >= 100) assert.ok(grew < (LONG ? 1 : 10), `rss ${grew} MB per 100 tasks`);
 });

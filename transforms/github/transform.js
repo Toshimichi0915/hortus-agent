@@ -142,7 +142,9 @@ export function render(t) {
       const b = JSON.parse(t.body);
       if (typeof b.query !== "string") return undefined;
       const q = b.query.replace(/\s+/g, " ");
-      const line = `${q.slice(Math.max(q.search(/mutation/i), 0))} ${JSON.stringify(b.variables ?? {})}`;
+      // `operationName` picks which of a document's operations runs
+      const op = typeof b.operationName === "string" ? `runs ${b.operationName}: ` : "";
+      const line = `${op}${q.slice(Math.max(q.search(/mutation/i), 0))} ${JSON.stringify(b.variables ?? {})}`;
       return `GraphQL: ${line.slice(0, 4096)}${line.length > 4096 ? "…" : ""}`;
     } catch {
       return undefined;

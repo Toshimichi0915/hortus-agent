@@ -78,6 +78,10 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     GH_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "gh"),
     GLAB_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "glab"),
     npm_config_userconfig: join(paths.out(task.id), "work", ".cache", "npmrc"),
+    // ~/.m2/settings.xml is denied too, and Maven dies on one it cannot read (a NullPointerException, no path): user.home
+    // moves it for Maven's JVM alone. `-s` in MAVEN_ARGS would beat a project's own `-s`: the first one wins
+    MAVEN_OPTS: `-Duser.home=${join(paths.out(task.id), "work", ".cache")} -Dmaven.repo.local=${join(homedir(), ".m2", "repository")}`,
+    MAVEN_USER_HOME: join(paths.out(task.id), "work", ".cache", ".m2"),
   };
   const ca = join(ctl, "ca.crt");
   if (existsSync(ca))
@@ -151,8 +155,16 @@ export function caches(out: string): Record<string, string> {
     XDG_RUNTIME_DIR: join(out, "tmp"),
     // pip, uv, go-build, yarn, gh and the rest of what `~/.cache` would hold
     XDG_CACHE_HOME: join(shared, "xdg"),
+    // ~/go is read-only: its pkg/sumdb is what every first fetch of a module writes, its bin `go install`
+    GOPATH: join(w, "go"),
     GOMODCACHE: join(shared, "go"),
-    MAVEN_OPTS: `-Dmaven.repo.local=${join(shared, "m2")}`,
+    // uv tool, uvx: ~/.local/share/uv/tools is read-only
+    XDG_DATA_HOME: join(w, "share"),
+    MAVEN_OPTS: `-Duser.home=${w} -Dmaven.repo.local=${join(shared, "m2")}`,
+    // ./mvnw unpacks Maven there, ~/.m2/wrapper otherwise
+    MAVEN_USER_HOME: join(shared, "m2"),
+    // the JVM ignores TMPDIR: /tmp is compiled in, so every createTempFile and JUnit @TempDir failed under Maven and Gradle
+    JAVA_TOOL_OPTIONS: `-Djava.io.tmpdir=${join(out, "tmp")}`,
   };
 }
 

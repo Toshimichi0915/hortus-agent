@@ -44,9 +44,13 @@ Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Unti
 host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy.
 
 A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
-tool caches in `~/.hortus/cache`. `/tmp` and everything under your home are read-only to it, and it has no pty: what you
-run yourself stays out of its reach. A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at
-the price of tasks seeing each other's files there, or a VM.
+tool caches in `~/.hortus/cache`. `/tmp` and everything under your home are read-only to it, and of `/dev` it has only
+`null`, `zero`, `full`, `random`, `urandom`, `tty` and `shm`: what you run yourself stays out of its reach, and so do your
+terminals, keyboard and screen. A chat session keeps `rw` on the rest, but no Worker, chat or not, has a pty on the host
+(`script`, `expect`). A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at the price of
+tasks seeing each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0`). `GOPATH`, `XDG_DATA_HOME`
+and the JVM's `java.io.tmpdir` point into the task's own directories, and `~/.m2/settings.xml` is denied, so a Worker's
+Maven runs without your mirrors and servers there.
 
 The console is `http://127.0.0.1:7700`. `hortus help` lists the CLI commands (`tasks`, `chat`, `approvals`, `search`,
 `schedules`, `pause`, …).
