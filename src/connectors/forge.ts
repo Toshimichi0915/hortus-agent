@@ -132,6 +132,3 @@ export function iso(s: string | null | undefined): string {
   const d = s ? new Date(s) : new Date();
   return (Number.isNaN(d.getTime()) ? new Date() : d).toISOString().replace(/\.\d+Z$/, "Z");
 }
-
-/** One summary line of a text. */
-export const oneLine = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").slice(0, 2000);

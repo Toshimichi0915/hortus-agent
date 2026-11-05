@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -445,6 +446,10 @@ function suite(): void {
       caches(out);
       assert.deepEqual(readdirSync(evil), []);
       rmSync(join(H, "cache/gradle"));
+      // `chmod -R a-w .` in the scratch directory: thrown, this left the start's cgroup and address behind, every start
+      chmodSync(join(out, "work/.cache"), 0o555);
+      caches(out);
+      chmodSync(join(out, "work/.cache"), 0o755);
     });
     test("a link planted in a writable tree never extends the next session's write access (/tmp/x → ~/.bashrc)", async () => {
       // a deny path inside the writable tree makes the builder walk it entry by entry, as HORTUS_HOME under /tmp does

@@ -73,5 +73,6 @@ With the fake Slack, a fake provider for the Planner where determinism matters, 
 ## Extensibility verification
 
 - A new verdict tool is a `define()` with role `planner` and a line in the Planner prompt.
-- `summary` is the only text of an event the Planner, a brief and a task's inbox get, so connectors keep up to 2,000 characters of it (v7 › Review round 17), and the gateway cuts its own log line and commit subject to 120.
+- `summary` is the only text of an event the Planner, a brief and a task's inbox get. Connectors give the text as written (an issue's title and body); the gateway (`summaryOf`) keeps a trusted author's lines up to 16,000 characters, anyone else's as one line up to 2,000, says so when it cuts, and cuts its own log line and commit subject to 120 (v7 › Review round 18). `renderEvent` shows an untrusted event at 500 in a batch: every model call of a batch re-reads it.
+- `task_close` refuses a task with a request waiting for the owner, on the same predicate `finishClose` expires by: a Worker's `done` does not always wait for it (v7 › Review round 18).
 - The batch format is one function (`renderBatch`); a connector's events appear through `summary`/`refs` only, so 4b and 6 add nothing here.

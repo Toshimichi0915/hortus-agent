@@ -195,6 +195,14 @@ define("task_close", {
       n: number;
     };
     if (n) throw new RpcError("invalid", `task ${task_id} has ${n} timer${n > 1 ? "s" : ""}; it is waiting for them`);
+    // a Worker's `done` with its reply still waiting (5 of 10 live runs, against the prompt): a close would drop the reply,
+    // as `finishClose` expires what this counts. Its decision wakes the task, and the next `done` closes it
+    const { w } = pctx()
+      .db.prepare(
+        "SELECT COUNT(*) AS w FROM approvals WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
+      )
+      .get(task_id) as { w: number };
+    if (w) throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
     await tasks.close(task_id, outcome);
     return { ok: true };
   },

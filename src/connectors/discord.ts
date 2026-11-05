@@ -253,9 +253,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       const ref = (d.message_reference as { message_id?: string } | undefined)?.message_id;
       if (ref && w.thread === msgId) refs.push(`${name}:${w.channel}:${ref}`);
     }
-    const text = String(d.content ?? (d.emoji as { name?: string } | undefined)?.name ?? d.name ?? "")
-      .replace(/\s+/g, " ")
-      .slice(0, 2000);
+    const text = String(d.content ?? (d.emoji as { name?: string } | undefined)?.name ?? d.name ?? "");
     const who = user?.username ?? (uid && names.get(uid)) ?? uid ?? "?";
     return {
       dof: name,

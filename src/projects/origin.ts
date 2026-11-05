@@ -4,7 +4,7 @@
  * `hortusd.internal/git/<name>`, and the owner's `project.*` RPCs. `main` moves only by `sync` and an approved merge.
  */
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { z } from "zod";
@@ -216,10 +216,14 @@ export async function prepareClone(
     await git(["clone", "-q", "--no-local", ...ref, paths.project(name), dir]);
     await git(["-C", dir, "checkout", "-q", "-b", `hortus/${task.id}`]);
     await git(["-C", dir, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);
-  } else if (existsSync(join(dir, ".git/objects/info/alternates"))) {
+  } else if (
+    existsSync(join(dir, ".git/objects/info/alternates")) &&
+    realpathSync(join(dir, ".git/objects/info")) === join(realpathSync(dir), ".git/objects/info")
+  ) {
     // the checkout may have moved (project.set): every git command in the clone died on the old path
     // ponytail: a move to where --reference would not be used (a linked worktree) leaves the clone broken; close the task
-    // (replaceFile: the Worker owns this clone, and hortusd writing through a link it planted is the owner's file gone)
+    // (the Worker owns this clone: replaceFile takes a link planted as `alternates`, the realpath one on the way to it,
+    // `.git → the owner's other repo`, which would otherwise lose that repo's own file. No session runs here to race it)
     replaceFile(join(dir, ".git/objects/info/alternates"), `${resolve(p.path)}/.git/objects\n`);
   }
   if (loopback) {

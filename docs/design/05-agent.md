@@ -126,4 +126,4 @@ Live (DeepSeek, `ctl/home` with the real key, opt-in `HORTUS_TEST_LLM=1`): "list
 - Owner plugins in `ctl/home/.hortus/plugins/` load through core's own mechanism; a test plugin adding a `hello` tool is callable by the model.
 - The planner kind swaps the plugin (15-planner.md); the loop and resume are shared.
 
-Round 17 prompt lines: `done` with a request still waiting drops it, so end the turn without `done`; on a host session a brief's `~/…` is the owner's and one refused or missing read is the whole answer (v7 › Review round 17 — a hidden read).
+Round 18 prompt line: read a thread only where its DOF is readable, never through an API. hortusd no longer leans on the `done` line: the Planner's `task_close` refuses while a request waits (15-planner.md). Round 17 prompt lines: `done` with a request still waiting drops it, so end the turn without `done`; on a host session a brief's `~/…` is the owner's and one refused or missing read is the whole answer (v7 › Review round 17 — a hidden read).

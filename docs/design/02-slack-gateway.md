@@ -14,7 +14,7 @@ export interface Event {
   payload: unknown;                                     // the service's own object, stored in events.payload
   author: { user: string; member: boolean } | null;     // null: no author, never trusted
   bot: boolean;                                         // our bot, or any bot: mirrored, never wakes the Planner
-  summary: string;                                      // one line for logs and the Planner batch ("message in C0123 by alice: …")
+  summary: string;                                      // the text as written ("message in C0123 by alice: …"); the gateway cuts it (summaryOf)
   refs: string[];                                       // task_refs keys this event belongs to: "<dof>:<channel>:<thread>"
 }
 export interface Incoming { event: Event; ack(): Promise<void> }

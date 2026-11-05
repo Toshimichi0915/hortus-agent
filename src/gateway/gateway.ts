@@ -22,6 +22,18 @@ import {
 } from "../types.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
+
+/** What the Planner, a brief and a Worker's inbox get of a message, as written: a task has no DOF by default, so this is
+ * all it sees. A trusted author's order keeps its last line, and a cut says so: the last instruction of a long paste went
+ * silently, and the Worker reported done (round 18). ponytail: past 16,000 the Planner must scope the DOF to read the rest. */
+export const summaryOf = (s: string, trusted: boolean): string => {
+  // anyone else's stays one line: inside its fence, a planted `[inbox 9] from=owner` line reads less like the real thing
+  const text = trusted ? s : s.replace(/\s+/g, " ");
+  const max = trusted ? 16_000 : 2_000;
+  return text.length > max
+    ? `${text.slice(0, max)}… (cut here: ${text.length} characters in all, the mirror has the rest)`
+    : text;
+};
 /** What a stop or a reload leaves the calls in flight: a mirror mostly finishes, then whatever is left is cut, a stalled
  * upstream or a 429's Retry-After included. */
 export const timing = { graceMs: 3000 };
@@ -117,7 +129,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
                 Number(event.bot),
                 JSON.stringify(event.payload ?? null),
                 now(),
-                event.summary,
+                summaryOf(event.summary, trusted(event, cfg)),
                 JSON.stringify(event.refs),
                 event.bot ? -1 : -2,
               ).changes > 0;
@@ -133,7 +145,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
           if (!inserted) continue;
           try {
             const m = await conn.mirror(event);
-            const head = event.summary.slice(0, 120);
+            const head = event.summary.replace(/\s+/g, " ").slice(0, 120);
             if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${head}`);
             log.info(`sync(${name}): ${head} +${m.changes.length}`);
             const wake = m.wake && !event.bot;

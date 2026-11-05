@@ -98,8 +98,6 @@ interface Delivery {
   event: string;
 }
 
-const line = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").slice(0, 2000);
-
 export async function create(deps: ConnectorDeps): Promise<Forge> {
   const { name, config: cfg } = deps;
   const host = cfg.host ?? "github.com";
@@ -150,13 +148,15 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
   function toEvent(type: string, key: string, p: Payload): Event {
     const repo = p.repository?.full_name ?? "";
     const thread = threadOf(type, p);
-    const obj: { title?: string; updated_at?: string; author_association?: string } | undefined =
+    const obj: { title?: string; body?: string | null; updated_at?: string; author_association?: string } | undefined =
       p.comment ?? p.review ?? p.pull_request ?? p.issue;
     const ci = type === "check_suite";
     const prs = ci ? (p.check_suite?.pull_requests ?? []).map((x) => ref(repo, `!${x.number}`)) : [];
     const s = p.check_suite;
     const result = s && `${s.conclusion ?? s.status} on ${s.head_sha.slice(0, 7)}`;
-    const text = line(p.comment?.body ?? p.review?.body ?? obj?.title ?? result ?? (p as { ref?: string }).ref);
+    // an issue's order is in its body: the title alone reached the brief, and the Planner filled in the rest (round 18)
+    const opened = [obj?.title, obj?.body].filter(Boolean).join("\n\n");
+    const text = p.comment?.body ?? p.review?.body ?? (opened || (result ?? (p as { ref?: string }).ref ?? ""));
     return {
       dof: name,
       key,

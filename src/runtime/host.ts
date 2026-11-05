@@ -160,7 +160,9 @@ export function caches(out: string, path = sessionPath()): Record<string, string
   const real = homedir();
   if ([join(out, "work"), w, join(w, "home"), shared].every(dir)) {
     // `git init` in the scratch directory, then `git add -A`: the task's HOME and caches are nobody's commit
-    replaceFile(join(w, ".gitignore"), "*\n");
+    try {
+      replaceFile(join(w, ".gitignore"), "*\n");
+    } catch {} // a read-only .cache only spoils its own `git add -A`; thrown, the start left its cgroup and address behind
     for (const [tool, subs] of Object.entries(links))
       if (dir(join(w, tool)) && dir(join(shared, tool)))
         for (const s of subs)

@@ -83,6 +83,9 @@ test("message: event fields, v6 frontmatter, wake, ack", async () => {
   // the Planner, the brief and the inbox see only the summary: an instruction past the old 80 characters was lost
   fake.post("C1", { user: "U_ALICE", text: `${"x".repeat(200)} and do not touch main` });
   assert.match((await mirrored()).event.summary, /do not touch main$/);
+  // pasted code keeps its lines and indent: collapsed, a Worker wrote it on one line and called that "exactly as written"
+  fake.post("C1", { user: "U_ALICE", text: "add this:\n```\nif x:\n    y()\n```" });
+  assert.match((await mirrored()).event.summary, /add this:\n```\nif x:\n {4}y\(\)\n```$/);
   assert.deepEqual(r.changes, [
     {
       op: "put",

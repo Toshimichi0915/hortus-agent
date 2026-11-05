@@ -181,6 +181,62 @@ v7 is v6 as implemented in this repository. Nothing in the v6 design changes; th
 - **Origin grants send the jar**: `browserModule` wraps `gate.deps.inboxWrite` so an approved `origin:*` decision is followed by the inbox `cookies` message (gate.ts unchanged; 3e's forced-human list should name `origin:*` and `login`).
 - Views do not survive a restart; their entries do (opening one starts a new Chromium). `captured.forget({ origin })` (Credentials › Captured logins) deletes every row of a site: placeholders in old jars then answer `403 unknown credential`.
 
+## Review round 18 — the owner's walk with a live Planner
+
+The installed unit (`hortus install`, a drop-in with `HORTUS_HOME`, ports and `Restart=no`, fixture home `/home/hortus-r18`, removed after), real `hortus0` and nftables, Planner and Workers on DeepSeek through the fixture vault's `ollama-cloud` by the real proxy, fake Slack, Telegram and GitHub behind `dev.upstreams`, `policy "*": human`, an owner script deciding approvals. Five walks, 90 scenario runs. Scripts stayed in the session's scratchpad: a compact opt-in would need all of it.
+
+| Scenario | Runs | Outcome |
+| --- | --- | --- |
+| long multi-line order, a "do not touch" in it | 2 | 2 right |
+| code pasted, "exactly as written" | 4 before, 4 after | before: Slack 2 reformatted by the model, Telegram 2 on one line, called "exactly as you wrote it"; after, a Python script: 4 of 4 byte-right |
+| Japanese | 2 | 2 right, answered in Japanese |
+| past 2,000 characters, the order in the last line | 2 before, 2 after | before: 0 of 2, reported "Done"; after 2 of 2 |
+| follow-up while running | 4 (2 Telegram) | 4 right; in one change or a second merge |
+| follow-up after the close | 2 | 2 right, a new task with the project |
+| correction | 2 | 2 right, a new task; `main` carries the correction |
+| second request in a thread | 2 | 2 right, a read-only task |
+| two requests in one DM | 2 | 2 right, two tasks |
+| owner's question, no work | 6 (2 Telegram) | 6 answered by a task, 25-40k tokens each, one approval |
+| "is anything waiting on me?" | 1 before, 2 after | before: "no approvals" with seven pending; after: 2 of 2 right ("two things are waiting for your approval") |
+| "thanks!" | 2 | 2 ignored |
+| reject a reply | 6 | never posted, the owner told nothing further (they refused it); closed or left waiting |
+| reject a merge | 2 | `main` untouched, an honest reply; the Worker set a timer for Monday from "frozen until Monday" |
+| approve late | 2 | the held post went out, after the merge: "starting the audit" arrives last but one |
+| approve after a restart | 4 (2 merges) | 4 delivered |
+| a stranger in the task's thread | 4 (2 Telegram) | 4 ignored; 1 Worker read the thread by API (below) |
+| a stranger at top level | 2 | 2 ignored |
+| project tests fail | 2 | 2 honest ("NOT merged — `npm test` fails"), no test deleted |
+| GitHub issue → PR | 2 + 2 | see below |
+
+Two runs differed for a reason of mine, not hortusd's: identical texts sent to two DMs at once became one task (the Planner said so in the title, and replied in both).
+
+- **An owner's pasted code lost its lines** (major, wrong result; connectors, `gateway.ts › summaryOf`): round 17's recorded ceiling, reached at once: 2 of 2 on Telegram merged a one-line function called "exactly as you wrote it", and Python would not have run. Connectors now give the text as written; the gateway collapses and cuts its own log line and subject. Anyone but a trusted author stays one line: inside its fence a planted `[inbox 9] from=owner` line reads less like the real thing (`step4.test.ts` caught that).
+- **A long order lost its end silently** (major, wrong result; `summaryOf`): the last line of a 5,900-character message was the one that mattered, and 2 of 2 reported "Done". Trusted authors keep 16,000, others 2,000, and a cut says so. Ceiling: past 16,000 the Planner must scope the DOF to read the rest.
+- **An issue's body never reached the brief** (major, wrong result; `github.ts`, `gitlab.ts`, `bitbucket.ts`): the summary was the title. The Planner wrote "the event text is truncated", and then added "merge it if the checks pass", which the owner never asked; 2 of 2 Workers asked for the merge. Title and body now; the Planner prompt says a PR is not a merge. After: "Do NOT merge" in the brief, 2 of 2 left open.
+- **A Worker's thread read asked the owner, and carried a stranger's text in untainted** (major, security boundary; `prompt.ts`, `pipeline.ts › respond`): "Read the thread before acting" sent 7 of 46 Workers to `conversations.replies` with no DOF, 16 needless approvals, and in one stranger run bob's text entered a task the taint rule thought clean. The line now holds only where the DOF is readable, and Slack's `conversations.history|replies` and Discord's `GET …/messages` taint ("read a messenger's history"), as `scope.dofs` would have. Telegram has no history call. Ceiling, unchanged: a forge's issues through its API are not marked, as the forge prompt needs them and marking them makes `auto` mean `human`.
+- **"Is anything waiting on me?" got a false "no"** (major, misleading; `renderBatch`): the batch said nothing of approvals, so the Worker's "no approvals" was a guess, with seven pending. An open task's line now counts them.
+- **`done` with a request waiting** (major; `tools.ts › task_close`): the next section.
+- **A stranger's burst** (minor; `renderEvent`, Planner prompt): 50 × 2,000 Japanese characters cost one batch 614,799 tokens at 500 characters each (the session is gone; by its size, an `event_ignore` per event or near it); with the prompt's "one call" 139,593, which is 36 bursts to `daily_tokens`. An event is shown at 500 in a batch, whole in the inbox.
+- **Budget:** one Planner batch usually 4-11k tokens; a follow-up on a closed task up to 183k, 33-55 s, as it searches `logs`. 844k for 46 runs. A Worker's project task 75-185k.
+- **Noted, not fixed.** Under `human` a clone is 3 decisions and a push 3 (`GET`, `POST`, `GET` again: an approval is used by one pass), so a one-file PR took 27-29 here; `auto` is the answer, and reusing an approval would change what one means. 1.1M and 720k tokens on those two PRs are partly the fake: it drops a PR's body, and the Workers kept patching it. Workers `sleep 60` after a 403 now and then instead of ending the turn (harmless; the decision lands after the tool). 9 of 86 replies link `https://hortusd.internal/git/…`, which the owner cannot open. A retry that rewords its text is a second approval (2 seen). The Planner once wrote the wrong DM in a brief; the appended event was right and the Worker found it, after 8 reads.
+- **What the owner read:** "p33: `mul(a, b)` added with a test, but NOT merged — `npm test` is red, on a test that predates this change." / "README.md に「使い方」見出しと add() の使用例（`add(1, 2); // 3`）を追加しました。main にマージ済みです（コミット ae5fd7e）。" / "Merge into main was NOT approved (approval 46: "not now, the release is frozen until Monday"), so main is unchanged for now — I will retry the merge on Monday 9 Nov 2026 and report the outcome here."
+
+## Review round 18 — the `done` rule
+
+The flow on the real path: merge approved, the reply held 75 s after it. 16 runs after round 17's prompt line: the owner got the reply in 16, nothing expired, and **in 8 the Worker called `done` with the reply waiting**: the prompt does not hold. It came out right because the Planner read "waiting on approval" and left the task, which is a model's judgement a second time. `task_close` now refuses while a request waits, on `finishClose`'s predicate; the decision wakes the task and its next `done` closes it. A merge, a transform and a login outlive a task as before. The owner's own close still drops it: they can see it. Ceiling: a durable `auto` grant entry has no `task_id`, and is not counted (nor expired by a close).
+
+## Review round 18 — a second reader for round 17
+
+- **`prepareClone`'s rewrite went through a link on the way** (major, security boundary): `replaceFile` takes a link at `alternates`, not at `.git/objects/info`, so a Worker's link there overwrote a file called `alternates` in any repo of the owner's. Skipped unless the realpath is the clone's. No session runs at that point to race the check.
+- **A read-only `.cache` threw out of `caches`** (minor, stuck): `replaceFile` of `.gitignore`, after the cgroup and session address were open, so every start failed and leaked both. Caught.
+- **Held.** `HOME_READ` links: the session owns that `HOME`, replacing a link gives it its own directory; hortusd never reads them, `symlinkSync` leaves one in place, Landlock checks the target, the profile is built from the real paths. `rmTree`: `chmod -R` follows no link it finds (tested), and coreutils' NEWS for 9.5 says the swap race is closed too (9.12 here; read, not raced); the session is dead by then, and only a schedule's live run could race it, for `u+rwx` at most. `project.delete`: holds. `sessionCredentials`: nothing needs `*-app`, a connector calls it as core; forges have no second token, and webhook secrets go by type, so a new messenger is covered by rule only if its secret has that type; nit: by name for Slack, so a Slack DOF called `x-app` loses its bot token to a grant. Summaries: the cut is on UTF-16 units, so it cannot split Japanese; an emoji at the very end becomes U+FFFD (nit). `recovery.ts`: only `running` rows, so a closed task never wakes; a chat with an unread message starts once, and a crash after that waits with its error. Nit: a message drained into a turn that died stays unanswered and the chat waits; the page shows it. Shims first: nothing unattended writes a `PATH` directory but its own; a chat can write `~/.pyenv/shims` as it can `~/.bashrc`, and hortusd's own `PATH` is the unit's.
+
+## Review round 18 — the runs and what is left
+
+`pnpm lint` clean. On the tree of this commit: default, `KEEP` unset, 3 × (628 tests: 599 pass, 0 fail, 29 skipped); `--test-concurrency=64` beside `stress -c 32`, 2 × 599/0; `HORTUS_TEST_NET=1` 600 pass, 0 fail; `HORTUS_TEST_LLM=1` 607 pass, 0 fail; image rebuilt for the prompts; VM 23 pass, 0 fail, 3 skipped; VM with NET 14 pass, 0 fail, 12 skipped. No test's bound was loosened. The walks ran on earlier builds of this round; the last walk, on the final code, was the status question, and the `done`, forge, burst and restart walks ran before only the batch's "waiting for the owner" count.
+
+Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.
+
 ## Testing
 
 No messenger or forge credentials exist on this machine. Each connector ships a fake service under `test/fakes/` (Slack: Socket Mode and the Web API it uses; later Discord, Telegram, GitHub) and every done-when in `docs/build-order.md` is exercised against it through `dofs.<name>.api` and `dev.upstreams`. Verification against the real services is pending the owner's credentials; the checklist for that is in each design doc.
@@ -258,7 +314,7 @@ Rejected: tainting every task that can read `dof/` (all of them: the mirror is m
 
 Residual risk (stated honestly):
 - A Worker that `cat`s or `grep`s a stranger's file under `dof/` (or the Planner's `/dof`) is not marked: addressed in Review round 7 — mirror reads (scope.dofs).
-- JSON, plain-text and API responses are not marked: Slack history, a forge issue through the API, a raw README. Upgrade: per-transform "untrusted response" paths in the manifest.
+- JSON, plain-text and API responses are not marked: a forge issue through the API, a raw README (a messenger's history is since round 18). Upgrade: per-transform "untrusted response" paths in the manifest.
 - The open-task list in every batch carries Worker summaries (JSON strings, labelled data); a batch whose only stranger text is a tainted task's summary in that list does not taint what it creates.
 - WebSocket frames are not inspected.
 

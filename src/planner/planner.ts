@@ -107,7 +107,9 @@ export function renderEvent(c: Config, e: EventRow, matches: string[] = []): str
   const text = e.summary ?? "(no summary)";
   // every ref: a Discord thread's first, `<parent>:<thread>`, reads like a message in the parent (2 live runs in 8
   // answered there); its second, `<thread>:<thread>`, says where to post
-  return `- [e${e.id}] ${refsOf(e).join(" ") || `${e.dof}:${e.key}`} (${tags.join(", ")}) at ${e.ts}\n${owner ? text : quote(text)}`;
+  // a stranger's text is enough to route by at 500: every model call of a batch re-reads it, against daily_tokens
+  const shown = e.trusted ? text : text.slice(0, 500);
+  return `- [e${e.id}] ${refsOf(e).join(" ") || `${e.dof}:${e.key}`} (${tags.join(", ")}) at ${e.ts}\n${owner ? text : quote(shown)}`;
 }
 
 interface ResultRow {
@@ -156,6 +158,11 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
       n: number;
     };
     if (timers) what.push(`${timers} timer${timers > 1 ? "s" : ""}`);
+    // "is anything waiting on me?" was answered "no approvals" with seven pending: nothing here said so
+    const { n: asks } = c.db
+      .prepare("SELECT COUNT(*) AS n FROM approvals WHERE status = 'pending' AND task_id = ?")
+      .get(t.id) as { n: number };
+    if (asks) what.push(`${asks} waiting for the owner`);
     // a Worker's record (it may restate what a stranger wrote): a JSON string, data like the title
     const summary = t.summary ? ` — summary ${JSON.stringify(oneLine(t.summary, 300))}` : "";
     // a note would wait in its inbox (tasks.ts › restarts): the Planner sees why, as data like the summary

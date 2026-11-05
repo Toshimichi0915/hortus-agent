@@ -226,9 +226,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     }
     const thread = m ? threadOf(m) : r ? (roots.get(`${r.chat.id}:${r.message_id}`) ?? r.message_id) : undefined;
     const kind = fresh ? "message" : m ? "edited" : r ? "reaction" : cm ? "member" : "update";
-    const text = (m?.text ?? m?.caption ?? r?.new_reaction.map(rname).join(" ") ?? "")
-      .replace(/\s+/g, " ")
-      .slice(0, 2000);
+    const text = m?.text ?? m?.caption ?? r?.new_reaction.map(rname).join(" ") ?? "";
     return {
       dof: name,
       key: String(u.update_id),

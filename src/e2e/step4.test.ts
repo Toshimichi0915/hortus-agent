@@ -677,7 +677,7 @@ test("a stranger's event taints the batch anyway: a tainted task's result rides 
   db((d) => d.prepare("DELETE FROM tasks WHERE id = ?").run(id));
 });
 
-test("task_close refuses a chat task and a task waiting on its timers", { skip }, async () => {
+test("task_close refuses a chat task, a task waiting on its timers and one whose request waits", { skip }, async () => {
   const t = new Date().toISOString();
   const ins = (id: string, kind: string) =>
     db((d) =>
@@ -690,23 +690,34 @@ test("task_close refuses a chat task and a task waiting on its timers", { skip }
     );
   ins("tc-chat", "chat");
   ins("tc-timer", "unattended");
+  ins("tc-asks", "unattended");
+  db((d) =>
+    d
+      .prepare(
+        "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:slack', 'tc', 'tc-asks', '{}', 'pending', ?)",
+      )
+      .run(t),
+  );
   db((d) =>
     d
       .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
       .run(new Date(Date.now() + 864e5).toISOString(), t),
   );
   planner(`export default ({ n }) => n === 0
-    ? { calls: ["tc-chat", "tc-timer"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    ? { calls: ["tc-chat", "tc-timer", "tc-asks"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
     : { text: "ok" };`);
   const count = batches().length;
   slack.post("C1", { user: "U1", text: "close them" });
   const b = await nextBatch(count);
-  await until(() => toolResults(b).length === 2);
-  const [chat, timer] = toolResults(b);
+  await until(() => toolResults(b).length === 3);
+  const [chat, timer, asks] = toolResults(b);
   assert.match(String(chat?.output), /not_found: no task tc-chat/);
   assert.match(String(timer?.output), /invalid: task tc-timer has 1 timer/);
   assert.equal(taskRow("tc-chat")?.status, "waiting");
   assert.equal(taskRow("tc-timer")?.status, "waiting");
+  assert.match(String(asks?.output), /invalid: task tc-asks has a request waiting for the owner/);
+  assert.match(batchText(b), /tc-asks "x" \(waiting, host, 0 tokens, 1 waiting for the owner\)/);
+  assert.equal(taskRow("tc-asks")?.status, "waiting");
 });
 
 test("no project and no VM image: task_create fails with the doc's message; the Planner ignores instead", {

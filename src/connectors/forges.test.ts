@@ -607,7 +607,7 @@ for (const h of H) {
   });
 
   test(`${dof}: an issue opened, commented, closed → top message and comment files`, async () => {
-    const { n } = await h.openIssue("toshi", "Bug A", "steps");
+    const { n, guid } = await h.openIssue("toshi", "Bug A", "steps");
     const c = await h.comment(n, "toshi", "fix this");
     await h.closeIssue(n, "toshi");
     const top = await until(
@@ -618,6 +618,11 @@ for (const h of H) {
     assert.equal(top.frontmatter.title, "Bug A");
     assert.equal(top.frontmatter.user, "toshi");
     assert.equal(top.body.trim(), "steps");
+    // the order is in the body: the Planner and the brief see only the summary
+    assert.match(
+      (db.prepare("SELECT summary FROM events WHERE key = ?").get(guid) as { summary: string }).summary,
+      /Bug A\n\nsteps/,
+    );
     const msg = fm(dof, `${D}/#${n}/${c.id}.md`);
     assert.equal(msg?.body.trim(), "fix this");
     assert.equal(msg?.frontmatter.thread, `#${n}`);

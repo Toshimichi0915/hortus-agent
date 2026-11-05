@@ -325,6 +325,9 @@ const utf8 = (b: Buffer): string | undefined => {
 
 const STREAM_REQUEST = /^application\/(x-git-|octet-stream)/i;
 const HTML = /^\s*(text\/html|application\/xhtml\+xml)/i;
+/** A messenger's own history read by API: what `scope.dofs` would have tainted, by another door. */
+const HISTORY =
+  /^(\w+ slack\.com\/api\/conversations\.(history|replies)|GET discord\.com\/api\/v\d+\/channels\/\d+\/messages)/;
 const STREAM_RESPONSE = /^(text\/event-stream|application\/(x-git-|octet-stream))/i;
 const HOP = new Set([
   "connection",
@@ -1058,9 +1061,14 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   }
   // a web page (any HTML response, credentialed or not: the browser's loads, a forge's issue page) taints the task for
   // good (v7 › Review round 6). ponytail: HTML only; a stranger's text in JSON, plain text or an API response is not
-  // tracked (npm, PyPI and Go would taint every build, Slack's history every messenger task); add types if that bites
+  // tracked (npm, PyPI and Go would taint every build); add types if that bites. A messenger's history is: the prompt no
+  // longer sends Workers there (round 18), so what reads it means to. A forge's issues through its API stay a ceiling: the
+  // forge prompt needs them, and tainting them is `auto` meaning `human`
   if (p.client.task && p.client.role === "worker" && HTML.test(ct))
     taint(ctx().db, p.client.task, `read a web page: ${p.host}`);
+  const asked = `${p.raw.method} ${p.host}${p.template.url.match(URL_PARTS)?.[2] ?? ""}`;
+  if (p.client.task && p.client.role === "worker" && HISTORY.test(asked))
+    taint(ctx().db, p.client.task, `read a messenger's history: ${p.host}`);
   // `accept-encoding: identity` is only a request: a compressed body would hide every value from the scrubber
   let src: Readable = res;
   const enc = String(res.headers["content-encoding"] ?? "identity")

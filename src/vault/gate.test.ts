@@ -17,7 +17,7 @@ import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
 import { task as taskPage } from "../console/pages/task.ts";
 import type { Ctx } from "../ctx.ts";
-import { openDb, taint } from "../db.ts";
+import { openDb, taint, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
@@ -581,6 +581,21 @@ function get(host: string, path: string, from: string): Promise<R> {
     r.end();
   });
 }
+
+test("round 18: a messenger's thread read through its API taints; a post does not", async () => {
+  setConfig({});
+  mode = "allow";
+  ctx.db
+    .prepare(
+      `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES ('T18', 'unattended', 't', 'b', 'running', ?, '"*"')`,
+    )
+    .run(JSON.stringify({ credentials: ["slack"], repos: [] }));
+  links.register("127.0.0.12", "worker", "T18", "session");
+  assert.equal((await send({ path: "/api/chat.postMessage", from: "127.0.0.12" })).status, 200);
+  assert.deepEqual(taintOf(ctx.db, "T18", ctx.config), []);
+  assert.equal((await send({ path: "/api/conversations.replies", from: "127.0.0.12" })).status, 200);
+  assert.deepEqual(taintOf(ctx.db, "T18", ctx.config), ["read a messenger's history: slack.com"]);
+});
 
 test("round 6: a web page taints the task for good; an API response does not; a Planner batch is always tainted", async () => {
   setConfig({});

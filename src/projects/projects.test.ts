@@ -293,6 +293,14 @@ test("a clone's alternates are rewritten at a start, and never through a link it
   assert.equal(readFileSync(victim, "utf8"), "precious\n");
   assert.equal(readFileSync(alt, "utf8"), good);
   assert.ok(!lstatSync(alt).isSymbolicLink());
+  // a link on the way to it: `.git/objects/info` → another repo of the owner's, whose alternates would be overwritten
+  const other = join(root, "other-info");
+  mkdirSync(other);
+  writeFileSync(join(other, "alternates"), "/the/owners/other/repo\n");
+  rmSync(join(dir, ".git/objects/info"), { recursive: true });
+  symlinkSync(other, join(dir, ".git/objects/info"));
+  await prepareClone(t);
+  assert.equal(readFileSync(join(other, "alternates"), "utf8"), "/the/owners/other/repo\n");
 });
 
 /** A Worker's clone of `project` on hortus/<task> with one commit writing `file`, pushed through the route. */

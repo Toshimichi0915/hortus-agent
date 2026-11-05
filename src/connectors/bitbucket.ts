@@ -7,7 +7,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
-import { cached, dirOf, eventQueue, HttpError, iso, matches, oneLine, rest, worst } from "./forge.ts";
+import { cached, dirOf, eventQueue, HttpError, iso, matches, rest, worst } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const HOUR = 3600_000;
@@ -161,7 +161,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const own = !!u && !!idOf(u) && idOf(await me()) === idOf(u);
     const obj = b.comment ?? b.pullrequest ?? b.issue;
     const result = b.commit_status && `${b.commit_status.state} on ${hash?.slice(0, 7)}`;
-    const text = oneLine(b.comment?.content?.raw ?? b.pullrequest?.title ?? b.issue?.title ?? result);
+    const opened = [(b.pullrequest ?? b.issue)?.title, b.pullrequest?.description ?? b.issue?.content?.raw]
+      .filter(Boolean)
+      .join("\n\n");
+    const text = b.comment?.content?.raw ?? (opened || (result ?? ""));
     return {
       dof: name,
       key,

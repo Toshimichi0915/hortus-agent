@@ -11,7 +11,17 @@ import { FakeSlack } from "../test/fakes/slack.ts";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
-import { createGateway, type GatewayDeps, timing } from "./gateway.ts";
+import { createGateway, type GatewayDeps, summaryOf, timing } from "./gateway.ts";
+
+test("summaryOf: an owner's long order keeps its last line, a stranger's is cut sooner, and a cut says so", () => {
+  const order = `${"note\n".repeat(1000)}the first line must be X`;
+  assert.equal(summaryOf(order, true), order);
+  const cut = summaryOf(order, false);
+  assert.equal(cut.length < 2100, true);
+  assert.match(cut, /cut here: 5024 characters in all/);
+  assert.doesNotMatch(cut, /\n/);
+  assert.match(summaryOf("x".repeat(20_000), true), /^x{16000}… \(cut here/);
+});
 
 const home = tempDir("hortus-gateway-");
 process.env.HORTUS_HOME = home;
