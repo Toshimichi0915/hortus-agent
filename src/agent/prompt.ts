@@ -12,7 +12,7 @@ export function prompt(task: TaskJson): string {
   const where = [
     `- DOFs (mirrored sources, read-only Markdown): ${p.dof}; this task can read ${list(task.scope.dofs ?? [])}`,
     p.repos && `- forge repo mirrors (read-only): ${p.repos}`,
-    `- your scratch directory (cwd unless told otherwise): ${p.work}`,
+    `- your scratch directory (cwd unless told otherwise): ${p.work}; temporary files go here too, as /tmp may be read-only`,
     p.clone && `- the project clone: ${p.clone}${task.clone_url ? ` (origin ${task.clone_url})` : ""}`,
     p.schedule && `- this run's persistent directory (kept between runs of its schedule): ${p.schedule}`,
   ].filter(Boolean);

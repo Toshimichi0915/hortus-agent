@@ -128,14 +128,13 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   }
 }
 
-// Shared caches holding nothing the owner runs; `~/.cargo/bin`, `~/.gradle/init.d`, `~/.pyenv` and the like stay
-// read-only (they are on the owner's PATH or run by its builds). The rest goes to task-local homes (host.ts › caches).
-export const RW_HOME = [".cache", ".npm/_cacache", ".cargo/registry", ".cargo/git", ".gradle/caches", ".m2/repository"];
-const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "ptmx", "pts", "shm"].map((d) => `/dev/${d}`);
+const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "shm"].map((d) => `/dev/${d}`);
 
 /** The directive text for one task under `kind`. */
 export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "policy">): string {
-  const deny = denySet(config);
+  // ponytail: /dev/pts holds the owner's terminals, which a Worker could read keystrokes from and write to, and Landlock
+  // cannot tell its own pty from theirs: no pty on a host Worker (script, expect); a VM has its own
+  const deny = [...denySet(config), ...(kind === "unattended" ? ["/dev/pts"] : [])];
   const ro = readOnlySet().filter((p) => !deny.some((d) => under(p, d)));
   const denyRw = [...deny, ...ro]; // every write grant skips them; they are granted read-only below
   const out: string[] = [];
@@ -143,9 +142,9 @@ export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "pol
   const base: Mode = kind === "chat" ? "rw" : "ro";
   grant("/", base, base === "rw" ? denyRw : deny, out);
   if (kind === "unattended") {
-    const h = homedir();
-    // ponytail: a Worker's own sockets under /tmp cannot be connected to either; point TMPDIR at out/ if that bites
-    for (const p of ["/tmp", ...RW_DEV, ...RW_HOME.map((p) => join(h, p)), ...(config.policy.cache ?? [])])
+    // ponytail: no /tmp (v7 › Host): what a session writes there any other can read and nothing removes, so TMPDIR is
+    // out/tmp and a tool that hardcodes /tmp gets EACCES; `policy.cache: ["/tmp"]` gives it back, with the leak
+    for (const p of [...RW_DEV, ...(config.policy.cache ?? [])])
       if (existsSync(p)) grant(resolve(p), "rn", denyRw, out);
   }
   for (const p of ro) if (existsSync(p)) grant(p, "ro", deny, out);
@@ -162,6 +161,7 @@ export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "pol
     [paths.out(task.id), "rw"],
     [task.clone, "rw"],
     [task.schedule, "rw"],
+    [kind === "unattended" ? paths.cache() : undefined, "rn"],
   ];
   for (const [p, mode] of carve) if (p && existsSync(p)) grant(resolve(p), mode, rest, out);
   out.push("scope signal", "scope abstract", "end");

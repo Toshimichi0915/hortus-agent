@@ -105,7 +105,9 @@ export function renderEvent(c: Config, e: EventRow, matches: string[] = []): str
     ...matches.map((m) => `matches task ${m}`),
   ];
   const text = e.summary ?? "(no summary)";
-  return `- [e${e.id}] ${refsOf(e)[0] ?? `${e.dof}:${e.key}`} (${tags.join(", ")}) at ${e.ts}\n${owner ? text : quote(text)}`;
+  // every ref: a Discord thread's first, `<parent>:<thread>`, reads like a message in the parent (2 live runs in 8
+  // answered there); its second, `<thread>:<thread>`, says where to post
+  return `- [e${e.id}] ${refsOf(e).join(" ") || `${e.dof}:${e.key}`} (${tags.join(", ")}) at ${e.ts}\n${owner ? text : quote(text)}`;
 }
 
 interface ResultRow {

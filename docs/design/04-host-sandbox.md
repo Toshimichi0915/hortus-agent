@@ -27,7 +27,7 @@ profile(kind: "unattended" | "chat", task: { id: string; clone?: string; schedul
 
 - `deny` = v7's deny set (Security) + `config.policy.deny`, as absolute existing paths; `~/.hortus` is denied as a whole with carve-outs `dof/<name>` and `dof/<name>.git` for each DOF in task.json's `scope.dofs` (v7 › Review round 7; never the DOF root), `repos/`, `tasks/<id>/ctl`, `tasks/<id>/out`, `clones/<id>`, `schedules/<id>`.
 - `grant(dir, mode)`: if no denied path lies under `dir` → one directive for `dir`; else one directive per entry of `dir` that is not itself denied, recursing into entries that contain a denied path. Applied to `/`.
-- Modes: `unattended`: everything `ro`; `rw` for the clone, `out`, the schedule dir, `/tmp`, `/dev/{null,zero,full,random,urandom,tty,ptmx,pts,shm}`, the shared caches `~/.cache`, `~/.npm/_cacache`, `~/.cargo/{registry,git}`, `~/.gradle/caches`, `~/.m2/repository` and `config.policy.cache` (`rn`; tool homes are task-local under `out/work/.cache`: v7 › Security › Host); `chat`: everything `rw` except the deny set. A carve-out under a denied directory (`~/.hortus/dof`) is granted explicitly with its mode. Both: `scope signal`, `scope abstract`.
+- Modes: `unattended`: everything `ro`; `rw` for the clone, `out`, the schedule dir; `rn` for `/dev/{null,zero,full,random,urandom,tty,shm}`, the Workers' shared caches under `$HORTUS_HOME/cache` and `config.policy.cache`; `/tmp` is read-only (`TMPDIR` is `out/tmp`) and `/dev/pts` unreachable (tool homes are task-local under `out/work/.cache`: v7 › Security › Host, round 14); `chat`: everything `rw` except the deny set. A carve-out under a denied directory (`~/.hortus/dof`) is granted explicitly with its mode. Both: `scope signal`, `scope abstract`.
 - Symlinks: Landlock works on the opened path, so `/bin → usr/bin` style links need no special care; a denied path given as a symlink is resolved with `realpath` first.
 
 ### `src/runtime/cgroup.ts`
@@ -65,7 +65,7 @@ Creates the cgroup, the session address, writes the profile to the shim's fd 3, 
 
 Shim and profiles (no capabilities; inside `systemd-run --user --scope -p Delegate=yes` when available, else the cgroup directive is omitted and that assertion skipped):
 
-- A child under `unattended` with `HORTUS_HOME` as the home: `cat vault.json` → EACCES; `cat hortusd.json` → EACCES; `ls tasks/<other>` → EACCES; `cat dof/slack/C1/channel.md` → ok; `touch out/x` → ok; `touch <clone>/x` → ok; `touch ~/x` → EACCES; `touch /tmp/x` → ok; `echo > /dev/null` → ok; a file created in a denied directory after spawn is still unreachable.
+- A child under `unattended` with `HORTUS_HOME` as the home: `cat vault.json` → EACCES; `cat hortusd.json` → EACCES; `ls tasks/<other>` → EACCES; `cat dof/slack/C1/channel.md` → ok; `touch out/x` → ok; `touch <clone>/x` → ok; `touch ~/x` → EACCES; `touch /tmp/x` → EACCES; `echo > /dev/null` → ok; a file created in a denied directory after spawn is still unreachable.
 - Under `chat`: `touch ~/x` → ok; `cat ~/.ssh/id_ed25519` → EACCES; `cat ~/.hortus/secrets.json` → EACCES; `cat vault.json` → EACCES.
 - Scoping: the child cannot `kill -0 <hortusd pid>` (EPERM) and `connect` to the abstract socket fails (EPERM); it cannot write to `/sys/fs/cgroup/...` (EACCES, the path is denied).
 - `cgroup.kill` ends a child that forked a `sleep 1000` grandchild; `pids()` lists both before.

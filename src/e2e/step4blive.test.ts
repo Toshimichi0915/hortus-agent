@@ -38,7 +38,8 @@ after(async () => {
   await tg.close();
 });
 
-async function worker(credential: string, ref: string, summary: string): Promise<void> {
+/** The session's stdout, kept for the failure message: what the Worker did is all a model's failure leaves. */
+async function worker(credential: string, ref: string, summary: string): Promise<string> {
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
   const key = all["ollama-cloud"];
   assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");
@@ -77,6 +78,7 @@ exec /usr/bin/curl "\${args[@]}"
   try {
     const r = await run(dir, undefined, 240_000);
     assert.equal(r.code, 0, r.stderr + r.stdout.slice(-2000));
+    return r.stdout.slice(-6000);
   } finally {
     process.env.PATH = path;
   }
@@ -87,26 +89,26 @@ test("live Worker: Telegram, the owner's DM → sendMessage replying to it", {
   timeout: 300_000,
 }, async () => {
   const m = tg.post(500, { user: 500, text: "how is the build?" });
-  await worker("tg", `tg:500:${m.message_id}`, "message in 500 by alice: how is the build?");
+  const session = await worker("tg", `tg:500:${m.message_id}`, "message in 500 by alice: how is the build?");
   const sent = tg.chats.get(500)?.messages.find((x) => x.from?.id === tg.bot.id);
   console.log(`# telegram: ${JSON.stringify(sent?.text)} reply_to ${sent?.reply_to_message?.message_id}`);
-  assert.match(sent?.text ?? "", /green/i);
+  assert.match(sent?.text ?? "", /green/i, session);
   // in a DM a plain message reads the same, and its own ref routes an answer: the model does not always quote (1 run in 2)
 });
 
 test("live Worker: Discord, a channel message → a reply to it", { skip: !live, timeout: 300_000 }, async () => {
   const m = dc.post("3000", { user: "200", text: "how is the build?" });
-  await worker("discord", `discord:3000:${m.id}`, "message_create in 3000 by alice: how is the build?");
+  const session = await worker("discord", `discord:3000:${m.id}`, "message_create in 3000 by alice: how is the build?");
   const sent = dc.channels.get("3000")?.messages.find((x) => x.author.id === dc.botUser);
   console.log(`# discord: ${JSON.stringify(sent?.content)} reply_to ${sent?.message_reference?.message_id}`);
-  assert.match(sent?.content ?? "", /green/i);
+  assert.match(sent?.content ?? "", /green/i, session);
   assert.equal(sent?.message_reference?.message_id, m.id);
 });
 
 test("live Worker: Discord, a thread channel → a post in the thread", { skip: !live, timeout: 300_000 }, async () => {
   dc.post("3100", { user: "200", text: "how is the build?" });
-  await worker("discord", "discord:3000:3100", "message_create in 3100 by alice: how is the build?");
+  const session = await worker("discord", "discord:3000:3100 discord:3100:3100", "message_create in 3100 by alice: how is the build?");
   const sent = dc.channels.get("3100")?.messages.find((x) => x.author.id === dc.botUser);
   console.log(`# discord thread: ${JSON.stringify(sent?.content)}`);
-  assert.match(sent?.content ?? "", /green/i);
+  assert.match(sent?.content ?? "", /green/i, session);
 });

@@ -427,7 +427,7 @@ if has npm; then r npx --offline --yes ./lp; r npm init -y; r npm i --offline ./
 if has pnpm; then mkdir pn && cd pn && r pnpm init && r pnpm add --offline ../lp && r pnpm store path; cd ..; fi
 if has gh; then r gh config get git_protocol; fi
 if python3 -c 'import ensurepip' 2> /dev/null; then r python3 -m venv .venv && r .venv/bin/pip --version; fi
-r git init -q g && r git -C g config user.name x && r mkdir "$HOME/.cache/hortus-step3-$$" && rmdir "$HOME/.cache/hortus-step3-$$"
+r git init -q g && r git -C g config user.name x && r mkdir -p "$XDG_CACHE_HOME/hortus-step3-$$" && rmdir "$XDG_CACHE_HOME/hortus-step3-$$"
 echo end
 `,
   );

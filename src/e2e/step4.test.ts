@@ -280,7 +280,7 @@ test("the owner's DM → one batch → task_create on project foo; the tool set;
   assert.equal(write?.isError, true);
   assert.match(write?.output ?? "", /write is not available to the Planner/);
   assert.match(bash?.output ?? "", /Permission denied|Read-only/i);
-  // outside out/ (and /tmp, which the unattended profile grants): read-only
+  // outside out/: read-only
   assert.ok(!existsSync(PROBE));
 
   const tools = reqs(b)[0]?.tools ?? [];

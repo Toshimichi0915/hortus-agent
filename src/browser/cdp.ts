@@ -75,7 +75,11 @@ export function flags(o: LaunchOpts): string[] {
 export async function launch(o: LaunchOpts): Promise<Browser> {
   mkdirSync(o.userDataDir, { recursive: true });
   const [bin = CHROMIUM, ...pre] = o.cmd ?? [CHROMIUM];
-  const proc = spawn(bin, [...pre, ...flags(o)], { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] });
+  const proc = spawn(bin, [...pre, ...flags(o)], {
+    stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+    // a Worker's TMPDIR is under HORTUS_HOME, and past 62 bytes the singleton socket in it (sun_path) is a FATAL at start
+    ...(o.noSandbox ? { env: { ...process.env, TMPDIR: "/dev/shm" } } : {}),
+  });
   let stderr = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderr = (stderr + c.toString()).slice(-4000);

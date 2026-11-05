@@ -22,6 +22,8 @@ export const out = (id: string) => at("tasks", id, "out");
 export const clone = (id: string) => at("clones", id);
 export const schedule = (id: string | number) => at("schedules", String(id));
 export const images = () => at("images");
+/** the Workers' shared tool caches (never the owner's: 04-host-sandbox.md) */
+export const cache = () => at("cache");
 export const paused = () => at("PAUSED");
 
 /** Abstract unix socket: per uid, or per HORTUS_HOME so tests never meet a real daemon. */

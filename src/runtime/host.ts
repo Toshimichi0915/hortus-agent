@@ -70,6 +70,9 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     LANG: process.env.LANG ?? "C.UTF-8",
     TERM: "dumb",
     HORTUS_TASK: join(ctl, "task.json"),
+    // core's bash saves a long output in tmpdir() with the default mode: under /tmp that was a world-readable copy of
+    // what this task read (past scope.dofs, untainted) that no close removed. Goes with tasks/<id>.
+    TMPDIR: join(paths.out(task.id), "tmp"),
     // ~/.config/gh (its hosts.yml holds the owner's token) and ~/.npmrc are denied: gh refuses to run without a
     // config dir, pnpm warns on every run (yarn 1 reads ~/.npmrc regardless and fails)
     GH_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "gh"),
@@ -108,9 +111,12 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
 }
 
 /** An unattended session's tool homes under `out/work/.cache` (the profile leaves the owner's read-only), with the
- * shared cache directories linked in. `out/` is the Worker's: nothing is created through a link it planted. */
+ * Workers' shared caches (`paths.cache()`) linked in: never the owner's, as `~/.cache` holds what the owner runs outside
+ * any sandbox (ms-playwright's browsers, pre-commit's hooks, cargo's sources). `out/` and the caches are the Workers':
+ * nothing is created through a link one planted. */
 export function caches(out: string): Record<string, string> {
   const w = join(out, "work", ".cache");
+  const shared = paths.cache();
   const real = (p: string) => {
     try {
       mkdirSync(p);
@@ -121,15 +127,14 @@ export function caches(out: string): Record<string, string> {
       return false;
     }
   };
-  const h = homedir();
   const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"], npm: ["_cacache"] };
-  if ([join(out, "work"), w].every(real))
+  if ([join(out, "work"), w, shared].every(real))
     for (const [tool, subs] of Object.entries(links))
-      if (real(join(w, tool)))
+      if (real(join(w, tool)) && real(join(shared, tool)))
         for (const s of subs)
           try {
-            // only an existing target: the profile grants it only then; EEXIST on a restart leaves the link be
-            if (existsSync(join(h, `.${tool}`, s))) symlinkSync(join(h, `.${tool}`, s), join(w, tool, s));
+            // EEXIST on a restart leaves the link be
+            if (real(join(shared, tool, s))) symlinkSync(join(shared, tool, s), join(w, tool, s));
           } catch {}
   return {
     CARGO_HOME: join(w, "cargo"),
@@ -139,6 +144,12 @@ export function caches(out: string): Record<string, string> {
     // _npx, _logs and the rest task-local (~/.npm is read-only); _cacache is the shared one, linked
     npm_config_cache: join(w, "npm"),
     npm_config_update_notifier: "false",
+    // pnpm's store locks: /tmp without it, and /tmp takes no writes here (landlock.ts › profile)
+    XDG_RUNTIME_DIR: join(out, "tmp"),
+    // pip, uv, go-build, yarn, gh and the rest of what `~/.cache` would hold
+    XDG_CACHE_HOME: join(shared, "xdg"),
+    GOMODCACHE: join(shared, "go"),
+    MAVEN_OPTS: `-Dmaven.repo.local=${join(shared, "m2")}`,
   };
 }
 
@@ -160,6 +171,10 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
   const out = paths.out(id);
   mkdirSync(out, { recursive: true });
   mkdirSync(paths.ctl(id), { recursive: true });
+  mkdirSync(paths.cache(), { recursive: true }); // first: the profile grants what exists
+  try {
+    mkdirSync(join(out, "tmp"));
+  } catch {} // there from an earlier session; a file or link the Worker planted only spoils its own TMPDIR
   // ~/.hortus/ca is denied, so the session gets its own readable copy of the CA certificate.
   const caSrc = join(paths.ca(), "ca.crt");
   if (existsSync(caSrc)) copyFileSync(caSrc, join(paths.ctl(id), "ca.crt"));

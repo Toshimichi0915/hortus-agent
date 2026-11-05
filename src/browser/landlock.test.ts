@@ -17,7 +17,7 @@ import * as paths from "../paths.ts";
 import { abi, profile, shim } from "../runtime/landlock.ts";
 import { CHROMIUM } from "./cdp.ts";
 
-// under $HOME, not /tmp: /tmp is an rw tree in the unattended profile
+// under $HOME, not /tmp, as an installed copy is
 const root = mkdtempSync(join(homedir(), ".hortus-3h-landlock-"));
 process.env.HORTUS_HOME = join(root, "home");
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -32,7 +32,10 @@ test("Chromium inside the unattended domain: profile under out/work, ~/.ssh and 
   skip: why,
 }, async () => {
   const work = join(paths.out("T"), "work");
+  // as long as a long HORTUS_HOME makes it: Chromium's singleton socket must not land here (sun_path, 108 bytes)
+  const tmp = join(paths.out("T"), "tmp", "x".repeat(70));
   mkdirSync(work, { recursive: true });
+  mkdirSync(tmp, { recursive: true });
   mkdirSync(join(paths.ctl("T"), "inbox"), { recursive: true });
   const secret = join(root, "secret");
   mkdirSync(secret);
@@ -62,7 +65,7 @@ console.log(JSON.stringify(out));`,
   const r = await new Promise<{ code: number | null; out: string; err: string }>((resolve) => {
     const c = spawn(shim.path, ["--", process.execPath, script], {
       cwd: work,
-      env: { HOME: homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      env: { HOME: homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: tmp },
       stdio: ["ignore", "pipe", "pipe", "pipe"],
     });
     let out = "";

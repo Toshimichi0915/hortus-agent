@@ -694,6 +694,7 @@ test("v6 step 5: a VM task clones the origin, pushes hortus/<id>, and its merge 
   const id = `vmm${Date.now().toString(36)}`;
   const clone = "/task/out/work/clone";
   const push = [
+    "touch /tmp/hortus-guest-tmp", // the guest's own /tmp: writable, and not the host's
     `git clone -q https://hortusd.internal/git/site ${clone} 2>&1`,
     `cd ${clone}`,
     "echo '- vm' > CHANGELOG.md",
@@ -721,6 +722,7 @@ test("v6 step 5: a VM task clones the origin, pushes hortus/<id>, and its merge 
     "the merge entry",
   );
   assert.match(JSON.stringify(requests(id)), /pushed/);
+  assert.ok(!existsSync("/tmp/hortus-guest-tmp"));
   const r = await fetch(`http://127.0.0.1:${port}/api/approval.decide`, {
     method: "POST",
     headers: { "X-Hortus": "1", "Content-Type": "application/json" },

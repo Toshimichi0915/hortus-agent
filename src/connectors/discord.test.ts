@@ -3,6 +3,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Config } from "../config.ts";
+import { type EventRow, renderEvent } from "../planner/planner.ts";
 import { directFetch } from "../test/direct.ts";
 import { directSocket, FakeDiscord } from "../test/fakes/discord.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
@@ -111,6 +113,11 @@ test("a thread message files under the parent channel; refs name the thread", as
   const a = await mirrored();
   assert.deepEqual(a.event.refs, [`discord:300:${answer.id}`, `discord:300:${root.id}`]);
   assert.equal(a.changes[0]?.frontmatter?.reply_to, root.id);
+});
+
+test("a brief shows every ref: a thread's `<thread>:<thread>` says where to answer", () => {
+  const e = { id: 1, dof: "discord", key: "k", ts: "t", summary: "s", trusted: 1, author: "a", refs: '["discord:3:7","discord:7:7"]' };
+  assert.match(renderEvent(Config.parse({}), e as unknown as EventRow), /^- \[e1\] discord:3:7 discord:7:7 \(/);
 });
 
 test("THREAD_MEMBERS_UPDATE leaves the thread a thread: its messages still file under the parent", async () => {

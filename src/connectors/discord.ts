@@ -249,7 +249,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     if (channel && msgId) {
       const w = await where(channel, msgId);
       refs.push(`${name}:${w.channel}:${w.thread}`);
-      if (w.thread !== msgId) refs.push(`${name}:${w.thread}:${w.thread}`);
+      if (channel !== w.channel) refs.push(`${name}:${channel}:${channel}`); // a forum post's first message too
       const ref = (d.message_reference as { message_id?: string } | undefined)?.message_id;
       if (ref && w.thread === msgId) refs.push(`${name}:${w.channel}:${ref}`);
     }

@@ -23,7 +23,8 @@ export function request(req) {
 
 // A created message → refs `discord:<channel>:<id>` (a plain channel: thread = message) and
 // `discord:<channel>:<channel>` (a thread channel: messages in it carry that ref too). A created thread →
-// `discord:<parent>:<thread>`.
+// `discord:<parent>:<thread>`. To answer an event's ref: `discord:<c>:<c>` is a thread channel, POST to
+// /channels/<c>/messages; `discord:<c>:<m>` is a message in <c>, POST there with `message_reference` to <m>.
 export function response(res, req) {
   const out = { res };
   if (req.method !== "POST" || res.status >= 300 || !res.body) return out;

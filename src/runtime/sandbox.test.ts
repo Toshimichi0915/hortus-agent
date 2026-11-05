@@ -26,7 +26,7 @@ import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
 import { caches, sandboxEnv, spawnSandboxed } from "./host.ts";
-import { abi, denySet, profile, RW_HOME, readOnlySet, shim } from "./landlock.ts";
+import { abi, denySet, profile, readOnlySet, shim } from "./landlock.ts";
 
 const inScope = process.env.HORTUS_TEST_SCOPE === "1";
 const hasSystemdRun = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
@@ -60,7 +60,7 @@ if (!inScope && hasSystemdRun) {
 }
 
 function suite(): void {
-  // Under $HOME, not /tmp: /tmp is an rw tree in the unattended profile and must not contain a denied path here.
+  // Under $HOME, not /tmp: as an installed copy is, so the owner's tree and the sandbox's walks look the same.
   const root = mkdtempSync(join(homedir(), ".hortus-f4-test-"));
   const H = join(root, "home");
   process.env.HORTUS_HOME = H;
@@ -182,10 +182,12 @@ function suite(): void {
       denied(await shimSh(prof(), `ls ${H}/tasks/O`));
       denied(await shimSh(prof(), `touch ${homedir()}/.hortus-f4-x`));
     });
-    test("allowed: dof read, out/clone/tmp write, /dev/null", async () => {
+    test("allowed: dof read, out/clone write, /dev/null; /tmp is read-only unless policy.cache lists it", async () => {
       ok(await shimSh(prof(), `cat ${H}/dof/slack/C1/channel.md`));
       ok(await shimSh(prof(), `touch ${H}/tasks/T/out/x ${H}/clones/T/x`));
-      ok(await shimSh(prof(), "f=$(mktemp /tmp/hortus-f4-XXXXXX) && rm $f"));
+      denied(await shimSh(prof(), "mktemp /tmp/hortus-f4-XXXXXX"));
+      const open = profile("unattended", task, Config.parse({ policy: { cache: ["/tmp"] } }));
+      ok(await shimSh(open, "f=$(mktemp /tmp/hortus-f4-XXXXXX) && rm $f"));
       ok(await shimSh(prof(), "echo > /dev/null"));
       denied(await shimSh(prof(), `touch ${H}/dof/x`));
     });
@@ -207,20 +209,18 @@ function suite(): void {
       assert.equal(r.code, 1, r.err);
       assert.match(r.err, /EACCES|EPERM/);
     });
-    test("writable home entries are the cache subdirectories only (nothing on the owner's PATH)", () => {
+    test("nothing under the owner's home is writable, ~/.cache included (the owner runs what lies there)", async () => {
       const h = homedir();
-      const rn = prof()
+      const rw = prof()
         .split("\n")
-        .filter((l) => l.startsWith("rn ") && l.slice(3).startsWith(`${h}/`))
-        .map((l) => l.slice(3));
-      const allowed = RW_HOME.map((p) => realpathSync.native(existsSync(join(h, p)) ? join(h, p) : h));
-      for (const p of rn)
-        assert.ok(
-          allowed.some((a) => p === a || p.startsWith(`${a}/`)),
-          p,
-        );
-      for (const p of [".cargo", ".cargo/bin", ".pyenv", ".rustup", ".local/share/pnpm", ".gradle", ".npm"])
-        assert.ok(!rn.includes(join(h, p)), p);
+        .filter((l) => /^r[wn] /.test(l) && l.slice(3).startsWith(`${h}/`) && !l.slice(3).startsWith(`${root}/`));
+      assert.deepEqual(rw, []);
+      denied(await shimSh(prof(), `touch ${h}/.cache/hortus-f4-x`));
+    });
+    test("no terminal of the owner's: /dev/pts is unreachable, in an unattended session only", async () => {
+      assert.ok(!prof().includes("/dev/pts"));
+      assert.match(profile("chat", task, config), /^rw \/dev(\/pts)?$/m);
+      denied(await shimSh(prof(), "ls /dev/pts"));
     });
     test("caches: task-local tool homes, shared caches linked, never through a planted link", () => {
       const out = join(root, "cache-out");
@@ -229,6 +229,9 @@ function suite(): void {
       assert.equal(env.CARGO_HOME, join(out, "work/.cache/cargo"));
       assert.ok(existsSync(join(out, "work/.cache/gradle")));
       assert.equal(env.npm_config_cache, join(out, "work/.cache/npm"));
+      assert.equal(env.XDG_RUNTIME_DIR, join(out, "tmp"));
+      assert.equal(env.XDG_CACHE_HOME, join(H, "cache/xdg"));
+      assert.equal(realpathSync(join(out, "work/.cache/cargo/registry")), realpathSync(join(H, "cache/cargo/registry")));
       // the tools' plain-file tokens stay out of reach
       for (const p of [".npmrc", ".config/gh"]) assert.ok(denySet(config).includes(join(homedir(), p)), p);
       const evil = join(root, "cache-evil");
@@ -238,6 +241,13 @@ function suite(): void {
       symlinkSync(evil, join(out, "work"));
       caches(out);
       assert.deepEqual(readdirSync(evil), []);
+      rmSync(out, { recursive: true });
+      mkdirSync(out);
+      rmSync(join(H, "cache/gradle"), { recursive: true });
+      symlinkSync(evil, join(H, "cache/gradle")); // a Worker's, in the shared cache
+      caches(out);
+      assert.deepEqual(readdirSync(evil), []);
+      rmSync(join(H, "cache/gradle"));
     });
     test("a link planted in a writable tree never extends the next session's write access (/tmp/x → ~/.bashrc)", async () => {
       // a deny path inside the writable tree makes the builder walk it entry by entry, as HORTUS_HOME under /tmp does
@@ -354,6 +364,40 @@ function suite(): void {
       await k.kill();
       assert.equal((await k.wait()).signal, "SIGKILL");
       assert.ok(!existsSync(cgroup.path("T")));
+    });
+    test("one task leaves nothing for another: core's bash overflow lands in out/tmp, and /tmp takes no file", async () => {
+      const task = (id: string, dofs: string[]) =>
+        ({
+          id,
+          kind: "unattended",
+          scope: { credentials: [], repos: [], dofs },
+          paths: { dof: join(H, "dof"), work: join(H, `tasks/${id}/out`) },
+        }) as unknown as TaskJson;
+      const run = async (id: string, dofs: string[], cmd: string[]) => {
+        const lines: string[] = [];
+        const c = await spawnSandboxed({
+          task: task(id, dofs),
+          kind: "unattended",
+          cmd,
+          cwd: paths.out(id),
+          config,
+          onStdout: (l) => lines.push(l),
+        });
+        return { code: (await c.wait()).code, out: lines.join("\n") };
+      };
+      // the real tool, as a Worker scoped to the DOF calls it: the whole output goes to a temp file past the limit
+      const tools = fileURLToPath(new URL("../../node_modules/@hortus/core/dist/tools.js", import.meta.url));
+      const body = `const { bashTool } = await import(${JSON.stringify(tools)});
+        console.log(await bashTool.execute({ command: "cat ${join(H, "dof/slack/C1/channel.md")}; seq 1 20000" }));`;
+      const a = await run("LA", ["slack"], [process.execPath, "--input-type=module", "-e", body]);
+      const file = /Full output: (.+?)\]/.exec(a.out)?.[1];
+      assert.ok(file, a.out);
+      assert.equal(file.startsWith(join(paths.out("LA"), "tmp/")), true, file);
+      assert.match(readFileSync(file, "utf8"), /^# C1\n/);
+      const b = await run("LB", [], ["sh", "-c", `cat '${file}'; touch /tmp/hortus-f4-left-$$ && echo wrote`]);
+      assert.equal(b.out, "");
+      // close removes tasks/<id>, and the copy with it: nothing to find afterwards
+      assert.equal(file.startsWith(paths.task("LA")), true);
     });
     test("no Landlock: spawnSandboxed throws with the shim's reason", async () => {
       const fake = join(root, "fake-shim");
