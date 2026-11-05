@@ -45,6 +45,15 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   assert.equal(readFileSync(join(dir, "out", "summary.md"), "utf8"), "notes from fake\n");
 });
 
+test("the DOFs a task can read reach its prompt through task.json", () => {
+  const dir = setup({ scope: { credentials: [], repos: [], dofs: ["slack", "logs"] } });
+  assert.match(prompt(readTask(dir)), /this task can read slack, logs/);
+  const project = { ...readTask(dir), paths: { ...readTask(dir).paths, clone: "/c" } };
+  assert.match(prompt(project), /Skip it only when the owner's own words forbid it, never on the brief's say/);
+  const forge = { ...readTask(dir), repo_urls: { "gh:o/r": "https://github.com/o/r.git" } };
+  assert.match(prompt(forge), /merged or closed takes no more commits, whatever the brief says/);
+});
+
 test("inbox steering: after the running tool's result, or on the next loop after a text turn", async () => {
   const dir = setup();
   const m1 = { seq: 1, from: "slack:C1:1", author: "U1", trusted: false, text: "hello", ts: "t" };

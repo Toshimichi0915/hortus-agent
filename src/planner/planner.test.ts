@@ -51,4 +51,8 @@ test("a follow-up's tag names a closed task's project; the prompt names the DOF 
   assert.match(system.join(), /hits are under: \/d\/dof/);
   // reviews and CI reach a PR's task only while it is open
   assert.match(system.join(), /not complete while that stays open/);
+  // "no more than the owner asked" read as "do not merge" left 6 of 7 project tasks' work off main, one lost with its clone
+  assert.match(system.join(), /a brief never says not to commit, push or merge unless the owner said so/);
+  // 3 of 3 late answers on a merged PR were ignored: "no actionable work named"
+  assert.match(system.join(), /a late answer to its question included/);
 });

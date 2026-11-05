@@ -149,8 +149,13 @@ define("task_attach", {
   roles: planner,
   input: z.object({ task_id: z.string(), event_ids: EventIds }),
   run({ task_id, event_ids }) {
-    task(task_id);
     const evs = events(event_ids);
+    // a reply in a thread a chat posted in is routed to it (v6 › Chat), and starts it with nobody watching, on the
+    // owner's files: so not a stranger's (v7 › Review round 22)
+    if (tasks.get(task_id).kind === "chat") {
+      const other = evs.find((e) => !e.trusted);
+      if (other) throw new RpcError("forbidden", `untrusted event e${other.id}: a chat takes trusted events only`);
+    } else task(task_id);
     const can = readableOf(pctx().db, pctx().config, task_id);
     const seqs = evs.map((e) => {
       const ref = refsOf(e)[0];
@@ -226,15 +231,23 @@ define("task_close", {
     const prs = prTurns(pctx().db, task_id);
     const ended = prs.flatMap((p) => (p.end ? [p.end] : []));
     const over = ended.length === prs.length;
-    const moot = prs.filter((p) => over && (p.end?.trusted || /^\S*(merged?|fulfilled) /.test(p.end?.summary ?? "")));
+    const merged = (s = "") => /^\S*(merged?|fulfilled) /.test(s);
+    const moot = prs.filter((p) => over && (p.end?.trusted || merged(p.end?.summary)));
     const live = (path: string | null) => {
       const on = mergeTarget(path ?? "");
       return !on || !moot.some((p) => p.ref.endsWith(`:${on}`));
     };
     if (waiting.some((a) => live(a.path)))
       throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
-    // the card's last word was the Worker's "open, not merged". ponytail: the card only: out/summary.md is the Worker's
-    // file, not one for hortusd to append to, so `logs/<id>/summary.md` keeps it
+    // someone else's end, and the Worker is who tells the owner: with an `ended:` on the card the Planner closed at once,
+    // 2 of 2 live, and nobody ever said who closed the PR (round 22)
+    const unheard = ended.find((e) => !e.trusted && !merged(e.summary) && e.task_id === null);
+    if (unheard)
+      throw new RpcError(
+        "invalid",
+        `task ${task_id}: someone else ended its PR/MR and the Worker has not heard; task_attach e${unheard.id}, and close it on its report`,
+      );
+    // the card's and the log's last word was the Worker's "open, not merged" (out/summary.md stays the Worker's file)
     const how = over ? ended.flatMap((e) => /^\S+ \S+ by .*?(?=: )/.exec(e.summary)?.[0] ?? []) : [];
     if (how.length)
       pctx()

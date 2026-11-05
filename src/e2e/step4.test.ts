@@ -98,7 +98,14 @@ function startDaemon(): void {
       bin("hortusd"),
     ],
     {
-      env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: String(port), HORTUS_NO_NET: "1" },
+      env: {
+        ...process.env,
+        HORTUS_HOME: home,
+        HORTUS_CONSOLE_PORT: String(port),
+        HORTUS_NO_NET: "1",
+        HORTUS_PLANNER_RETRY_MS: "100",
+        HORTUS_PLANNER_RECHECK_MS: "1000",
+      },
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
@@ -704,6 +711,33 @@ const prTurn = (id: string, n: number, key = "", trusted = 1, summary = "") =>
       ).run(key, t, trusted, t, summary, JSON.stringify([ref]));
   });
 
+test("a reply in a thread a chat posted in reaches the chat, a stranger's does not", { skip }, async () => {
+  const ins = db((d) => d.prepare("SELECT 1 FROM tasks WHERE id = 'ta-chat'").get());
+  assert.equal(ins, undefined);
+  db((d) => {
+    d.prepare(
+      "INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, event_keys, created, updated) VALUES ('ta-chat', 'chat', 't', 'b', 'running', '{}', '{}', '{}', '[]', 't', 't')",
+    ).run();
+  });
+  mkdirSync(join(paths.ctl("ta-chat"), "inbox"), { recursive: true });
+  planner(`export default ({ n, events }) => n === 0
+    ? { calls: events.map((e) => ({ name: "task_attach", input: { task_id: "ta-chat", event_ids: [e.id] } })) }
+    : { text: "ok" };`);
+  const count = batches().length;
+  const posted = slack.post("C1", { user: "U1", text: "the owner replies to a chat's post" });
+  const other = slack.post("C1", { user: "U2", text: "a stranger replies to a chat's post" });
+  assert.ok(posted && other);
+  await waitEvent("a stranger replies to a chat's post");
+  const b = await nextBatch(count);
+  const [mine, theirs] = toolResults(b);
+  assert.doesNotMatch(String(mine?.output), /not_found|forbidden/);
+  assert.match(String(theirs?.output), /forbidden: untrusted event/);
+  const inbox = db((d) => d.prepare("SELECT body FROM inbox WHERE task_id = 'ta-chat'").all()) as { body: string }[];
+  assert.equal(inbox.length, 1);
+  assert.match(inbox[0]?.body ?? "", /the owner replies to a chat's post/);
+  db((d) => d.prepare("UPDATE tasks SET status = 'failed' WHERE id = 'ta-chat'").run());
+});
+
 test("task_close refuses a chat task, one on its timers, one at work, one whose request waits unless the owner ended its PR", {
   skip,
 }, async () => {
@@ -738,19 +772,21 @@ test("task_close refuses a chat task, one on its timers, one at work, one whose 
   prTurn("tc-back", 1, "b2", 1, "pull_request.reopened o/r!1 by toshi: (its text)");
   asks("tc-theirs");
   prTurn("tc-theirs", 1, "t1", 0, "pull_request.closed o/r!1 by mallory: (its text)");
+  ins("tc-unheard", "unattended");
+  prTurn("tc-unheard", 1, "u1", 0, "pull_request.closed o/r!1 by mallory: (its text)");
   db((d) =>
     d
       .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
       .run(new Date(Date.now() + 864e5).toISOString(), t),
   );
   planner(`export default ({ n }) => n === 0
-    ? { calls: ["tc-chat", "tc-timer", "tc-work", "tc-asks", "tc-moot", "tc-back", "tc-theirs"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    ? { calls: ["tc-chat", "tc-timer", "tc-work", "tc-asks", "tc-moot", "tc-back", "tc-theirs", "tc-unheard"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
     : { text: "ok" };`);
   const count = batches().length;
   slack.post("C1", { user: "U1", text: "close them" });
   const b = await nextBatch(count);
-  await until(() => toolResults(b).length === 7);
-  const [chat, timer, work, asked, moot, back, theirs] = toolResults(b);
+  await until(() => toolResults(b).length === 8);
+  const [chat, timer, work, asked, moot, back, theirs, unheard] = toolResults(b);
   assert.match(String(chat?.output), /not_found: no task tc-chat/);
   assert.match(String(timer?.output), /invalid: task tc-timer has 1 timer/);
   assert.equal(taskRow("tc-chat")?.status, "waiting");
@@ -768,6 +804,8 @@ test("task_close refuses a chat task, one on its timers, one at work, one whose 
   assert.equal(entry.status, "expired");
   assert.match(String(back?.output), /invalid: task tc-back has a request waiting/);
   assert.match(String(theirs?.output), /invalid: task tc-theirs has a request waiting/);
+  assert.match(readFileSync(join(paths.logs(), "tc-moot", "summary.md"), "utf8"), /## Ended\npull_request\.merged/);
+  assert.match(String(unheard?.output), /invalid: task tc-unheard: someone else ended its PR\/MR .*task_attach e\d+/);
   assert.match(batchText(b), /tc-asks "x" \(waiting, host, 0 tokens, 1 waiting for the owner\)/);
   assert.equal(taskRow("tc-asks")?.status, "waiting");
 });
@@ -855,6 +893,7 @@ test("the end of a PR frees only what waits on that PR, and a task with another 
 test("a Worker's turn that ends without done on a task whose PRs all ended still reaches the Planner", {
   skip,
 }, async () => {
+  await killDaemon(); // a fresh notify window
   planner(`export default ({ n, events }) => n === 0 && events[0]
     ? { calls: [{ name: "task_create", input: { title: "x", brief: "no directive: the turn ends with no done", event_ids: [events[0].id], scope: { project: "foo" } } }] }
     : { text: "ok" };`);
@@ -863,6 +902,12 @@ test("a Worker's turn that ends without done on a task whose PRs all ended still
   const b = await nextBatch(count++);
   const id = (JSON.parse(toolResults(b)[0]?.output ?? "{}") as { id: string }).id;
   await until(() => taskRow(id)?.status === "waiting", 15_000, "the first turn");
+  // no PR, no request, no timer: nothing would ever say it stopped
+  await until(
+    () => slack.calls.some((c) => new RegExp(`^task ${id} stopped without a result`).test(c.params.text ?? "")),
+    70_000,
+    "the owner told",
+  );
   // an open PR: a turn that ends so is the usual wait, nobody is asked
   prTurn(id, 1);
   await api("task.message", { id, text: "the first" });
@@ -944,6 +989,7 @@ test("planner RPCs from a worker-role address → forbidden", { skip }, async ()
 test("daily_tokens: a batch over the cap → the next wakes are skipped and logged once; the next day resumes", {
   skip,
 }, async () => {
+  await killDaemon(); // a fresh notify window
   await configure((c) => {
     c.planner = { ...c.planner, daily_tokens: 1000 };
   });
@@ -964,11 +1010,14 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
     assert.equal(batches().length, count, "skipped");
     const log = readFileSync(join(fake, "hortusd.log"), "utf8");
     assert.equal(log.match(/planner\.daily_tokens reached/g)?.length, 1);
-    // the next day: the usage row is keyed by the owner's date
+    const told = () =>
+      slack.calls.filter((c) => c.method === "chat.postMessage" && /reached daily_tokens/.test(c.params.text ?? ""));
+    await until(() => told().length, 70_000, "the owner told why nothing answers");
+    // the next day: the usage row is keyed by the owner's date; what waited goes without a new event to wake it
     db((d) => d.prepare("UPDATE planner_usage SET day = '2000-01-01'").run());
-    slack.post("C1", { user: "U1", text: "cap four" });
     const b = await nextBatch(count++);
-    assert.equal(batchText(b).match(/^- \[e/gm)?.length, 3);
+    assert.equal(batchText(b).match(/^- \[e/gm)?.length, 2);
+    assert.equal(told().length, 1);
   } finally {
     await configure((c) => {
       c.planner = { ...c.planner, daily_tokens: 5e6 };
@@ -976,7 +1025,7 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
   }
 });
 
-test("recovery: a batch killed with hortusd is not re-run; the next event's batch lists the open cards", {
+test("recovery: a batch killed with hortusd is run again, once its leftovers are gone; the next batch lists the cards", {
   skip,
 }, async () => {
   planner(`export default async ({ n, events }) => {
@@ -991,14 +1040,16 @@ test("recovery: a batch killed with hortusd is not re-run; the next event's batc
   spawnSync("systemctl", ["--user", "kill", "-s", "KILL", `${unit}.scope`]);
   await exited;
   spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  // the order it held, not its death, is what comes back; `n` counts on, as a batch with nothing routed keeps its number
+  planner(`export default ({ events, results }) => !results.length && events.length
+    ? { calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
+    : { text: "ok" };`);
   startDaemon();
   await up();
-  await sleep(3500);
-  assert.equal(batches().length, count, "not re-run");
-  assert.equal(reqs(killed).length, 1);
+  await until(() => eventRow("the slow one")?.ignored, 15_000, "the verdict the killed batch never gave");
+  await until(() => !taskRow(killed), 15_000, "its row");
   assert.ok(!existsSync(paths.task(killed)));
-  assert.ok(!taskRow(killed));
-  assert.ok((eventRow("the slow one")?.consumed ?? 0) > 0);
+  count = batches().length;
   slack.post("C1", { user: "U1", text: "after the restart" });
   const b = await nextBatch(count);
   const text = batchText(b);
@@ -1126,7 +1177,21 @@ test("failures reach the owner once: a coalesced DM and one Planner row each, no
   }
 });
 
-test("a Planner batch that dies: one DM, no Planner row, its events stay consumed", { skip }, async () => {
+test("a Planner batch that dies once: run again, the event routed, no DM", { skip }, async () => {
+  await killDaemon(); // a fresh notify window
+  planner(`import { existsSync, writeFileSync } from "node:fs";
+  export default ({ events, results }) => {
+    const once = ${JSON.stringify(join(fake, "died-once"))};
+    if (!existsSync(once)) { writeFileSync(once, ""); process.exit(3); }
+    return !results.length && events.length ? { calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] } : { text: "ok" };
+  };`);
+  const before = failureDms().length;
+  slack.post("C1", { user: "U1", text: "a provider's blip takes this" });
+  await until(() => eventRow("a provider's blip takes this")?.ignored, 20_000, "the second batch's verdict");
+  assert.equal(failureDms().length, before);
+});
+
+test("a Planner batch that keeps dying: three runs, one DM, no Planner row, its events stay consumed", { skip }, async () => {
   await killDaemon(); // a fresh notify window
   planner("export default () => process.exit(3);");
   const before = failureDms().length;
@@ -1136,6 +1201,8 @@ test("a Planner batch that dies: one DM, no Planner row, its events stay consume
   assert.match(failureDms().at(-1) ?? "", /^a Planner batch failed: its events may be unrouted /);
   planner(IGNORE_ALL);
   await sleep(3500);
-  assert.equal(batches().length, count + 1, "not re-run, nothing fed back");
+  const dead = batches()[count] as string;
+  assert.equal(reqs(dead).length, 3, "the first run and its two retries, nothing fed back");
+  assert.equal(batches().length, count + 1);
   assert.ok((eventRow("the batch dies on this")?.consumed ?? 0) > 0);
 });

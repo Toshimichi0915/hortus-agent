@@ -60,7 +60,9 @@ With the fake Slack, a fake provider for the Planner where determinism matters, 
 - `daily_tokens`: a cap of 1000 with a batch using 1500 → the next wake is skipped, logged once, and resumes the next day (clock mocked).
 - `PAUSED` → no batch; unpause → one batch with everything pending.
 - Results: a Worker's `done` on an unattended task wakes a batch with a `## Results` section; the Planner's `task_close(done)` closes it; `budget_exceeded` shows as such.
-- Recovery: a Planner VM/host run killed mid-batch does not re-run the batch; the next event's batch lists the open cards.
+- Recovery: a Planner run killed mid-batch, or one that dies (exit non-zero, a failed start), puts back what has no verdict: `consumed = 0`, and open tasks' results. A death runs again after 30 s and 60 s (`HORTUS_PLANNER_RETRY_MS`), then stays consumed, with the DM `a Planner batch failed: its events may be unrouted`. A restart retries at once, without counting (v7 › Review round 22).
+- A 10-minute check wakes a batch while events wait (`HORTUS_PLANNER_RECHECK_MS`): past the day's `daily_tokens`, or a credential or image that arrived, no event need come. The cap tells the owner once a day with something waiting.
+- `task_attach` reaches a chat (v6 › Chat: routed replies), trusted events only: it starts the session with nobody watching. `task_close` refuses a task whose PR/MR someone else ended until that event is attached: the Worker is who tells the owner.
 - Planner cannot: `send`/`done`/`edit` are absent from its tools; an RPC `task_create` from a worker-role address → `forbidden`; the Planner's `bash` cannot write (unattended profile with no rw dirs but `out/`).
 - `task_create` without a project and without an image → the Planner receives `failed: no VM image…` and the test asserts it then calls `event_ignore` or retries with a project (fake-scripted).
 - The system prompt is byte-identical across two batches (hash asserted) and the user message changes.

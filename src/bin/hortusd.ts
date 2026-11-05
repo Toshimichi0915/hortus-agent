@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --no-warnings=ExperimentalWarning
 /** hortusd: config → socket (fails fast if another daemon has it, before the DB is touched) → DB → modules. */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import { browserModule } from "../browser/login-view.ts";
 import { type Config, load } from "../config.ts";
@@ -115,18 +116,22 @@ async function main(): Promise<void> {
   exitHooks.onResult = (t, m) => {
     if (t.kind !== "chat" && m.text) wakePlanner();
   };
-  // a turn that ended without `done` on a task with nothing left to wake it: a close refused while it ran or while a
-  // request waited, and the PR over. Nothing else reaches the Planner, and the task would wait on an ended PR for good
+  // a turn that ended without `done` on a task with nothing left to wake it. A close refused while it ran or while a
+  // request waited, and the PR over: nothing else reaches the Planner, and the task would wait on an ended PR for good.
+  // No PR: a question on the card, or work finished with a plain last line. Only the owner can tell those apart, and
+  // nothing else said the task stopped (round 22)
   exitHooks.onExit.push((t, msgs) => {
     if (t.kind === "chat" || t.status !== "waiting" || t.error || msgs.some((m) => m.type !== "reply")) return;
+    if (existsSync(join(paths.ctl(t.id), "STOP"))) return;
     const prs = prTurns(ctx.db, t.id);
-    if (!prs.length || prs.some((p) => !p.end)) return;
+    if (prs.some((p) => !p.end)) return;
     const { n } = ctx.db
       .prepare(
         "SELECT (SELECT COUNT(*) FROM approvals WHERE status = 'pending' AND task_id = ?) + (SELECT COUNT(*) FROM schedules WHERE task_id = ?) AS n",
       )
       .get(t.id, t.id) as { n: number };
     if (n) return;
+    if (!prs.length) return stopped(`task ${t.id} stopped without a result: it may be waiting for you`);
     tasks.failureRow(t.id, "result", "its turn ended without done, and every PR/MR of it has ended");
     wakePlanner();
   });
@@ -156,6 +161,7 @@ async function main(): Promise<void> {
     failure(text);
     wakePlanner();
   };
+  const stopped = coalesce(dm("/tasks"), NOTIFY_MS, (n) => `${n} more task${n > 1 ? "s" : ""} stopped`);
   // planner.runtime = "vm" (and 3g's Worker VMs): the proxy finds a VM by its tap address
   vm.init({ links });
 
