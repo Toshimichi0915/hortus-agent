@@ -249,6 +249,9 @@ const H: Harness[] = [
     outScope: "/api/v4/projects/g%2Fother/issues",
     create: { path: "/api/v4/projects", body: JSON.stringify({ name: "newp" }) },
     writes: [
+      ["GET", "/api/v4/projects/g%2Fsub%2Fp/variables/DEPLOY_KEY"],
+      ["GET", "/api/v4/projects/g%2Fsub%2Fp/pipelines/1/variables"],
+      ["GET", "/api/v4/projects/g%2Fsub%2Fp/secure_files/1/download"],
       ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/merge"],
       ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/rebase"],
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/merge_trains/merge_requests/1"],
@@ -936,7 +939,7 @@ for (const h of H) {
     assert.ok(pending(true).some((p) => p.id === id));
     gate.decide(id, "reject", "owner");
     for (const [method, path] of h.writes) {
-      const r = await send({ host: h.apiHost, path, method, headers: h.rest, body: "{}" });
+      const r = await send({ host: h.apiHost, path, method, headers: h.rest, ...(method === "GET" ? {} : { body: "{}" }) });
       assert.ok(isApproval(r), `${method} ${path}: ${r.body}`);
       const wid = JSON.parse(r.body).approval as number;
       assert.ok(

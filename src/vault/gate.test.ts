@@ -296,6 +296,10 @@ test("a decide that throws inside a caller's transaction: its savepoint is gone,
 test("consequential: chat.delete asks per request and never reaches the judge, even one that would allow", async () => {
   mode = "allow";
   const before = llmSeen.length;
+  for (const path of ["/api/auth.revoke", "/api/apps.uninstall"]) {
+    const r = row(pendingId(await send({ path })));
+    assert.equal(JSON.parse(r.payload ?? "{}").consequential, true, path);
+  }
   const id = pendingId(await send({ path: "/api/chat.delete" }));
   const r = row(id);
   assert.deepEqual([r.kind, r.status], ["request", "pending"]);
