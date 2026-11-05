@@ -62,8 +62,9 @@ itself (`go install`, `cargo install`, `uv tool`) is on its `PATH`. `~/.config/m
 
 A chat session keeps `rw` on the rest, minus the deny set: `~/.ssh`, `~/.gnupg`, the cloud, package-manager and agent
 credentials, browser and app profiles, wallets and shell histories. That is a list, and a list cannot be complete: a
-chat has your reach, with you watching. No Worker, chat or not, has a pty on the host (`script`, `expect`, Python's `pty`)
-or `sudo`. A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at the price of tasks seeing
+chat has your reach, with you watching. It writes `/tmp` and `/var/tmp` but connects to no socket a program of yours
+left there (tmux, screen, X, an ssh-agent are a shell outside its domain). No Worker, chat or not, has a pty on the host
+(`script`, `expect`, Python's `pty`) or `sudo`. A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at the price of tasks seeing
 each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0`). `GOPATH`, `XDG_DATA_HOME` and the JVM's
 `java.io.tmpdir` point into the task's own directories, and `~/.m2/settings.xml` is denied, so a Worker's Maven runs
 without your mirrors and servers there.
@@ -89,7 +90,7 @@ messenger, one forge and the Planner's (and Workers') model:
 ```
 
 - `dofs.<name>`: a source; `type` is the connector, `owner` your user id there (only your messages are trusted by
-  default: `trust`). Forges list `repos`; a self-hosted one sets `host`.
+  default: `trust`; `trust: "members"` on Telegram and Discord counts only chats and guilds you are in yourself). Forges list `repos`; a self-hosted one sets `host`.
 - `owner.notify`: the DOF whose DM tells you about new approvals and failed tasks.
 - `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
 - `policy`: `human` (the default) asks you for **every** credentialed request, one decision each, as v6 says. It is

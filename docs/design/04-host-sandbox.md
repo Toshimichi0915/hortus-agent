@@ -91,3 +91,5 @@ Edge cases: 253 concurrent sessions exhaust addresses → `open()` throws `no se
 - A new profile (v6 Deferred: confined chat) is a `kind` and a mode table row in `landlock.ts`; the shim does not change.
 - `policy.deny`, `policy.cache` and `policy.read` let the owner extend the sets from Settings without code.
 - The shim speaks a line protocol, so a future vsock/VM launcher or a different sandbox can reuse the profile builder.
+
+**Round 22.** A chat's `/tmp`, `/var/tmp` and `/run/screen` are `rn`, not `rw`: `landlock.ts › SHARED`. A session's own sockets there still answer it. A host session is killed at its `hours` plus `HOST_GRACE` (60 s), as QEMU is at its deadline.

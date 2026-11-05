@@ -48,3 +48,5 @@ Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last r
 
 - A new trigger kind (e.g. "on a file change") would be a column and a case in the tick; runs and expiry are untouched.
 - The script runner is F5's; a different interpreter is a `task.json` field.
+
+**Round 22.** A run is its parent's at the gate: `taintOf` adds the parent's, `taint()` on a run marks the parent too (the next run reads what this one left in `/schedule`), and the parent's task grants cover it (`gate.ts › PARENT`, `jar.ts › grantedOrigins`).
