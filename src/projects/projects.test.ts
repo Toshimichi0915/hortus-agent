@@ -297,7 +297,11 @@ test("merge (git): entry with stat and patch → approve → the checkout has it
   const second = (await mergeAs("ta")).approval;
   writeFileSync(join(checkout, "README.md"), "dirty\n");
   writeFileSync(join(checkout, "untracked.log"), "the owner's own file\n"); // untracked: not a reason to refuse
-  await approve(second);
+  // the CLI prints this: "approved" alone read as merged
+  assert.match(
+    ((await approve(second)) as { message: string }).message,
+    /^approved, not landed: checkout is not clean/,
+  );
   assert.equal(entry(second).status, "approved");
   assert.equal(entry(second).reason, "checkout is not clean");
   assert.ok(inboxOf("ta").some((m) => m.from === "merge" && /did not land: checkout is not clean/.test(m.text)));

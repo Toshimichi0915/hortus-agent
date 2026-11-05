@@ -2,7 +2,11 @@
  * Round 8: does the live Planner scope `scope.dofs` narrowly (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`)? The real
  * planner prompt and tools, live DeepSeek through ollama.com (the key copied into the temp ctl/home, as live.test.ts),
  * one batch of the owner's requests; the verdict RPCs go to a recording stand-in for hortusd.internal. Only two events
- * need a DOF (a thread's history, a search of past messages); every other task must get none. Prints `# planner …`.
+ * need a DOF (a thread's history, a search of past messages); every other task should get none. Prints `# planner …`.
+ *
+ * A tally over RUNS batches, not one batch (round 13): the model hands a DOF to about 1 unneeded task in 25 with this
+ * prompt ("reply to bob" so as to read the channel, "remind me" so as to confirm in the thread), and to 1 in 5 without
+ * its rule (round 8), so one batch failed 1 run in 4 and told nobody anything. The bound sits between the two rates.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -43,11 +47,17 @@ const NEEDS = new Set(["e3", "e5"]);
 /** an issue comment: its other comments are arguably context (the prompt allows it), so either choice passes */
 const MAY = new Set(["e7"]);
 
-test("live Planner: scope.dofs only where the task needs more than the brief", {
-  skip: !live,
-  timeout: 300_000,
-}, async () => {
-  const created: { event_ids: string[]; scope?: { dofs?: string[] } }[] = [];
+const RUNS = 5;
+/** of RUNS × 5 unambiguous tasks; at 1 in 25 this fails about 1 tally in 50, at 1 in 5 it passes about 1 in 4 */
+const MAX_WIDE = 3;
+
+interface Created {
+  event_ids: string[];
+  scope?: { dofs?: string[] };
+}
+
+async function batch(): Promise<Created[]> {
+  const created: Created[] = [];
   const rpc = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => {
@@ -91,14 +101,21 @@ test("live Planner: scope.dofs only where the task needs more than the brief", {
   } finally {
     rpc.close();
   }
-  const choices = created.map((c) => `${c.event_ids.join("+")}:${JSON.stringify(c.scope?.dofs ?? [])}`);
-  const wide = created.filter(
-    (c) => (c.scope?.dofs ?? []).length && !c.event_ids.some((e) => NEEDS.has(e) || MAY.has(e)),
-  );
-  const missed = created.filter((c) => c.event_ids.some((e) => NEEDS.has(e)) && !(c.scope?.dofs ?? []).length);
-  console.log(
-    `# planner (${MODEL}): ${created.length} tasks, scope.dofs ${choices.join(" ")}; ${wide.length} wider than needed, ${missed.length} without a needed DOF`,
-  );
-  assert.ok(created.length >= 5, choices.join(" "));
-  assert.deepEqual(wide, [], "a DOF given where the brief was enough");
+  return created;
+}
+
+test("live Planner: scope.dofs only where the task needs more than the brief", {
+  skip: !live,
+  timeout: 300_000,
+}, async () => {
+  const runs = await Promise.all(Array.from({ length: RUNS }, batch));
+  const choices = runs.map((r) => r.map((c) => `${c.event_ids.join("+")}:${JSON.stringify(c.scope?.dofs ?? [])}`));
+  const all = runs.flat();
+  const wide = all.filter((c) => (c.scope?.dofs ?? []).length && !c.event_ids.some((e) => NEEDS.has(e) || MAY.has(e)));
+  const missed = all.filter((c) => c.event_ids.some((e) => NEEDS.has(e)) && !(c.scope?.dofs ?? []).length);
+  for (const c of choices) console.log(`# planner (${MODEL}): ${c.length} tasks, scope.dofs ${c.join(" ")}`);
+  console.log(`# planner tally: ${wide.length} wider than needed, ${missed.length} without a needed DOF, ${RUNS} runs`);
+  for (const c of choices) assert.ok(c.length >= 5, c.join(" "));
+  assert.ok(wide.length <= MAX_WIDE, `${wide.length} DOFs given where the brief was enough: ${JSON.stringify(wide)}`);
+  assert.ok(missed.length <= 1, `${missed.length} tasks without a DOF they need: ${JSON.stringify(missed)}`);
 });

@@ -104,12 +104,12 @@ export function land(id: number): Promise<string | null> {
   return next;
 }
 
-/** After `gate.decide(id, "approve")`: a merge entry lands (other categories are not ours). */
-export async function onApproved(id: number): Promise<void> {
+/** After `gate.decide(id, "approve")`: a merge entry lands (other categories are not ours); why not, if it did not. */
+export async function onApproved(id: number): Promise<string | null> {
   const row = ctx().db.prepare("SELECT category FROM approvals WHERE id = ?").get(id) as
     | { category: string }
     | undefined;
-  if (row?.category === "merge") await land(id);
+  return row?.category === "merge" ? await land(id) : null;
 }
 
 async function landNow(id: number): Promise<string | null> {

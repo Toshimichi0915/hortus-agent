@@ -277,7 +277,8 @@ function pktEnd(b: Buffer): number | undefined {
   return undefined;
 }
 
-/** The leading ref commands of a `git-receive-pack` body (≤ 64 KB, else null) and a stream of the whole body. */
+/** The leading ref commands of a `git-receive-pack` body (≤ 1 MB, about 10,000 refs, else null) and a stream of the
+ * whole body. ponytail: a body dripped a byte at a time re-joins what it has per chunk; each turn stays short */
 function peekCommands(r: Readable): Promise<{ body: Readable; commands: string | null }> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -303,7 +304,7 @@ function peekCommands(r: Readable): Promise<{ body: Readable; commands: string |
       const b = Buffer.concat(chunks);
       const end = pktEnd(b);
       if (end !== undefined) done(end < 0 ? null : b.subarray(0, end).toString("utf8"), false);
-      else if (b.length > 64 * 1024) done(null, false);
+      else if (b.length > REQUEST_BUFFER) done(null, false);
     };
     const onEnd = () => done(null, true);
     r.on("data", onData);
@@ -449,6 +450,26 @@ const routed = (path: string): string =>
     .replace(/\/{2,}/g, "/")
     .replace(/(.)\/$/, "$1")
     .replace(/(\w)\.json$/i, "$1");
+
+const overrideHeader = (t: Template): boolean =>
+  Object.keys(t.headers).some((k) => /^x-(http-)?method(-override)?$/i.test(k));
+
+/** `_method` as a key of a query or a form, however spelled; the same word in a value is someone's text. */
+const hasKey = (s: string): boolean =>
+  s.split(/[&;]/).some((p) => decoded(p.split("=", 1)[0] ?? "").trim() === "_method");
+
+/** A real `_method` field: in the query, a urlencoded body (Rack takes a POST with no type as one) or a multipart part's
+ * own headers. Any other body is not a form, so nothing in it is a key. */
+function overrideField(t: Template, ct: string, llmCall: boolean): boolean {
+  if (hasKey((t.url.match(URL_PARTS)?.[3] ?? "").slice(1))) return true;
+  if (llmCall || !t.body) return false;
+  if (ct === "" || /^application\/x-www-form-urlencoded/i.test(ct)) return hasKey(t.body);
+  const boundary = /^multipart\//i.test(ct) && ct.match(/boundary="?([^";]+)/i)?.[1];
+  if (!boundary) return false;
+  return t.body
+    .split(`--${boundary}`)
+    .some((part) => /^content-disposition:.*\bname="?_method\b/im.test(part.split(/\r?\n\r?\n/, 1)[0] ?? ""));
+}
 
 const sorted = (h: Record<string, string>) =>
   Object.fromEntries(
@@ -607,9 +628,17 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const manifests = new Set<Manifest>(tf ? [tf.manifest] : []);
   let category: string | undefined;
   const requestPath = template.url.match(URL_PARTS)?.[2] || "/";
-  // both ways: GitLab's `g%2Fp` is one segment to `projects/*`, and to a router that decodes first `o%2Fr` is two
+  // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a project
+  // spans segments (`o/r`), which a capture cannot delimit
+  const names = new Set(found.map((f) => f.h.name));
+  const projects = (task?.scope?.repos ?? [])
+    .filter((r) => names.has(r.slice(0, r.indexOf(":"))))
+    .map((r) => r.slice(r.indexOf(":") + 1));
+  // both ways: GitLab's `g%2Fp` is one segment to `projects/*`, and to a router that decodes first `o%2Fr` is two. An
+  // in-scope project stays one: `acme%2Fservices/issues` apart read as the `*/services**` of a project called `acme`
   const path = routed(requestPath);
-  const apart = routed(path.replace(/%2f/gi, "/"));
+  const whole = projects.reduce((s, x) => s.replaceAll(encodeURIComponent(x), "-"), path);
+  const apart = routed(whole.replace(/%2f/gi, "/"));
   // the scope patterns match the raw path, and upstreams (or their edges) resolve dot segments: a credentialed
   // `/projects/g%2Fp/../g%2Fother` would reach a project outside the scope. Refused, plain or encoded.
   if (found.length && /(^|\/)\.{1,2}(\/|$)/.test(apart))
@@ -617,17 +646,13 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // Rack::MethodOverride, in GitLab's stack, makes a POST whatever these say: the judged method would not be the method
   // run. No client of the shipped transforms sends one. ponytail: a custom transform for an API that needs the header
   // cannot use it through the proxy
-  const form = llmCall || /json/i.test(ct) ? "" : decoded(template.body ?? "");
-  if (
-    found.length &&
-    (Object.keys(template.headers).some((k) => /^x-(http-)?method(-override)?$/i.test(k)) ||
-      /[?&;]_method=/.test(decoded(template.url.match(URL_PARTS)?.[3] ?? "")) ||
-      /(^|[&;]|name="?)_method\b/.test(form))
-  )
+  if (found.length && (overrideHeader(template) || overrideField(template, ct, llmCall)))
     return refuse(403, "a credentialed request may not override its method", { host });
-  // v6: each push shows `old new refname`. A gzipped body or a list over 64 KB shows none, and git sends neither
+  // v6: each push shows `old new refname`. A gzipped body (git never sends one) or a list over 1 MB shows none
   if (found.length && RECEIVE_PACK.test(ct) && template.body === null)
-    return refuse(403, "a push whose ref commands cannot be read", { host });
+    return refuse(403, "a push whose ref commands cannot be read: gzipped, or over 1 MB of them; push fewer refs", {
+      host,
+    });
   for (const { h, loc } of found) {
     const name = h.name;
     let secret: Secret;
@@ -693,22 +718,20 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const blind =
     found.length > 0 &&
     template.stream &&
-    template.body === null &&
     !(git && ct.toLowerCase().startsWith(`application/x-git-${git}-pack-request`));
+  // over http.postBuffer git first posts a bare flush to see that auth holds: no command, so nothing a receive-pack
+  // writes and nothing to show the owner (it asked twice more per push, each entry blank)
+  const probe =
+    git === "receive" && RECEIVE_PACK.test(ct) && template.body === "0000" && req.headers["content-length"] === "4";
   const consequential =
-    blind ||
-    // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
-    [...manifests].some((m) =>
-      (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
-    ) ||
-    (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase()));
+    !probe &&
+    (blind ||
+      // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
+      [...manifests].some((m) =>
+        (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
+      ) ||
+      (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase())));
   if (found.length && client.task) {
-    // `{project}` takes each in-scope project of the credentials used (`<name>:<project>`), never a capture: a
-    // project spans segments (`o/r`), which a capture cannot delimit
-    const names = new Set(found.map((f) => f.h.name));
-    const projects = (task?.scope?.repos ?? [])
-      .filter((r) => names.has(r.slice(0, r.indexOf(":"))))
-      .map((r) => r.slice(r.indexOf(":") + 1));
     for (const m of manifests) {
       if (!m.scope?.length || consequential) continue;
       const ok = m.scope.some((p) =>
@@ -725,7 +748,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
 
   // 9. gate (only requests that carry a credential)
   let approved = false;
-  if (found.length && category && !found.every((f) => f.h.name === llm)) {
+  if (found.length && category && !probe && !found.every((f) => f.h.name === llm)) {
     const hash = hashTemplate(template);
     // a grant on the origin (checked above) passes captured-only requests that are not consequential
     const granted = capturedOnly && (client.role === "login" || !consequential);

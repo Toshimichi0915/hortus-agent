@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type http from "node:http";
 import { createServer } from "node:http";
@@ -64,6 +65,7 @@ writeVault({ ...gh.vault("github"), ...gl.vault("gitlab"), ...gl.vault("gle"), .
 
 const upstreams = {
   "api.github.com": gh.url,
+  "uploads.github.com": gh.url,
   "github.com": gh.url,
   "gitlab.com": gl.url,
   "gitlab.example.com": gl.url,
@@ -192,8 +194,12 @@ const H: Harness[] = [
       ["PATCH", "/repos/o/r"],
       ["POST", "/repos/o/r/branches/feat/x/rename"],
       ["POST", "/repos/o/r/releases"],
+      // round 13, from the published OpenAPI: a temporary private fork is a repository; an import fills one
+      ["POST", "/repos/o/r/security-advisories/GHSA-1/forks"],
+      ["PUT", "/repos/o/r/import"],
+      ["PATCH", "/repos/o/r/import"],
     ],
-    reachless: ["/graphql", "/repositories/1/pulls/1/merge"],
+    reachless: ["/graphql", "/repositories/1/pulls/1/merge", "/user/codespaces/c/publish"],
     closed: "closed",
     token: () => gh.mints.find((m) => m.repositories?.join() === "r")?.token,
     openIssue: (user, title, body, drop) => gh.openIssue("o/r", { user, title, body: body ?? "" }, { drop: !!drop }),
@@ -250,8 +256,24 @@ const H: Harness[] = [
       // Grape's `format :json` routes a `.json` suffix to the same endpoint
       ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/merge.json"],
       ["PUT", "/api/v4/projects/123/merge_requests/1/merge"],
+      // round 13, from the published OpenAPI: an import into a project, deletes that are a POST
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/import/git"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/jobs/1/erase"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/housekeeping"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/ml/mlflow/api/2.0/mlflow/runs/delete"],
+      ["POST", "/api/v4/projects/g%2Fsub%2Fp/ml/mlflow/api/2.0/mlflow/experiments/delete"],
     ],
-    reachless: ["/api/graphql", "/api/v4/projects/123/issues"],
+    // the creating routes with no project in them: the scope refuses them, stronger than asking
+    reachless: [
+      "/api/graphql",
+      "/api/v4/projects/123/issues",
+      "/api/v4/projects/user/5",
+      "/api/v4/projects/import",
+      "/api/v4/projects/remote-import",
+      "/api/v4/import/github",
+      "/api/v4/bulk_imports",
+      "/api/v4/groups/1/projects/2",
+    ],
     admin: { method: "POST", path: "/api/v4/projects/g%2Fp/members" },
     closed: "closed",
     token: () => gl.token,
@@ -310,6 +332,8 @@ const H: Harness[] = [
       ["POST", "/2.0/repositories/w/r/pullrequests/1/merge;x=1"],
       ["POST", "/2.0/repositories/w/r/pullrequests/1\\merge"],
       ["POST", "/2.0/repositories/w/r/pullrequests/1/m%2565rge"],
+      ["PUT", "/2.0/repositories/w/new"],
+      ["POST", "/2.0/repositories/w/r/forks"],
     ],
     reachless: ["/2.0/workspaces/w/projects", "/2.0/repositories/%7Bw%7D/%7Br%7D/issues"],
     admin: { method: "PUT", path: "/2.0/repositories/w/r" },
@@ -499,12 +523,13 @@ function git(h: Harness, cwd: string, ...args: string[]) {
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_COUNT: String(cfg.length),
+    ...(process.env.GIT_TRACE_CURL ? { GIT_TRACE_CURL: "1" } : {}),
   };
   cfg.forEach(([k, v], i) => {
     env[`GIT_CONFIG_KEY_${i}`] = k;
     env[`GIT_CONFIG_VALUE_${i}`] = v;
   });
-  return run("git", args, { cwd, env }).then((r) => r.stdout.trim());
+  return run("git", args, { cwd, env, maxBuffer: 256 * 1024 * 1024 }).then((r) => r.stdout.trim());
 }
 async function gitUntil(h: Harness, cwd: string, args: string[], stop: () => boolean = () => false) {
   autoApprove = true;
@@ -877,12 +902,15 @@ for (const h of H) {
       { path: inScope, headers: { ...h.rest, "x-http-method-override": "PUT" } },
       { path: inScope, headers: form, body: "a=1&_method=PUT" },
       { path: inScope, headers: form, body: "%5Fm%65thod=PUT" },
+      { path: inScope, headers: h.rest, body: "_method=PUT" },
+      { path: inScope, headers: form, body: "a=1; _method=PUT" },
       {
         path: inScope,
         headers: { ...h.rest, "content-type": "multipart/form-data; boundary=b" },
-        body: 'name="_method"',
+        body: '--b\r\nContent-Disposition: form-data; name="_method"\r\n\r\nPUT\r\n--b--\r\n',
       },
       { path: `${inScope}?_method=PUT`, headers: h.rest },
+      { path: `${inScope}?a=1&%5Fmethod=PUT`, headers: h.rest },
     ]) {
       const r = await send({ host: h.apiHost, method: "POST", body: "", ...s });
       assert.equal(r.status, 403, JSON.stringify(s));
@@ -903,6 +931,28 @@ for (const h of H) {
       "a body nobody sees is consequential",
     );
     gate.decide(xid, "reject", "owner");
+    // receive-pack's type shows only the commands, so off git's path the rest would go unseen; on it a bare flush passes
+    // (git's probe) only as all there is: anything after it is a body
+    for (const [path, body] of [
+      [inScope, `0000{"title":"unseen"}`],
+      [inScope, "0000"],
+      [`/${P}.git/git-receive-pack`, "0000 and more"],
+    ] as const) {
+      const r = await send({
+        host: path === inScope ? h.apiHost : h.gitHost,
+        path,
+        method: "POST",
+        headers: { ...h.rest, "content-type": "application/x-git-receive-pack-request" },
+        body,
+      });
+      assert.ok(isApproval(r), r.body);
+      const id = JSON.parse(r.body).approval as number;
+      assert.ok(
+        pending(true).some((p) => p.id === id),
+        `${path}: ${body} is consequential`,
+      );
+      gate.decide(id, "reject", "owner");
+    }
     // a push whose commands the owner could not be shown
     const hidden = await send({
       host: h.gitHost,
@@ -913,16 +963,46 @@ for (const h of H) {
     });
     assert.equal(hidden.status, 403, hidden.body);
     assert.match(hidden.body, /ref commands/);
-    // a word in a JSON body is only that
-    const said = await send({
-      host: h.apiHost,
-      path: inScope,
-      method: "POST",
-      headers: { ...h.rest, "content-type": "application/json" },
-      body: JSON.stringify({ title: "name=_method&_method=PUT" }),
-    });
-    assert.ok(isApproval(said), said.body);
-    gate.decide(JSON.parse(said.body).approval, "reject", "owner");
+    // `gh release upload` of a text file: the manifest names this host, so the scope must too
+    if (dof === "github") {
+      const up = await send({
+        host: "uploads.github.com",
+        path: "/repos/o/r/releases/1/assets?name=notes.txt",
+        method: "POST",
+        headers: { ...h.rest, "content-type": "text/plain" },
+        body: "notes",
+      });
+      assert.ok(isApproval(up), up.body);
+      gate.decide(JSON.parse(up.body).approval, "reject", "owner");
+    }
+    // the word as someone's text, in every body and query it can ride in, is only that: it asks like any other POST
+    const text = 'use _method=PUT or X-HTTP-Method-Override; name="_method"';
+    const words: { path?: string; headers: Record<string, string>; body?: string }[] = [
+      { headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "name=_method&_method=PUT" }) },
+      { headers: { "content-type": "application/json" }, body: JSON.stringify({ body: text }) },
+      { headers: { "content-type": "application/x-www-form-urlencoded" }, body: `body=${encodeURIComponent(text)}` },
+      { headers: { "content-type": "application/x-www-form-urlencoded" }, body: "body=a%3B_method%3DPUT" },
+      { headers: { "content-type": "text/plain" }, body: "_method=PUT is how Rails spells it" },
+      {
+        headers: { "content-type": "multipart/form-data; boundary=b" },
+        body: `--b\r\nContent-Disposition: form-data; name="body"\r\n\r\nname="_method"\r\nContent-Disposition: form-data; name="_method"\r\n--b--\r\n`,
+      },
+      { path: `${inScope}?search=${encodeURIComponent(text)}`, headers: {} },
+      { path: `${inScope}?search=a%3B_method%3DPUT`, headers: {} },
+      { path: `${inScope}?search=a%3B_method=PUT`, headers: {} },
+    ];
+    for (const s of words) {
+      const said = await send({
+        host: h.apiHost,
+        path: inScope,
+        method: "POST",
+        body: "",
+        ...s,
+        headers: { ...h.rest, ...s.headers },
+      });
+      assert.ok(isApproval(said), `${JSON.stringify(s)}: ${said.body}`);
+      gate.decide(JSON.parse(said.body).approval, "reject", "owner");
+    }
     if (h.admin) {
       const a = await send({
         host: h.apiHost,
@@ -961,9 +1041,159 @@ for (const h of H) {
     assert.equal(await gitUntil(h, cwd, ["push", "-q", "origin", "hortus/W"]), true);
     assert.equal(await h.sha("hortus/W"), head);
   });
+
+  test(`${dof}: real git through the proxy: one approval per push whatever its size, refs or chunking`, async () => {
+    const work = tempDir(`hortus-${dof}-big-`);
+    await gitUntil(h, work, ["clone", "-q", `https://${h.gitHost}/${P}.git`, "r"]);
+    const cwd = join(work, "r");
+    /** The Worker's git and the owner's approvals, as many as it takes; the consequential ones as they were shown. */
+    const until = async (dir: string, ...args: string[]) => {
+      const shown: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        const failure = await git(h, dir, ...args).then(
+          () => undefined,
+          (e: Error) => e.message,
+        );
+        if (failure === undefined) return shown;
+        const reads = pending(false);
+        const asked = pending(true);
+        assert.ok(reads.length + asked.length, `git ${args.join(" ")} failed with nothing to approve: ${failure}`);
+        for (const p of reads) gate.decide(p.id, "approve", "owner");
+        for (const p of asked) {
+          shown.push(String(JSON.parse(p.summary).rendered));
+          gate.decide(p.id, "approve", "owner");
+        }
+      }
+      throw new Error(`git ${args.join(" ")} never went through: ${shown.join(" | ")}`);
+    };
+    await git(h, cwd, "checkout", "-q", "-b", "hortus/big");
+    // 5 MB of incompressible data: over http.postBuffer, so git probes with `0000` and then sends it chunked
+    writeFileSync(join(cwd, "big.bin"), randomBytes(5 * 1024 * 1024));
+    await git(h, cwd, "add", "big.bin");
+    await git(h, cwd, "commit", "-q", "-m", "big");
+    const big = await until(cwd, "push", "-q", "origin", "hortus/big");
+    assert.equal(big.length, 1, big.join(" | "));
+    assert.match(big[0] ?? "", /refs\/heads\/hortus\/big/);
+    assert.equal(await h.sha("hortus/big"), await git(h, cwd, "rev-parse", "HEAD"));
+    // a small http.postBuffer forces the same path on a small push
+    await run("sh", ["-c", "echo small > small.txt"], { cwd });
+    await git(h, cwd, "add", "small.txt");
+    await git(h, cwd, "commit", "-q", "-m", "small");
+    assert.equal((await until(cwd, "-c", "http.postBuffer=1024", "push", "-q", "origin", "hortus/big")).length, 1);
+    // 1,200 tags are 90 KB of ref commands: one approval for the lot
+    const head = await git(h, cwd, "rev-parse", "HEAD");
+    const tags = Array.from({ length: 1200 }, (_, i) => `create refs/tags/r13-${String(i).padStart(4, "0")} ${head}`);
+    writeFileSync(join(work, "tags"), `${tags.join("\n")}\n`);
+    await run("sh", ["-c", `git update-ref --stdin < ${join(work, "tags")}`], { cwd });
+    assert.equal((await until(cwd, "push", "-q", "origin", "--tags")).length, 1);
+    // reads: a shallow fetch, ls-remote, a mirror clone of all of it, none of them consequential
+    const url = `https://${h.gitHost}/${P}.git`;
+    assert.deepEqual(await until(work, "clone", "-q", "--depth", "1", "--branch", "hortus/big", url, "s"), []);
+    assert.deepEqual(await until(join(work, "s"), "fetch", "-q", "--deepen", "1"), []);
+    assert.deepEqual(await until(work, "ls-remote", url), []);
+    assert.deepEqual(await until(work, "clone", "-q", "--mirror", url, "m.git"), []);
+    // --mirror sends every difference: one tag gone, one added
+    const m = join(work, "m.git");
+    await git(h, m, "tag", "-d", "r13-0000");
+    await git(h, m, "tag", "r13-new", await git(h, m, "rev-parse", "refs/heads/hortus/big"));
+    const mirrored = await until(m, "push", "-q", "--mirror");
+    assert.equal(mirrored.length, 1, mirrored.join(" | "));
+    // past the cap the push is refused, and the prompt's trace line is how the Worker tells that from a wait
+    const long = "x".repeat(200);
+    const many = Array.from({ length: 6000 }, (_, i) => `create refs/tags/${long}-${i} ${head}`);
+    writeFileSync(join(work, "many"), `${many.join("\n")}\n`);
+    await run("sh", ["-c", `git update-ref --stdin < ${join(work, "many")}`], { cwd });
+    process.env.GIT_TRACE_CURL = "1";
+    let trace = "";
+    for (let i = 0; i < 6 && !trace.includes("hortus: a push"); i++) {
+      trace = await git(h, cwd, "push", "-q", "origin", "--tags").then(
+        () => "",
+        (e: Error) => e.message,
+      );
+      for (const p of pending(false)) gate.decide(p.id, "approve", "owner"); // the info/refs read before it
+    }
+    delete process.env.GIT_TRACE_CURL;
+    assert.match(trace, /hortus: a push whose ref commands cannot be read/);
+    assert.equal(pending(true).length, 0, "a refusal leaves nothing to approve");
+  });
 }
 
 // ---- forge specifics ---------------------------------------------------------------------------------------------
+
+test("gitlab: a project called g/services is one project: a POST to it is no write to the services of a project g", async () => {
+  const set = (repos: string[]) =>
+    db.prepare("UPDATE tasks SET scope = ? WHERE id = 'W'").run(JSON.stringify({ ...SCOPE, repos }));
+  set([...SCOPE.repos, "gitlab:g/services"]);
+  try {
+    const ask = (path: string) =>
+      send({
+        host: "gitlab.com",
+        path,
+        method: "POST",
+        headers: { "private-token": "hortus-secret-gitlab", "content-type": "application/json" },
+        body: "{}",
+      });
+    const r = await ask("/api/v4/projects/g%2Fservices/issues");
+    assert.ok(isApproval(r), r.body);
+    const id = JSON.parse(r.body).approval as number;
+    assert.ok(
+      pending(false).some((p) => p.id === id),
+      "an issue on it is an ordinary POST",
+    );
+    gate.decide(id, "reject", "owner");
+    // and its own hooks, or the same words on a project outside the scope, still are what they say
+    for (const path of ["/api/v4/projects/g%2Fservices/hooks", "/api/v4/projects/g%2Fhooks/issues"]) {
+      const c = await ask(path);
+      assert.ok(isApproval(c), c.body);
+      const cid = JSON.parse(c.body).approval as number;
+      assert.ok(
+        pending(true).some((p) => p.id === cid),
+        `${path} is consequential`,
+      );
+      gate.decide(cid, "reject", "owner");
+    }
+  } finally {
+    set(SCOPE.repos);
+  }
+});
+
+test("names that hold a dot, `;`, %2f or end in .json are in scope and ordinary; git-lfs's batch is too", async () => {
+  const gh_ = { authorization: "Bearer hortus-secret-github" };
+  const gl_ = { "private-token": "hortus-secret-gitlab" };
+  const bb_ = { authorization: "Bearer hortus-secret-bitbucket" };
+  const basic = (u: string, d: string) => ({
+    authorization: `Basic ${Buffer.from(`${u}:hortus-secret-${d}`).toString("base64")}`,
+    "content-type": "application/vnd.git-lfs+json",
+  });
+  const repos = [...SCOPE.repos, "gitlab:g/my.proj"];
+  db.prepare("UPDATE tasks SET scope = ? WHERE id = 'W'").run(JSON.stringify({ ...SCOPE, repos }));
+  try {
+    for (const [method, host, path, headers] of [
+      ["GET", "api.github.com", "/repos/o/r/contents/package.json", gh_],
+      ["GET", "api.github.com", "/repos/o/r/contents/.github/workflows/a;b.yml?ref=feat/x", gh_],
+      ["GET", "api.github.com", "/repos/o/r/branches/feat%2Fx.y", gh_],
+      ["GET", "gitlab.com", "/api/v4/projects/g%2Fmy.proj/issues", gl_],
+      ["GET", "gitlab.com", "/api/v4/projects/g%2Fmy.proj/repository/files/.gitlab-ci.yml/raw?ref=main", gl_],
+      ["GET", "gitlab.com", "/api/v4/projects/g%2Fsub%2Fp/repository/files/src%2Fa.json", gl_],
+      ["GET", "gitlab.com", "/g/my.proj.git/info/refs?service=git-upload-pack", gl_],
+      ["GET", "api.bitbucket.org", "/2.0/repositories/w/r/src/main/package.json", bb_],
+      ["POST", "github.com", "/o/r.git/info/lfs/objects/batch", basic("x-access-token", "github")],
+      ["POST", "gitlab.com", "/g/sub/p.git/info/lfs/objects/batch", basic("oauth2", "gitlab")],
+      ["POST", "bitbucket.org", "/w/r.git/info/lfs/objects/batch", basic("x-token-auth", "bitbucket")],
+    ] as const) {
+      const r = await send({ host, path, method, headers, ...(method === "POST" ? { body: "{}" } : {}) });
+      assert.ok(isApproval(r), `${path}: ${r.status} ${r.body}`);
+      const id = JSON.parse(r.body).approval as number;
+      assert.ok(
+        pending(false).some((p) => p.id === id),
+        `${path} is an ordinary request`,
+      );
+      gate.decide(id, "reject", "owner");
+    }
+  } finally {
+    db.prepare("UPDATE tasks SET scope = ? WHERE id = 'W'").run(JSON.stringify(SCOPE));
+  }
+});
 
 test("gitlab: g/sub/p is g%2Fsub%2Fp in API paths and g__sub__p on disk, apart from g/p", () => {
   assert.equal(dirOf("g/sub/p"), "g__sub__p");

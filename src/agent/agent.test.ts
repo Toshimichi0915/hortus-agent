@@ -23,6 +23,8 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   assert.ok(a && b && summary);
   assert.equal(rest.length, 0);
   assert.equal(a.system, prompt(readTask(dir)));
+  const forge = { ...readTask(dir), repo_urls: { "gh:o/r": "https://github.com/o/r.git" } };
+  assert.match(prompt(forge), /GIT_TRACE_CURL=1 git push … 2>&1 \| grep hortus:/); // git hides a refusal's body
   assert.equal(b.system, a.system, "byte-identical across turns");
   assert.doesNotMatch(a.system, /coding agent/);
   assert.deepEqual(a.messages, [{ role: "user", content: "Do the test thing." }]);

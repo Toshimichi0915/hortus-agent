@@ -17,7 +17,7 @@ Spec: v6 › Connectors › Messengers (Discord and Telegram columns), Secret Va
 ### `src/connectors/telegram.ts`
 
 - `events()`: `getUpdates` long poll (`timeout=50`, `offset = last update_id + 1` is the ack, `allowed_updates` messages, edited messages, channel posts, reactions, chat members); key `update_id`. Author `member`: `getChatMember` cached 1 h (status in member/administrator/creator). Bot: `from.is_bot`.
-- Thread: `message_thread_id` (forum topics), else the root of the `reply_to_message` chain (followed through the mirror's files, since the API does not give the chain), else the message itself. Files: `getFile` + download `/file/bot{}/…` ≤ 20 MB.
+- Thread: `message_thread_id` (forum topics), else the root of the `reply_to_message` chain (followed through the mirror's files, since the API does not give the chain), else the message itself. Files: `getFile` + download `/file/bot{}/…` ≤ 20 MB. A download a stop cuts fails the mirror, and the gateway drops the row: the update is still Telegram's and comes again whole at the next start.
 - `history`: none (v6). `scopes()`: chats seen so far (persisted in `syncs` as cursorless rows, so a restart knows them); the owner's private chat appears when the owner messages the bot once (documented in the Sources page's hint).
 - `dm`: `sendMessage` to the owner's chat id.
 - The transform's `sendMessage` refs: the thread and the sent message itself. The bot's messages are never updates, so an answer to one is on thread `<that message>` to the connector, and files under `<chat>/<that message>/` (v7 › Review round 9 — step 4b end to end).

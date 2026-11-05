@@ -1,5 +1,5 @@
 import type { Ctx } from "../../ctx.ts";
-import { details, h, isOpen, layout, type Page, parse, type Raw, raw, status } from "../html.ts";
+import { details, h, isOpen, layout, type Page, parse, pausedLine, type Raw, raw, status } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import type { TaskRow } from "./tasks.ts";
 
@@ -99,7 +99,7 @@ export const chat: Page = (ctx, { m }) => {
     "chat",
     t.title || id,
     h`<p><span data-refresh id="chat-status">${status(t.status)} · <a href="/tasks/${id}">task card</a></span> <span id="conn" class="hint" role="status"></span></p>
-<div id="stream" data-task="${id}" data-last="${last}">${cutRows(id, rows)}${rows.map(replyLine)}</div>
+${isOpen(t.status) ? pausedLine(ctx) : ""}<div id="stream" data-task="${id}" data-last="${last}">${cutRows(id, rows)}${rows.map(replyLine)}</div>
 <div data-refresh id="approvals">${pendingFor(ctx, id).map((a) => approvalEntry(a))}</div>
 ${isOpen(t.status) ? composer("task.send", { id }) : h`<p class="hint">This chat is closed. <a href="/chat">Start a new one</a>.</p>`}`,
   );

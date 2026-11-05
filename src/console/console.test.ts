@@ -132,6 +132,32 @@ function stream(path: string, headers: Record<string, string>, until: (t: string
   });
 }
 
+test("the failure DM's link is a page; a paused task says so; past the first page no list says it is empty", async () => {
+  assert.equal((await get("/tasks")).status, 200); // hortusd.ts › dm("/tasks")
+  const t = new Date().toISOString();
+  ctx.db
+    .prepare("INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('p1', 'chat', 'p', 'queued', ?, ?)")
+    .run(t, t);
+  assert.doesNotMatch((await get("/chat/p1")).body, /Paused:/);
+  writeFileSync(paths.paused(), "");
+  try {
+    for (const p of ["/chat/p1", "/tasks/p1", "/"]) assert.match((await get(p)).body, /Paused: queued tasks/, p);
+  } finally {
+    rmSync(paths.paused());
+  }
+  const ins = ctx.db.prepare(
+    "INSERT INTO approvals(kind, category, status, requested_at) VALUES ('request', 'c', ?, ?)",
+  );
+  ins.run("pending", t);
+  for (let i = 0; i < 60; i++) ins.run("used", t);
+  const second = (await get("/approvals?skip=50")).body;
+  assert.match(second, /showing none of 1 pending/);
+  assert.doesNotMatch(second, /nothing pending/);
+  assert.doesNotMatch((await get("/?skip=50")).body, /no open tasks/);
+  ctx.db.exec("DELETE FROM tasks WHERE id = 'p1'; DELETE FROM approvals");
+  assert.match((await get("/approvals")).body, /nothing pending/);
+});
+
 test("a chat past the replay's 1,000 lines says what it cut and where the rest is", async () => {
   const t = new Date().toISOString();
   ctx.db

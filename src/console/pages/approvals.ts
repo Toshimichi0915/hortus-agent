@@ -1,6 +1,20 @@
 import type { Ctx } from "../../ctx.ts";
 import { grantable } from "../../vault/gate.ts";
-import { button, details, h, layout, more, PAGE, type Page, parse, type Raw, raw, skipOf, time } from "../html.ts";
+import {
+  button,
+  details,
+  empty,
+  h,
+  layout,
+  more,
+  PAGE,
+  type Page,
+  parse,
+  type Raw,
+  raw,
+  skipOf,
+  time,
+} from "../html.ts";
 import { type TransformSummary, transformForm, transformView } from "./transform-entry.ts";
 
 export interface ApprovalRow {
@@ -210,7 +224,7 @@ export const approvals: Page = (ctx, { m, q }) => {
     ctx,
     "approvals",
     "Approvals",
-    h`<div data-refresh id="list"><h2>Pending</h2>${more(q, "pending", pending.length, count("status = 'pending'"))}${pending.length ? pending.map((a) => approvalEntry(a)) : h`<p class="empty">nothing pending</p>`}
+    h`<div data-refresh id="list"><h2>Pending</h2>${more(q, "pending", pending.length, count("status = 'pending'"))}${pending.length ? pending.map((a) => approvalEntry(a)) : empty(q, "nothing pending")}
 <h2>Decided</h2><p class="hint">${
       hideJudge
         ? h`<a href="/approvals">show judge allows</a>`
@@ -218,7 +232,7 @@ export const approvals: Page = (ctx, { m, q }) => {
     }</p>${more(q, "decided", decided.length, count(where))}${
       decided.length
         ? decided.map((a) => (a.decided_by === "judge" ? judgeLine(a) : approvalEntry(a)))
-        : h`<p class="empty">none yet</p>`
+        : empty(q, "none yet")
     }</div>`,
   );
 };

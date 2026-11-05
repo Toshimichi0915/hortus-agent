@@ -20,7 +20,7 @@ Each is `(ctx, params) => string` using a shared `layout(title, body, nav)` and 
 
 | Page | Route | Shows | Does (RPC) |
 | --- | --- | --- | --- |
-| Tasks | `/` | open tasks first (status, title, project, kind, budget used `tokens/limit`, hours, updated), then closed from `logs` (title, status, exit time); 50 of each, newest first, `?skip=N` for older (every capped list says `showing 1–50 of N … · older`) | open chat (`task.open`), `task.message`, `task.stop`, `task.budget`, `task.close`; link to `/tasks/:id` |
+| Tasks | `/`, `/tasks` (the failure DMs link it) | open tasks first (status, title, project, kind, budget used `tokens/limit`, hours, updated), then closed from `logs` (title, status, exit time); 50 of each, newest first, `?skip=N` for older (every capped list says `showing 1–50 of N … · older`) | open chat (`task.open`), `task.message`, `task.stop`, `task.budget`, `task.close`; link to `/tasks/:id` |
 | Task | `/tasks/:id` | the card: row fields, replies (`replies` table), latest `summary.md`, pending approvals of the task under "Waiting for you" (its own and a durable grant entry it opened or met), messages and inbox (newest 50 each, `?skip=N`), link to `session.md` (`/tasks/:id/log`, plain text) | the same actions |
 | Chat | `/chat`, `/chat/:id` | the stream (SSE `chat` from `replies` rows, so a reconnecting page sees the last 1000 lines), a textarea, the task's pending approvals inline, project picker (sets `cwd`) | `task.open` (first message), `task.send`, approve/reject |
 | Approvals | `/approvals`, `/approvals/:id` | pending first, then decided (50 of each, `?skip=N`); each: id, category, task, requested, summary (03-vault-proxy.md); merge entries (3b): stat, patch excerpt (40 lines, ≤ 8 KB), the full diff in `<details>` on `/approvals/:id` only (lists link it); transform entries (3f): manifest diff and credential fields; login entries (3h): the view; a tainted task's non-consequential `auto` request: also "Approve, and allow `<name>` for this task" (11-auto-gate.md) | `approval.decide` (a stale page's "already decided" re-renders it) |
@@ -41,7 +41,7 @@ Line-oriented client of the abstract socket (`rpc.serveSocket` frames). Commands
 hortus ping
 hortus tasks [--all | <id>]                 # table (newest 50 open and closed; --all every one) / card with replies and summary
 hortus chat [-r <id>] [<text>…]             # REPL: prints the stream (text live, tool calls as one line each), reads lines; Ctrl-D closes (task → waiting)
-hortus approvals [--all | approve [--grant]|reject <id>]  # pending first (newest 50 of each; --all every one); --grant: "Approve, and allow … for this task"
+hortus approvals [--all | approve [--grant]|reject <id>]  # pending first (newest 50 of each; --all every one), each with its rendered line and taint; --grant: "Approve, and allow … for this task"
 hortus stop <id> | close <id> [failed]
 hortus search <query> [--in …] (alias of dof search)
 hortus sync --force <project>               # 3b

@@ -70,7 +70,7 @@ start(ctx): for each dofs entry with a connector type: create, then run two loop
                 → commit; UPDATE syncs. Errors are logged per scope and never stop the loop.
 stop, reload: the signal ends both loops between events, batches and scopes; 3 s later every upstream call of the
               runner is cut; queued events go in unmirrored for a reconcile to heal, a connector without history leaves
-              them for its redelivery (hortus_v7.md › Review rounds 11, 12).
+              them, and a mirror cut past the grace, for its redelivery (hortus_v7.md › Review rounds 11–13).
 ```
 
 `trust(event, cfg)`: `author === null || bot` → false; `cfg.trust` `owner` (default) → `author.user === cfg.owner`; `members` → owner or `author.member`; `anyone` → true; a list → includes. `status()` of every connector plus `syncs` feed the Sources page (06-console.md); `source.resync` resets a scope's cursor and runs `history` once.

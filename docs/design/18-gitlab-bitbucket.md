@@ -12,7 +12,7 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 - Mirror: `#iid` issues, `!iid` MRs (`head` = `source_branch`, `base` = `target_branch`, `head_sha` = `last_commit.id`, `checks` from `pipeline` status: `success`/`failed`/`running`→`pending`), notes as messages, `GET /projects/{p}/merge_requests/{iid}/changes` → `diff.patch` (assembled from `changes[].diff` as unified diff), approvals as `review: approved`.
 - History: `/projects/{p}/issues?updated_after=`, `/merge_requests?updated_after=`, `/issues/{iid}/notes`, `/merge_requests/{iid}/notes`, `/changes`, `/pipelines?ref=`; cursor = max `updated_at`.
 - `projects()`: `GET /projects?membership=true&min_access_level=30` filtered by `repos`; `clone` = `https://<host>/<p>.git` (`oauth2:hortus-secret-gitlab`); `pushed` from `push` events.
-- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`, and every REST door to a ref (`merge_requests/*/merge`, whose `render()` shows the `sha`, `/rebase`, `merge_trains/**`, `repository/**`, `releases`).
+- Transform `gitlab`: hosts `{host}`; `scope` `{host}/api/v4/projects/{project}/**` (with `{project}` URL-encoded), `{host}/{project}.git/**`; consequential `DELETE {host}/api/v4/**`, `POST {host}/**/git-receive-pack`, `POST {host}/api/v4/projects`, the deletes that are a POST (`jobs/*/erase`, `housekeeping`, `ml/mlflow/**/delete`), `import/**`, and every REST door to a ref (`merge_requests/*/merge`, whose `render()` shows the `sha`, `/rebase`, `merge_trains/**`, `repository/**`, `releases`).
 
 ### `src/connectors/bitbucket.ts`
 

@@ -709,6 +709,24 @@ test("the session's own model credential: no gate, placeholders in its body (the
     assert.equal(seen.at(-1)?.auth, "Bearer ghp-fake-0123");
     assert.equal(seen.at(-1)?.body, body, "sent as is");
     assert.equal(approvals(), n);
+    // a body the proxy streams is no act of the session's either: an odd type, a 2 MB context, a word that looks like a
+    // method override in it
+    for (const [type, text] of [
+      ["application/octet-stream", "_method=PUT"],
+      ["application/x-ndjson", "x".repeat(2 * 1024 * 1024)],
+      ["text/plain", "_method=PUT"],
+    ] as const) {
+      const r = await send({
+        host: "api.gh.test",
+        method: "POST",
+        path: "/llm",
+        headers: { authorization: "Bearer hortus-secret-gh", "content-type": type, "content-length": `${text.length}` },
+        body: text,
+      });
+      assert.equal(r.status, 200, `${type}: ${r.body}`);
+      assert.equal(seen.at(-1)?.body, text);
+    }
+    assert.equal(approvals(), n);
     // any other credential still passes the gate
     const s = await send({
       host: "slack.com",

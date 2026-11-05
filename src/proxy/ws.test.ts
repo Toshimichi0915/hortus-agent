@@ -93,6 +93,7 @@ before(async () => {
           "gateway.discord.gg": dc.url,
           "gateway-us-east1-b.discord.gg": dc.url,
           "api.telegram.org": tg.url,
+          "slack.com": tg.url,
           "flood.example": `http://127.0.0.1:${(flood.address() as AddressInfo).port}`,
         },
       },
@@ -102,10 +103,10 @@ before(async () => {
     log: logger,
     reload: async () => {},
   };
-  writeVault({ ...dc.vault("discord"), ...tg.vault("telegram") });
+  writeVault({ ...dc.vault("discord"), ...tg.vault("telegram"), slack: { type: "token", value: "xoxb-0123456789" } });
   ctx.db
     .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: ["discord", "telegram"], repos: [] }), JSON.stringify("*"));
+    .run(JSON.stringify({ credentials: ["discord", "telegram", "slack"], repos: [] }), JSON.stringify("*"));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load();
@@ -186,7 +187,8 @@ test("a dropped gateway resumes on READY's session-specific host, RESUME swapped
 test("the shipped delete patterns hold for GET, for any case, and for the plural (the owner asked each time)", async () => {
   const worker = (method: string, host: string, path: string) =>
     new Promise<number>((resolve, reject) => {
-      const headers = { host, ...(host === "discord.com" ? { authorization: "Bot hortus-secret-discord" } : {}) };
+      const auth = { "discord.com": "Bot hortus-secret-discord", "slack.com": "Bearer hortus-secret-slack" }[host];
+      const headers = { host, ...(auth ? { authorization: auth } : {}) };
       const o = {
         host: "127.0.0.1",
         port: ports.https,
@@ -213,6 +215,7 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     ["POST", "discord.com", "/api/v10/channels/300/messages/bulk-delete"],
     // the same call in other spellings: an upstream decodes `%65` and drops the extra `/`
     ["POST", "api.telegram.org", `${bot}/d%65leteMessage`],
+    ["POST", "api.telegram.org", `${bot}/d%2565leteMessage`],
     ["POST", "api.telegram.org", `${bot}/deleteMessage/`],
     ["POST", "discord.com", "/api/v10/channels/300//messages/bulk%2Ddelete/"],
     // no method in the path: the Bot API server takes it from the `method` argument (its Query.cpp)
@@ -220,11 +223,19 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     // kept for old bots (Bot API 5.3), and what the first pass left
     ["POST", "api.telegram.org", `${bot}/kickChatMember`],
     ["POST", "api.telegram.org", `${bot}/banChatSenderChat`],
+    ["POST", "api.telegram.org", `${bot}/removeChatVerification`],
     ["POST", "discord.com", "/api/channels/300/messages/bulk_delete"],
     ["POST", "discord.com", "/api/v10/guilds/1/bulk-ban"],
     // a `/` the first pass could not see: decoded second, then trailing or doubled
     ["POST", "api.telegram.org", `${bot}/deleteMessage%2f`],
     ["POST", "discord.com", "/api/v10/channels/300/messages%2f/bulk-delete"],
+    // every written name of a delete (docs.slack.dev's method list), GET included: Slack takes either
+    ["POST", "slack.com", "/api/chat.delete"],
+    ["GET", "slack.com", "/api/reactions.remove?channel=C1"],
+    ["POST", "slack.com", "/api/files.remote.remove"],
+    ["POST", "slack.com", "/api/users.deletePhoto"],
+    ["POST", "slack.com", "/api/apps.datastore.bulkDelete"],
+    ["POST", "slack.com", "/api/admin.conversations.bulkDelete"],
   ] as const) {
     assert.equal(await worker(method, host, path), 403, path);
     assert.equal(consequential(), true, path);
@@ -234,9 +245,76 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     ["GET", "api.telegram.org", `${bot}/getMe`],
     ["GET", "discord.com", "/api/v10/channels/delete-me/messages"],
     ["GET", "discord.com", "/api/v10/channels/300/messages%2Fbulk-delete"],
+    // round 13: what the widened lists must not catch. A pattern with `*` for its method sees every read
+    ["GET", "api.telegram.org", `${bot}/getChatMember?chat_id=1&user_id=2`],
+    ["POST", "api.telegram.org", `${bot}/getChatAdministrators`],
+    ["POST", "api.telegram.org", `${bot}/getUpdates`],
+    ["POST", "api.telegram.org", `${bot}/getFile`],
+    ["POST", "api.telegram.org", `${bot}/sendMessage`],
+    ["GET", "api.telegram.org", "/file/bothortus-secret-telegram/documents/delete-ban-remove.json"],
+    ["GET", "discord.com", "/api/v10/guilds/1/bans"],
+    ["GET", "discord.com", "/api/v10/guilds/1/bans/2"],
+    ["POST", "discord.com", "/api/v10/channels/300/messages"],
+    ["GET", "slack.com", "/api/conversations.history?channel=C1"],
+    ["POST", "slack.com", "/api/reactions.get"],
+    ["POST", "slack.com", "/api/files.remote.info"],
+    ["POST", "slack.com", "/api/pins.list"],
+    ["POST", "slack.com", "/api/chat.postMessage"],
   ] as const) {
     assert.equal(await worker(method, host, path), 403, path);
     assert.equal(consequential(), false, path);
+  }
+});
+
+test("a message that mentions a method override, or a path with a dot, `;` or %2f in a name, is an ordinary request", async () => {
+  const send = (host: string, path: string, type: string, body: string) =>
+    new Promise<string>((resolve, reject) => {
+      const headers = {
+        host,
+        "content-type": type,
+        ...(host === "discord.com" ? { authorization: "Bot hortus-secret-discord" } : {}),
+      };
+      const o = {
+        host: "127.0.0.1",
+        port: ports.https,
+        servername: host,
+        method: "POST",
+        path,
+        headers,
+        ca,
+        localAddress: WORKER,
+      };
+      request(o, (res) => {
+        const c: Buffer[] = [];
+        res.on("data", (x: Buffer) => c.push(x));
+        res.on("end", () => resolve(Buffer.concat(c).toString()));
+      })
+        .on("error", reject)
+        .end(body);
+    });
+  const said = "try _method=PUT or X-HTTP-Method-Override: PUT; a;_method=PUT";
+  const bot = "/bothortus-secret-telegram";
+  const form = "application/x-www-form-urlencoded";
+  for (const [host, path, type, body] of [
+    ["api.telegram.org", `${bot}/sendMessage`, "application/json", JSON.stringify({ chat_id: 1, text: said })],
+    ["api.telegram.org", `${bot}/sendMessage`, form, `chat_id=1&text=${encodeURIComponent(said)}`],
+    ["api.telegram.org", `${bot}/sendMessage?chat_id=1&text=${encodeURIComponent(said)}`, form, ""],
+    ["discord.com", "/api/v10/channels/300/messages", "application/json", JSON.stringify({ content: said })],
+    [
+      "discord.com",
+      "/api/v10/channels/300/messages",
+      "multipart/form-data; boundary=b",
+      `--b\r\nContent-Disposition: form-data; name="payload_json"\r\n\r\n${JSON.stringify({ content: said })}\r\n--b--\r\n`,
+    ],
+    // names, not spellings of anything
+    ["api.telegram.org", `${bot}/getFile.json`, "application/json", "{}"],
+    ["discord.com", "/api/v10/channels/300/messages/1;2", "application/json", "{}"],
+    ["discord.com", "/api/v10/channels/300/a.b%2fc.json", "application/json", "{}"],
+  ] as const) {
+    const r = await send(host, path, type, body);
+    assert.match(r, /"approval":/, `${host}${path}: ${r}`);
+    const row = ctx.db.prepare("SELECT payload FROM approvals ORDER BY id DESC").get() as { payload: string };
+    assert.equal(JSON.parse(row.payload).consequential, false, path);
   }
 });
 

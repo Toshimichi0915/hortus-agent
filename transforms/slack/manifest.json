@@ -6,6 +6,7 @@
   },
   "consequential": [
     "* slack.com/api/*.delete*",
-    "* slack.com/api/*.remove*"
+    "* slack.com/api/*.remove*",
+    "* slack.com/api/*.bulkDelete*"
   ]
 }

@@ -50,8 +50,34 @@ define("approval.decide", {
   input: z.object({ id: z.number(), decision: z.enum(["approve", "reject"]) }),
   run({ id }) {
     if (id === 1) throw new RpcError("invalid", "already decided");
+    if (id === 2) return { ok: true, message: "approved, not landed: checkout is not clean" };
     throw new RpcError("not_found", `approval ${id} not found`);
   },
+});
+
+define("approval.list", {
+  roles: ["owner"],
+  input: z.unknown(),
+  run: () => [
+    {
+      id: 3,
+      status: "pending",
+      category: "credential:gl",
+      task_id: "t1",
+      summary: { method: "POST", host: "h", path: "/n", rendered: "comment on g/p#1" },
+      payload: { untrusted: ["read a web page: evil.example"] },
+      grantable: true,
+    },
+    {
+      id: 2,
+      status: "pending",
+      category: "merge",
+      task_id: "t1",
+      summary: { project: "web", branch: "hortus/t1", added: 3, removed: 1 },
+      payload: null,
+      grantable: false,
+    },
+  ],
 });
 
 let sock: Server;
@@ -112,6 +138,15 @@ test("hortus approvals approve: not found and already decided exit 1", async () 
   assert.equal(done.err, "already decided\n");
   assert.equal((await run(["approvals", "maybe", "1"])).code, 64);
   assert.equal((await run(["image"])).code, 64);
+});
+
+test("hortus approvals: what the page warns of; a merge that did not land says so", async () => {
+  const { out } = await run(["approvals"]);
+  assert.match(out, /^#3\tpending\tcredential:gl\tt1\tPOST h \/n\n/);
+  assert.match(out, /\n\tcomment on g\/p#1\n\ttainted: read a web page: evil\.example\n/);
+  assert.match(out, /\n\tapprove --grant 3 also allows credential:gl for this task\n/);
+  assert.match(out, /\n#2\tpending\tmerge\tt1\tweb hortus\/t1 \+3 −1\n/);
+  assert.equal((await run(["approvals", "approve", "2"])).out, "approved, not landed: checkout is not clean\n");
 });
 
 test("hortus help: stdout, exit 0; unknown command: named, usage, exit 64; <cmd> --help: its usage; sync says so", async () => {

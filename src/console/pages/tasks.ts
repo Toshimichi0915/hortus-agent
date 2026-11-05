@@ -1,16 +1,16 @@
-import { existsSync } from "node:fs";
 import type { DatabaseSync } from "../../db.ts";
 import {
   budget,
   button,
+  empty,
   errorLine,
   h,
   isOpen,
   layout,
   more,
   PAGE,
-  PAUSED,
   type Page,
+  pausedLine,
   type Raw,
   skipOf,
   status,
@@ -64,25 +64,21 @@ export const tasks: Page = (ctx, { q }) => {
     ctx,
     "tasks",
     "Tasks",
-    h`<p><a href="/chat">New chat</a></p><div data-refresh id="list">${
-      existsSync(ctx.paths.paused())
-        ? h`<p class="error">Paused: ${PAUSED} <a href="/settings">Resume in Settings</a>.</p>`
-        : ""
-    }
+    h`<p><a href="/chat">New chat</a></p><div data-refresh id="list">${pausedLine(ctx)}
 <h2>Open</h2>${more(q, "open tasks", open.length, countTasks(ctx.db, true))}${
       open.length
         ? h`<table><thead><tr><th>Status</th><th>Title</th><th>Project</th><th>Kind</th><th>Budget</th><th>Updated</th><th></th></tr></thead><tbody>${open.map(
             (t) =>
               h`<tr><td>${status(t.status)}</td><td>${title(t)}${t.error ? h`<br><span class="error">${errorLine(t.error)}</span>` : ""}</td><td>${t.project ?? ""}</td><td>${t.kind ?? ""}</td><td>${budget(t)}</td><td>${time(t.updated)}</td><td class="actions">${taskActions(t)}</td></tr>`,
           )}</tbody></table>`
-        : h`<p class="empty">no open tasks</p>`
+        : empty(q, "no open tasks")
     }
 <h2>Closed</h2>${more(q, "closed tasks", closed.length, countTasks(ctx.db, false))}${
       closed.length
         ? h`<table class="closed"><thead><tr><th>Status</th><th>Title</th><th>Closed</th></tr></thead><tbody>${closed.map(
             (t) => h`<tr><td>${status(t.status)}</td><td>${title(t)}</td><td>${time(t.closed)}</td></tr>`,
           )}</tbody></table>`
-        : h`<p class="empty">no closed tasks</p>`
+        : empty(q, "no closed tasks")
     }</div>`,
   );
 };

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -8,6 +8,7 @@ import { connectors } from "../connectors/index.ts";
 import { openDb } from "../db.ts";
 import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
+import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
 import { createGateway, type GatewayDeps, timing } from "./gateway.ts";
@@ -405,6 +406,49 @@ test("a stop cuts what its grace does not finish: a stalled call, a Retry-After,
   } finally {
     timing.graceMs = was;
     fake.retryAfter = 1;
+  }
+});
+
+test("a Telegram file cut by a stop is not lost: the update stays with Telegram and the next start mirrors it whole", async () => {
+  const was = timing.graceMs;
+  timing.graceMs = 20;
+  const tg = await FakeTelegram.start();
+  const vault = join(home, "vault.json");
+  const before = existsSync(vault) ? JSON.parse(readFileSync(vault, "utf8")) : {};
+  writeFileSync(vault, JSON.stringify({ ...before, tq: tg.vault("tq").tq }));
+  tg.user(500, "owner");
+  tg.chat(500);
+  const cfg = Config.parse({ dofs: { tq: { type: "telegram", owner: "500", api: tg.api } } });
+  const direct = directPathFetch(["tq"]);
+  let slow = true;
+  let inFlight = false;
+  const fetch = ((url: string, init?: RequestInit) => {
+    if (!slow || !url.includes("/file/")) return direct(url, init);
+    inFlight = true;
+    return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("cut"))));
+  }) as typeof fake.fetch;
+  const bytes = Buffer.alloc(1024, 7);
+  tg.post(500, { user: 500, text: "the report", file: { name: "r.pdf", bytes } });
+  const first = harness(() => cfg, connectors, fetch);
+  const second = harness(() => cfg, connectors, fetch);
+  try {
+    first.gw.start();
+    await until(() => inFlight);
+    await first.gw.stop();
+    assert.deepEqual(rows("tq"), []);
+    assert.deepEqual(first.commits, []);
+    assert.equal(first.wakes(), 0);
+    slow = false;
+    second.gw.start();
+    await until(() => second.commits.length);
+    await second.gw.stop();
+    assert.deepEqual(second.commits[0]?.changes[1]?.bytes, bytes);
+    assert.equal(rows("tq").length, 1);
+    assert.equal(second.wakes(), 1);
+  } finally {
+    timing.graceMs = was;
+    writeFileSync(vault, JSON.stringify(before));
+    await tg.close();
   }
 });
 

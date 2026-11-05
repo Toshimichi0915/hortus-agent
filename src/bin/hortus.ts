@@ -254,11 +254,19 @@ const commands: Record<string, Command> = {
           const puts = Object.entries((sum.credentials ?? {}) as Record<string, { hosts?: string[] }>).map(
             ([n, c]) => `put ${n} on ${(c.hosts ?? []).join(", ")}`,
           );
-          const where = [sum.method, sum.host, sum.path, sum.origin, sum.name, puts.join("; ")]
+          const merge =
+            a.category === "merge" ? `${s(sum.project)} ${s(sum.branch)} +${s(sum.added)} −${s(sum.removed)}` : "";
+          const where = [sum.method, sum.host, sum.path, sum.origin, sum.name, puts.join("; "), merge]
             .filter(Boolean)
             .map(s)
             .join(" ");
           console.log([`#${s(a.id)}`, a.status, a.category, a.task_id, where].map(s).join("\t"));
+          if (a.status !== "pending") continue;
+          // what the Approvals page warns of: `approve` here is the same decision, and no entry page to open first
+          const taint = ((a.payload as Row | null)?.untrusted ?? []) as string[];
+          if (sum.rendered) console.log(`\t${s(sum.rendered)}`);
+          if (taint.length) console.log(`\ttainted: ${taint.join("; ")}`);
+          if (a.grantable) console.log(`\tapprove --grant ${s(a.id)} also allows ${s(a.category)} for this task`);
         }
         if (cut) console.log(cutLine("approvals"));
         return;
@@ -266,8 +274,11 @@ const commands: Record<string, Command> = {
       if ((verb !== "approve" && verb !== "reject") || (grant && verb !== "approve"))
         throw new Usage("usage: hortus approvals [approve [--grant] <id> | reject <id>]");
       const n = Number(needId(id, `approvals ${verb} <id>`));
-      await rpc.call("approval.decide", { id: n, decision: verb, ...(grant ? { grant } : {}) });
-      console.log(`${verb === "approve" ? "approved" : "rejected"} #${n}${grant ? ", and allowed for its task" : ""}`);
+      const r = (await rpc.call("approval.decide", { id: n, decision: verb, ...(grant ? { grant } : {}) })) as Row;
+      console.log(
+        s(r.message) ||
+          `${verb === "approve" ? "approved" : "rejected"} #${n}${grant ? ", and allowed for its task" : ""}`,
+      );
     },
   },
   stop: {

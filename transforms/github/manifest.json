@@ -9,7 +9,13 @@
     },
     "github-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
   },
-  "scope": ["{api}/repos/{project}", "{api}/repos/{project}/**", "{host}/{project}.git/**", "{host}/{project}/**"],
+  "scope": [
+    "{api}/repos/{project}",
+    "{api}/repos/{project}/**",
+    "{host}/{project}.git/**",
+    "{host}/{project}/**",
+    "uploads.github.com/repos/{project}/**"
+  ],
   "consequential": [
     "DELETE {api}/**",
     "POST {host}/**/git-receive-pack",
@@ -23,6 +29,9 @@
     "POST {api}/user/repos",
     "POST {api}/orgs/*/repos",
     "POST {api}/repos/*/*/forks",
+    "POST {api}/repos/*/*/security-advisories/*/forks",
+    "PUT {api}/repos/*/*/import",
+    "PATCH {api}/repos/*/*/import",
     "POST {api}/repos/*/*/generate",
     "POST {api}/repos/*/*/transfer",
     "PATCH {api}/repos/*/*",

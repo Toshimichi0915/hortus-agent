@@ -22,8 +22,8 @@ import {
 } from "../types.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
-/** What a stop or a reload leaves the calls in flight: a mirror mostly finishes (a Telegram file has no second chance),
- * then whatever is left is cut, a stalled upstream or a 429's Retry-After included. */
+/** What a stop or a reload leaves the calls in flight: a mirror mostly finishes, then whatever is left is cut, a stalled
+ * upstream or a 429's Retry-After included. */
 export const timing = { graceMs: 3000 };
 
 export interface GatewayDeps {
@@ -89,6 +89,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
   const insert = db.prepare(`INSERT INTO events(dof, key, ts, author, member, trusted, bot, payload, created, summary,
     refs, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dof, key) DO NOTHING`);
   const release = db.prepare("UPDATE events SET consumed = ? WHERE dof = ? AND key = ? AND consumed = -2");
+  const forget = db.prepare("DELETE FROM events WHERE dof = ? AND key = ?");
   db.exec("UPDATE events SET consumed = 0 WHERE consumed = -2");
   const getCursor = db.prepare("SELECT cursor FROM syncs WHERE dof = ? AND scope = ?");
   const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync) VALUES (?, ?, ?, ?)
@@ -139,6 +140,12 @@ export function createGateway(deps: GatewayDeps): Gateway {
             r.error = undefined;
             if (wake) deps.wake();
           } catch (e) {
+            // cut by the stop, with no history to heal it (a Telegram file): nothing polled since the ack, so the service
+            // still holds the update, and the next start takes it as new and whole
+            if (r.calls.signal.aborted && !conn.history) {
+              forget.run(name, event.key);
+              continue;
+            }
             log.error(`${name}: mirror failed`, e, { key: event.key });
             r.error = `mirror failed: ${message(e)}`; // the connector still says connected: Sources shows this
             // it may be the owner's message: nothing else wakes the Planner for it (a bot's stays -1, and asleep)

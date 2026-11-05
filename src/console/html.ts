@@ -1,4 +1,5 @@
 /** HTML for the console pages: `h` escapes every interpolation; `raw()` opts out. */
+import { existsSync } from "node:fs";
 import type { Ctx } from "../ctx.ts";
 import { call } from "../rpc.ts";
 import { type Caller, RpcError } from "../types.ts";
@@ -115,6 +116,12 @@ export const errorLine = (e: string): string =>
 
 export const error = (msg: string): Raw => h`<p class="error">${msg}</p>`;
 
+/** The Tasks, Chat and task card line: a message to a paused task stays `queued`, and nothing else there says why. */
+export const pausedLine = (ctx: Ctx): Raw =>
+  existsSync(ctx.paths.paused())
+    ? h`<p class="error">Paused: ${PAUSED} <a href="/settings">Resume in Settings</a>.</p>`
+    : raw("");
+
 /** Rows per list on a page; `?skip=N` pages every capped list of that page together (SQL `LIMIT PAGE OFFSET N`). */
 export const PAGE = 50;
 /** `?skip=` as an OFFSET SQLite takes (an integer, not `1e300`). */
@@ -139,6 +146,9 @@ export function more(q: URLSearchParams, what: string, shown: number, total: num
     skip ? link(Math.max(0, skip - PAGE), "newer") : ""
   }${skip + shown < total ? link(skip + PAGE, "older") : ""}</p>`;
 }
+
+/** A list's empty line, on its first page only: past it `more` says "showing none of N", and "nothing pending" lied. */
+export const empty = (q: URLSearchParams, text: string): Raw => (skipOf(q) ? raw("") : h`<p class="empty">${text}</p>`);
 
 /** An RPC another module owns may be absent: the page shows an error line instead of failing. */
 export async function tryCall<T>(

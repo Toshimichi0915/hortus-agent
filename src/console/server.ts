@@ -33,7 +33,8 @@ export const MAX_BODY = 1024 * 1024;
 export const sse = { keepaliveMs: 15_000 };
 
 export const routes: [RegExp, Page][] = [
-  [/^\/$/, tasks],
+  // `/tasks` too: the failure DMs link it (hortusd.ts)
+  [/^\/(?:tasks)?$/, tasks],
   [/^\/tasks\/([^/]+)$/, task],
   [/^\/chat(?:\/([^/]+))?$/, chat],
   [/^\/approvals(?:\/(\d+))?$/, approvals],

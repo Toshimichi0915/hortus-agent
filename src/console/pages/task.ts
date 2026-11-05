@@ -5,6 +5,7 @@ import {
   budget,
   button,
   details,
+  empty,
   errorLine,
   h,
   isOpen,
@@ -13,6 +14,7 @@ import {
   PAGE,
   type Page,
   parse,
+  pausedLine,
   type Raw,
   skipOf,
   time,
@@ -91,7 +93,7 @@ export const task: Page = (ctx, { m, q }) => {
     "tasks",
     t.title || id,
     h`<div data-refresh id="card">
-${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${t.error.startsWith("budget_exceeded") ? "raise its budget, then " : ""}${t.kind === "chat" ? "a message" : "a note"} from you starts it again` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
+${open ? pausedLine(ctx) : ""}${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${t.error.startsWith("budget_exceeded") ? "raise its budget, then " : ""}${t.kind === "chat" ? "a message" : "a note"} from you starts it again` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 ${t.brief ? details("Brief", t.brief) : ""}
 <table class="kv">
@@ -107,9 +109,9 @@ ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join(";
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
 ${pending.length ? h`<h2>Waiting for you</h2>${pending.map((a) => approvalEntry(a))}` : ""}
 ${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
-<h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : h`<p class="empty">none</p>`}
+<h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : empty(q, "none")}
 <h2>Stream</h2>${replies.length ? h`${cutRows(id, replies)}<div class="stream">${streamLines(replies)}</div>` : h`<p class="empty">none</p>`}
-<h2>Inbox</h2>${more(q, "inbox messages", inbox.rows.length, inbox.total)}${inbox.rows.length ? h`<ul class="msgs">${inbox.rows.map(msg)}</ul>` : h`<p class="empty">empty</p>`}
+<h2>Inbox</h2>${more(q, "inbox messages", inbox.rows.length, inbox.total)}${inbox.rows.length ? h`<ul class="msgs">${inbox.rows.map(msg)}</ul>` : empty(q, "empty")}
 </div>${
       open
         ? h`<h2>Note to the task</h2><form data-call="task.message" data-input="${JSON.stringify({ id })}"><textarea name="text" rows="2" required></textarea><button>Send note</button></form>

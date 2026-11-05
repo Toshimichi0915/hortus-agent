@@ -259,6 +259,13 @@ test("open tabs never starve a fetch: one stream a page, none while hidden (HTTP
   }
 });
 
+test("a stream the server ended for good (a remote session's 401) reloads the page", { skip }, async () => {
+  await go("/chat/t1");
+  await until(`document.querySelector('#conn').textContent === ""`);
+  await ev(`window.stale = 1; es.close(); es.dispatchEvent(new Event("error")); 1`);
+  await until(`document.readyState === "complete" && window.stale === undefined`);
+});
+
 test("cells carry their column name; the chat shows its stream's state", { skip }, async () => {
   await go("/");
   assert.equal(await ev(`document.querySelector('#list tbody td').dataset.label`), "Status");

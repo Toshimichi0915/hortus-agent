@@ -191,6 +191,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         out.push({ op: "put", path: `${dir}/files/${fname}`, bytes: Buffer.from(await res.arrayBuffer()) });
       } catch (e) {
+        if (deps.signal?.aborted) throw e; // a stop's cut, not a bad file: the gateway leaves the update for redelivery
         log.error(`${name}: file ${f.file_id} download failed`, e);
       }
     }

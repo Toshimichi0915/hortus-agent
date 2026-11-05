@@ -49,6 +49,7 @@ const parse = (r: gate.ApprovalRow) => ({
   ...r,
   summary: JSON.parse(r.summary) as unknown,
   payload: r.payload ? (JSON.parse(r.payload) as unknown) : null,
+  grantable: gate.grantable(r),
   url: gate.approvalUrl(r.id),
 });
 
@@ -105,8 +106,8 @@ define("approval.decide", {
     if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
       gate.decide(id, decision, "owner", { reason, grant });
     // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
-    if (decision === "approve") await landMerge(id);
-    return { ok: true };
+    const why = decision === "approve" ? await landMerge(id) : null;
+    return why ? { ok: true, message: `approved, not landed: ${why} (Retry is on the Approvals page)` } : { ok: true };
   },
 });
 

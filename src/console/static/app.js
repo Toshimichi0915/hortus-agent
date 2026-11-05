@@ -246,6 +246,8 @@ function connect() {
   es.addEventListener("error", () => {
     lost = true;
     if (conn) conn.textContent = "reconnecting…";
+    // a non-200 is final for an EventSource (a revoked or swept remote session's 401): the reload shows the sign-in
+    if (es?.readyState === EventSource.CLOSED) location.reload();
   });
   es.addEventListener("open", () => {
     if (conn) conn.textContent = "";
