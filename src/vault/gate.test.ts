@@ -13,7 +13,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
 import { z } from "zod";
-import { Config } from "../config.ts";
+import { Config, today } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
 import { task as taskPage } from "../console/pages/task.ts";
@@ -461,7 +461,7 @@ test("judge_notes come after the fixed prompt and before the summary; prompt_has
 });
 
 test("planner.daily_tokens exhausted → escalate without a call", async () => {
-  const day = new Date().toISOString().slice(0, 10);
+  const day = today(ctx.config); // the owner's day, the Planner's key: at UTC+9 a UTC date split one day's cap in two
   const used = (ctx.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(day) as { tokens: number }).tokens;
   assert.ok(used >= 100, "the judge's tokens are counted");
   setConfig({ planner: { provider: "llm", model: "judge-1", daily_tokens: used } });
@@ -830,13 +830,13 @@ test("a run is its parent's: a tainted parent's run is the owner's to decide, wh
   const asked = await send({ from: "127.0.0.22" });
   assert.equal(asked.status, 403, "a schedule is no way from a tainted task back to the judge");
   assert.equal(llmSeen.length, judged);
-  assert.match(JSON.parse(row(pendingId(asked)).payload ?? "{}").judge ?? "", /tainted: read a web page: evil\.test/);
+  assert.match(JSON.parse(row(pendingId(asked)).payload ?? "{}").judge ?? "", /tainted: .*read a web page: evil\.test/);
 
   insert.run("P23", "unattended", scope, null);
   insert.run("R23", "run", scope, "P23");
   insert.run("S23", "run", scope, "P23");
   taint(ctx.db, "R23", "read a web page: other.test");
-  assert.deepEqual(taintOf(ctx.db, "S23", ctx.config).slice(0, 1), ["read a web page: other.test"]);
+  assert.ok(taintOf(ctx.db, "S23", ctx.config).includes("read a web page: other.test"));
 
   // the parent's task grant (v6 › Runs: "the parent's grants cover it"), and not a sibling's
   const g = gate.check({

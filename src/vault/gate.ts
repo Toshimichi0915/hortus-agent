@@ -6,7 +6,7 @@
 import { policyFor } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { crashPoint } from "../crash.ts";
-import { taintOf } from "../db.ts";
+import { family, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import { type Caller, type InboxMsg, RpcError } from "../types.ts";
 import { judge } from "./judge.ts";
@@ -61,15 +61,20 @@ export interface ApprovalRow {
   payload: string | null;
 }
 
-/** The parent of task `?2`: the parent's grants cover a run (v6 › Schedules › Runs). */
-const PARENT = "(SELECT parent FROM tasks WHERE id = ?2)";
+/** An approved grant on the category for this task, its parent or a run of theirs (`family`). */
+function familyGranted(category: string, task: string, extra = ""): boolean {
+  const q = ctx().db.prepare(
+    `SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ? AND status = 'approved' AND task_id IN (SELECT value FROM json_each(?))${extra}`,
+  );
+  return q.get(category, JSON.stringify(family(ctx().db, task))) !== undefined;
+}
 
 /** An approved grant on the category, durable or for this task. */
 export function granted(category: string, task: string | null): boolean {
-  const q = ctx().db.prepare(
-    `SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ?1 AND status = 'approved' AND (task_id IS NULL OR task_id IN (?2, ${PARENT}))`,
+  const durable = ctx().db.prepare(
+    "SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ? AND status = 'approved' AND task_id IS NULL",
   );
-  return q.get(category, task) !== undefined;
+  return durable.get(category) !== undefined || (task !== null && familyGranted(category, task));
 }
 
 /**
@@ -79,13 +84,7 @@ export function granted(category: string, task: string | null): boolean {
  * task with the category); compare reasons if that bites.
  */
 function taintGranted(category: string, task: string | null): boolean {
-  return (
-    ctx()
-      .db.prepare(
-        `SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ?1 AND task_id IN (?2, ${PARENT}) AND status = 'approved' AND json_extract(payload, '$.untrusted') IS NOT NULL`,
-      )
-      .get(category, task) !== undefined
-  );
+  return task !== null && familyGranted(category, task, " AND json_extract(payload, '$.untrusted') IS NOT NULL");
 }
 
 const grantName = (category: string): string => category.replace(/^credential:/, "");
@@ -160,12 +159,13 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     granted(input.category, task)
   )
     return "pass";
+  // a scope grant asked by a run: its parent's cover it. Never a durable one here: that enables a credential, not the task
+  if (kind === "grant" && task !== null && familyGranted(input.category, task)) return "pass";
   const rows = db
     .prepare(
-      `SELECT id, status, task_id, payload FROM approvals WHERE kind = ?1 AND hash = ?3 AND status IN ('pending', 'approved')
-        AND (task_id IS ?2 OR (kind = 'grant' AND status = 'approved' AND task_id = ${PARENT})) ORDER BY id`,
+      "SELECT id, status, task_id, payload FROM approvals WHERE kind = ? AND hash = ? AND task_id IS ? AND status IN ('pending', 'approved') ORDER BY id",
     )
-    .all(kind, task, input.hash) as unknown as Pick<ApprovalRow, "id" | "status" | "task_id" | "payload">[];
+    .all(kind, input.hash, task) as unknown as Pick<ApprovalRow, "id" | "status" | "task_id" | "payload">[];
   const approved = rows.find((r) => r.status === "approved");
   if (approved) {
     // a grant stays approved; a request is single use (the conditional update wins one race)

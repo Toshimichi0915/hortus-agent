@@ -199,6 +199,20 @@ define("merge", {
   },
 });
 
+/** The whole diff of an entry: the entry stores the first 64 KB, and an owner approves what they can read. */
+define("merge.diff", {
+  roles: ["owner"],
+  input: z.object({ id: z.number().int() }),
+  async run({ id }) {
+    const row = ctx().db.prepare("SELECT summary FROM approvals WHERE id = ? AND category = 'merge'").get(id) as
+      | { summary: string }
+      | undefined;
+    if (!row) throw new RpcError("not_found", `no merge entry ${id}`);
+    const s = JSON.parse(row.summary) as MergeSummary;
+    return git(["--git-dir", paths.project(s.project), "diff", s.main_sha, s.sha]);
+  },
+});
+
 define("merge.retry", {
   roles: ["owner"],
   input: z.object({ id: z.number().int() }),

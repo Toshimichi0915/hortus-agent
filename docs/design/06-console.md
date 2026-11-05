@@ -30,6 +30,7 @@ Each is `(ctx, params) => string` using a shared `layout(title, body, nav)` and 
 | Sources | `/sources` | per connector: connected, last event, last sync per scope, mirror size (`du` of the worktree, cached 1 min), error | `source.resync` |
 | Search | `/search?q=` | `dof search` results with the filters as form fields | `dof.search` |
 | Schedules | `/schedules` | rows by task, next fire, last run's summary (folded; `schedules/<id>/last-summary.md`) | `schedule.unset` |
+| Merge diff | `/approvals/<id>/diff` | the whole diff as text, linked from an entry cut at 64 KB | |
 
 Changes propagate by SSE `events` (approvals, tasks): the page re-fetches its own route's JSON (`GET /api/page/<name>` returns the data the page was rendered from) and re-renders the affected list with a small DOM diff — or, simpler and acceptable: reloads the page body via `fetch` and `innerHTML` when the stream says its page changed, keeping the scroll position and the textarea contents. The chat stream is append-only.
 

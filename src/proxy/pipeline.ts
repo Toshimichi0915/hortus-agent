@@ -10,7 +10,7 @@ import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { PassThrough, pipeline, Readable, type Transform } from "node:stream";
 import zlib from "node:zlib";
-import { taint } from "../db.ts";
+import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
 import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
@@ -24,6 +24,7 @@ import {
   resolveHandle,
   type Secret,
 } from "../vault/ops.ts";
+import { providerSecret } from "../vault/providers.ts";
 import type { Scrubber } from "../vault/scrub.ts";
 import type { Signing } from "../vault/sigv4.ts";
 import * as transforms from "../vault/transforms.ts";
@@ -181,6 +182,18 @@ function devUpstream(host: string): URL | undefined {
   return new URL(u);
 }
 
+/** The host of the session's own model: how it thinks, not egress, and in no list an owner writes for a task's data. */
+function modelHost(client: Client): string | undefined {
+  const { planner, worker } = ctx().config;
+  const name = client.role === "planner" ? planner.provider : client.role === "worker" ? worker.provider : undefined;
+  try {
+    const endpoint = name && providerSecret(name).endpoint;
+    return endpoint ? new URL(endpoint).hostname : undefined;
+  } catch {
+    return undefined; // not a credential (yet): the session's first call says so
+  }
+}
+
 export async function egress(
   client: Client,
   host: string,
@@ -188,7 +201,8 @@ export async function egress(
   task: TaskRow | undefined,
 ): Promise<Target | Out> {
   const origins = client.role === "core" ? "*" : originsFor(task);
-  if (origins !== "*" && !origins.includes(host)) return refuse(403, `host not in origins: ${host}`, { host });
+  if (origins !== "*" && !origins.includes(host) && host !== modelHost(client))
+    return refuse(403, `host not in origins: ${host}`, { host });
   const dev = devUpstream(host);
   if (dev) {
     const protocol = dev.protocol === "https:" ? "https:" : "http:";
@@ -693,7 +707,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       category ??= origin;
       // the task's own captures ride freely; anyone else's need a grant on the origin (a login, or the owner's
       // approval of a task-scoped grant entry); the login view is the owner at the keyboard
-      if (client.task && client.role !== "login" && capturedBy(row.id) !== client.task) {
+      if (client.task && client.role !== "login" && !family(ctx().db, client.task).includes(capturedBy(row.id) ?? "")) {
         const g = gate.check({
           caller: client,
           category: origin,

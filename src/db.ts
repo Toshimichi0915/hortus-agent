@@ -73,9 +73,22 @@ const migrations: string[] = [
   CREATE INDEX search_meta_author ON search_meta(dof, author);`,
   // review round 16: which passkey a session signed in with, so deleting it ends them (null: from before this)
   "ALTER TABLE console_sessions ADD COLUMN passkey TEXT;",
+  // review round 22: a task's runs, looked up at every gate check (family)
+  "CREATE INDEX tasks_parent ON tasks(parent);",
 ];
 
 const TAINT_MAX = 5;
+
+/**
+ * A task and every run of its schedules: one holder of grants and logins (v6 › Schedules › Runs: "the parent's grants
+ * cover it"; each firing is a new task, and a grant asked of one was asked again at the next).
+ */
+export function family(db: DatabaseSync, task: string): string[] {
+  const r = db.prepare("SELECT parent FROM tasks WHERE id = ?").get(task) as { parent: string | null } | undefined;
+  const root = r?.parent ?? task;
+  const runs = db.prepare("SELECT id FROM tasks WHERE parent = ?").all(root) as { id: string }[];
+  return [root, ...runs.map((x) => x.id)];
+}
 
 /**
  * Marks the task tainted (v7 › Review round 6): from now on the owner decides its gated requests, never the judge.
@@ -86,8 +99,6 @@ export function taint(db: DatabaseSync, task: string, reason: string): void {
     | { taint: string | null; parent: string | null }
     | undefined;
   if (!r) return;
-  // what a run read reaches the next one through `/schedule` and its summary: its parent carries it to them (taintOf)
-  if (r.parent) taint(db, r.parent, reason);
   const list = r.taint ? (JSON.parse(r.taint) as string[]) : [];
   if (list.includes(reason) || list.length >= TAINT_MAX) return;
   db.prepare("UPDATE tasks SET taint = ? WHERE id = ?").run(JSON.stringify([...list, reason]), task);
@@ -110,8 +121,18 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     | { kind: string | null; taint: string | null; scope: string | null; parent: string | null }
     | undefined;
   if (!t) return [];
-  // a run's text and script are its parent's words: a tainted task's `schedule` is no way back to the judge
-  const parent = t.parent ? taintOf(db, t.parent, c) : [];
+  // a run reads what its parent wrote (`text`) and what earlier runs left (the summary, /schedule): a task that read a
+  // stranger set a timer, and its run went to the judge as clean. Its parent reads neither, so it stays as it was
+  const inherited = t.parent
+    ? [
+        ...taintOf(db, t.parent, c),
+        ...(
+          db.prepare("SELECT taint FROM tasks WHERE parent = ? AND id != ? AND taint IS NOT NULL").all(t.parent, task) as {
+            taint: string;
+          }[]
+        ).flatMap((r) => JSON.parse(r.taint) as string[]),
+      ]
+    : [];
   const authors = (
     db.prepare("SELECT DISTINCT dof, author FROM events WHERE task_id = ? AND trusted = 0").all(task) as {
       dof: string;
@@ -121,13 +142,13 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     .filter((r) => !isCi(c, r))
     .slice(0, 5)
     .map((r) => `${r.dof}:${r.author ?? "?"}`);
-  return [
-    ...parent,
+  const own = [
     ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
     ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),
     ...(t.taint ? (JSON.parse(t.taint) as string[]) : []),
     ...(t.kind === "planner" ? [] : untrustedDofs(db, task, mounted(c, t.scope), c)),
   ];
+  return [...new Set([...own, ...inherited])];
 }
 
 /**

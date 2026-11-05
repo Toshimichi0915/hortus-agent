@@ -935,6 +935,25 @@ test("'*' egress: IPv4-mapped IPv6 spellings of private addresses are private to
   }
 });
 
+test("origins: a list never cuts a session off its own model; a stranger's host, or another role, stays refused", async () => {
+  const prev = ctx.config;
+  const vault = readVault();
+  writeVault({ ...vault, llm: { type: "token", value: "sk-x", transform: "openai", hosts: ["models.test"] } });
+  ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" }, origins: ["registry.npmjs.org"] });
+  try {
+    const task = { scope: null, origins: null };
+    const worker = await egress({ role: "worker", task: "T" }, "models.test", true, task);
+    assert.equal("status" in worker && worker.status === 403, false);
+    const other = await egress({ role: "worker", task: "T" }, "example.com", true, task);
+    assert.ok("status" in other && other.status === 403);
+    const login = await egress({ role: "login", task: "T" }, "models.test", true, task);
+    assert.ok("status" in login && login.status === 403);
+  } finally {
+    ctx.config = prev;
+    writeVault(vault);
+  }
+});
+
 test("listed origins: a listed name that resolves private is refused too (rebinding); chat.allow admits it", async () => {
   const prev = ctx.config;
   ctx.config = Config.parse({ ...prev, origins: ["localhost", "registry.npmjs.org"] });

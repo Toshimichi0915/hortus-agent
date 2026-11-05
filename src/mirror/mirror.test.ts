@@ -311,8 +311,16 @@ test("logs: excerpt, [image], no summary, crash-cut line, republish keeps one ro
   assert.equal(summary.frontmatter.status, "done");
 
   writeFileSync(join(paths.out("t1"), "summary.md"), "Found the walrus.\n");
+  // v6 › layout: title, status, events, opened, updated
+  db.prepare(
+    `INSERT INTO tasks(id, kind, title, status, event_keys, created) VALUES ('t1', 'unattended', 'w', 'done', '["slack:C1:T9"]', '2026-01-02T03:04:05.000Z')`,
+  ).run();
   await publishLog("t1", "Walrus hunt", "done");
   assert.match(readFileSync(join(paths.logs(), "t1", "summary.md"), "utf8"), /Found the walrus/);
+  const head = parse(readFileSync(join(paths.logs(), "t1", "summary.md"), "utf8")).frontmatter;
+  assert.deepEqual(head.events, ["slack:C1:T9"]);
+  assert.match(String(head.opened), /^2026-01-02/);
+  db.prepare("DELETE FROM tasks WHERE id = 't1'").run();
   const hits = search({ q: "walrus", in: "logs" });
   assert.deepEqual(hits.map((h) => h.path).sort(), ["t1/session.md", "t1/summary.md"]);
   assert.ok(hits.every((h) => h.title === "Walrus hunt"));

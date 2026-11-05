@@ -196,7 +196,7 @@ export function tick(): void {
         tasks.inboxWrite(row.task_id, {
           from: `schedule:${row.id}`,
           trusted: true,
-          text: row.text,
+          text: row.expires_at ? `${row.text}\n\n${runs.expiry(row.expires_at)}` : row.text,
           data: { expires_at: row.expires_at },
         });
         continue;

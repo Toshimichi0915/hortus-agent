@@ -217,10 +217,15 @@ async function handle(
     : [`127.0.0.1:${port()}`, `localhost:${port()}`, ch];
   if (!hosts.includes(host)) return send(res, 421, "text/plain", "misdirected request");
   const site = req.headers["sec-fetch-site"];
-  if (site !== undefined && site !== "same-origin" && site !== "none")
-    return send(res, 403, "text/plain", "cross-site");
   const url = new URL(req.url ?? "/", "http://console");
   const path = url.pathname;
+  if (site !== undefined && site !== "same-origin" && site !== "none") {
+    // the DM's link clicked in a messenger's web app: nothing of the console crosses, but a bare 403 was the end of it,
+    // and this one link, followed from here, is same-origin
+    if (req.method === "GET" && req.headers["sec-fetch-mode"] === "navigate")
+      return send(res, 403, "text/html", String(h`<!doctype html><title>hortus</title><p><a href="${path + url.search}">Open this page of the console</a></p>`));
+    return send(res, 403, "text/plain", "cross-site");
+  }
 
   if (req.method === "POST") {
     const type = req.headers["content-type"] ?? "";
@@ -254,6 +259,11 @@ async function handle(
     const r = await tryCall<string | { text?: string }>("task.log", { id: logm[1] });
     if (!r.ok) return send(res, 404, "text/plain", r.error);
     return send(res, 200, "text/plain", typeof r.value === "string" ? r.value : (r.value?.text ?? ""));
+  }
+  const diffm = /^\/approvals\/(\d+)\/diff$/.exec(path);
+  if (diffm) {
+    const r = await tryCall<string>("merge.diff", { id: Number(diffm[1]) });
+    return r.ok ? send(res, 200, "text/plain", r.value) : send(res, 404, "text/plain", r.error);
   }
   for (const [re, page] of routes) {
     const m = re.exec(path);

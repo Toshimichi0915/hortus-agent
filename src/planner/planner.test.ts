@@ -7,13 +7,20 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
-import { renderBatch, renderEvent } from "./planner.ts";
+import { plannerRuntime, renderBatch, renderEvent } from "./planner.ts";
 
 test("renderEvent: a stranger's burst costs the batch 500 characters each; the owner's and a brief's text stay whole", () => {
   const c = Config.parse({ dofs: { slack: { type: "slack", owner: "U1" } } });
   const e = { id: 1, dof: "slack", key: "k", ts: "t", refs: null, task_id: null, summary: "x".repeat(2000) };
   assert.equal(renderEvent(c, { ...e, author: "U2", trusted: 0 }).match(/x/g)?.length, 500);
   assert.equal(renderEvent(c, { ...e, author: "U1", trusted: 1 }).match(/x/g)?.length, 2000);
+});
+
+test("planner.runtime: unset, a VM once the image is there (v6), the host until then; the owner's word stands", () => {
+  const unset = Config.parse({});
+  assert.equal(plannerRuntime(unset, null), "vm");
+  assert.equal(plannerRuntime(unset, "no image"), "host");
+  assert.equal(plannerRuntime(Config.parse({ planner: { runtime: "host" } }), null), "host");
 });
 
 test("renderBatch: a request no open task counts (a merge outliving its task) is in the total", () => {

@@ -340,6 +340,7 @@ test("merge (git): entry with stat and patch → approve → the checkout has it
   assert.equal(s.files, 1);
   assert.match(s.stat, /CHANGELOG\.md/);
   assert.match(s.patch, /\+- first/);
+  assert.match((await call("merge.diff", { id: approval }, owner)) as string, /\+- first/);
   // asking again for the same tip is the same entry
   assert.equal((await mergeAs("ta")).approval, approval);
   await approve(approval);

@@ -245,7 +245,7 @@ test("an hourly script row: quiet â†’ the run is deleted without logs; output â†
   assert.equal(m1.length, 1, "a fresh session");
   assert.match(
     m1[0]?.content ?? "",
-    /^report what the script found\n\n\[script\] exit 0\nstdout \(first 16 KB\):\n<<<quoted\nfound 1/,
+    /<<<quoted\nreport what the script found\n>>>[\s\S]*\n\n\[script\] exit 0\nstdout \(first 16 KB\):\n<<<quoted\nfound 1/,
   );
   assert.doesNotMatch(m1[0]?.content ?? "", /previous run's summary/);
   await until(() => existsSync(join(dir, "last-summary.md")), 5000, "last-summary.md");
@@ -259,7 +259,7 @@ test("an hourly script row: quiet â†’ the run is deleted without logs; output â†
   const m2 = reqs(second.id)[0]?.messages[0]?.content ?? "";
   assert.match(
     m2,
-    /^report what the script found\n\n\[previous run's summary\]\n<<<quoted\nnotes from fake\n>>>\n\n\[script\] exit 0/,
+    /<<<quoted\nreport what the script found\n>>>[\s\S]*\n\n\[previous run's summary\]\n<<<quoted\nnotes from fake\n>>>\n\n\[script\] exit 0/,
   );
   assert.equal(readFileSync(join(dir, "count"), "utf8").trim(), "3");
   const usage = (await api<{ task: { usage: { tokens: number; runs?: number } } }>("task.get", { id })).task.usage;

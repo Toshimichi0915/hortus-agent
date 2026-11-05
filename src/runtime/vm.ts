@@ -150,7 +150,11 @@ export function shares(task: TaskJson): Share[] {
     { tag: "task-out", path: paths.out(task.id), ro: false },
     ...opt("dof", task.paths.dof, true).map((s) => ({
       ...s,
-      only: (task.scope.dofs ?? []).filter((d) => !/^\.*$|\//.test(d) && existsSync(join(s.path, d))),
+      // the bare repo too, as on the host: `git --git-dir /dof/<name>.git diff <sha>` is what a mirror is a repo for (v6)
+      only: (task.scope.dofs ?? [])
+        .filter((d) => !/^\.*$|\//.test(d))
+        .flatMap((d) => [d, `${d}.git`])
+        .filter((d) => existsSync(join(s.path, d))),
     })),
     ...opt("repos", task.paths.repos, true),
     ...opt("schedule", task.paths.schedule, false),

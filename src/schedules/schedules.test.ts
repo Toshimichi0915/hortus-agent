@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
-import { openDb } from "../db.ts";
+import { openDb, taint, taintOf } from "../db.ts";
 import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { call } from "../rpc.ts";
@@ -17,6 +17,8 @@ import { recover } from "../runtime/recovery.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Caller, OutboxMsg } from "../types.ts";
+import { jar } from "../browser/jar.ts";
+import { check, granted } from "../vault/gate.ts";
 import { bind as bindVault } from "../vault/vault.ts";
 import * as runs from "./runs.ts";
 import { clock, schedulesModule, tick } from "./schedules.ts";
@@ -132,7 +134,8 @@ test("one-shot without script: advanced (deleted) before acting, inbox schedule:
   };
   const body = JSON.parse(msg.body);
   assert.equal(body.from, `schedule:${id}`);
-  assert.equal(body.text, "look again");
+  // v6 › Expiry: the message itself carries it, so the Worker can ask for more in time
+  assert.match(body.text, /^look again\n\nThis task's timers expire at \d{4}-/);
   assert.ok(body.data.expires_at);
   assert.equal(tasks.get(p.id).status, "queued");
   tick();
@@ -197,13 +200,100 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   const [r] = runsOf(p.id);
   assert.ok(r);
   assert.equal(r.title, "watch @ 2026-06-01 19:00");
-  assert.equal(r.brief, "is it there?");
+  // non-owner text (v6 › Runs), and it says when the timer ends
+  assert.match(r.brief, /<<<quoted\nis it there\?\n>>>/);
+  assert.match(r.brief, /timers expire at \d{4}-/);
   assert.deepEqual(JSON.parse(r.budget ?? ""), { tokens: 600, hours: 1.5 });
   const tj = tasks.taskJson(ctx.config, r);
   assert.equal(tj.paths.schedule, paths.schedule(id));
   assert.ok(existsSync(paths.schedule(id)));
   assert.equal(tj.script, "echo hi");
   assert.ok(tj.features.includes("schedule"));
+});
+
+test("project origins: a chat holds every project's list, its run too; a list extended in the config reaches an open task", async () => {
+  const prev = ctx.config;
+  const row = (id: string) => JSON.parse(tasks.get(id).origins ?? "null");
+  const chat = parent(undefined, "chat");
+  const plain = parent();
+  assert.equal(row(chat.id), null);
+  ctx.config = Config.parse({ ...prev, projects: { ...prev.projects, strict: { path: project, origins: ["a.test"] } } });
+  try {
+    const strict = parent(undefined, "unattended", "strict");
+    assert.deepEqual(row(strict.id), ["a.test"]);
+    assert.deepEqual(row(parent(undefined, "chat").id), ["a.test"]);
+    assert.equal(row(parent(undefined, "unattended", "foo").id), null);
+    const run = tasks.create({ kind: "run", parent: parent(undefined, "chat").id, title: "r", brief: "b" });
+    assert.deepEqual(row(run.id), ["a.test"]);
+    // the owner extends the list on the Projects page: tasks that were refused reach it at their next request
+    ctx.config = Config.parse({
+      ...prev,
+      projects: { ...prev.projects, strict: { path: project, origins: ["a.test", "b.test"] } },
+    });
+    tasks.refreshOrigins(ctx);
+    assert.deepEqual(row(strict.id), ["a.test", "b.test"]);
+    assert.deepEqual(row(chat.id), ["a.test", "b.test"]);
+    assert.equal(row(plain.id), null);
+  } finally {
+    ctx.config = prev;
+  }
+});
+
+test("the parent's grants cover a run, and a run's cover the next; a durable grant is no scope grant", async () => {
+  const p = parent();
+  const stranger = parent();
+  await set(p.id, { every: 300 });
+  T += 6 * MIN;
+  tick();
+  const [r] = runsOf(p.id);
+  assert.ok(r);
+  const grant = (task: string | null, category: string) =>
+    ctx.db
+      .prepare(
+        "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('grant', ?, ?, ?, '{}', 'approved', 't')",
+      )
+      .run(category, `grant:${category}`, task);
+  const cookie = (task: string, name: string, via?: string) =>
+    ctx.db
+      .prepare("INSERT INTO captured(name, value, origin, kind, created, meta) VALUES (?, 'v', ?, 'cookie', 't', ?)")
+      .run(`c-${task}-${name}`, `${name}.test`, JSON.stringify({ cookieName: name, task, via }));
+  grant(p.id, "origin:site.test");
+  assert.ok(granted("origin:site.test", r.id));
+  assert.ok(!granted("origin:site.test", stranger.id));
+  // the jar: the parent's own captures and a login of a granted origin
+  cookie(p.id, "own");
+  cookie(stranger.id, "site", "login");
+  cookie(stranger.id, "other");
+  assert.deepEqual(jar(ctx.db, r.id).map((c) => c.name).sort(), ["own", "site"]);
+  const pass = (task: string, category: string) =>
+    check({
+      caller: worker(task),
+      category,
+      hash: `grant:${category}`,
+      kind: "grant",
+      consequential: false,
+      summary: {},
+    });
+  assert.equal(pass(r.id, "origin:site.test"), "pass");
+  // credential:x enabled durably (the `auto` gate's click) does not put it in a task's scope
+  grant(null, "credential:x");
+  assert.notEqual(pass(r.id, "credential:x"), "pass");
+});
+
+test("a run inherits its parent's taint, and an earlier run's; the parent none of theirs", async () => {
+  const p = parent();
+  await set(p.id, { every: 300 });
+  T += 6 * MIN;
+  tick();
+  const [r] = runsOf(p.id);
+  assert.ok(r);
+  assert.deepEqual(taintOf(ctx.db, r.id, ctx.config), []);
+  taint(ctx.db, p.id, "read a page");
+  assert.deepEqual(taintOf(ctx.db, r.id, ctx.config), ["read a page"]);
+  const next = tasks.create({ kind: "run", parent: p.id, title: "r2", brief: "b" });
+  taint(ctx.db, r.id, "read a stranger");
+  assert.deepEqual(taintOf(ctx.db, next.id, ctx.config), ["read a page", "read a stranger"]);
+  assert.deepEqual(taintOf(ctx.db, p.id, ctx.config), ["read a page"]);
 });
 
 test("scope: a chat parent's run on a project is an unattended host task (never in place); without one, a VM task", async () => {

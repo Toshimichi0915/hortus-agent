@@ -23,7 +23,7 @@ Spec: v6 › Planner, Gateway (wake), Config (`owner.notify`, `planner`). Depend
 
 Non-owner text quoted (v7 Chat format); the owner's own text is not quoted but still labelled.
 
-- Run: `tasks/planner-<n>/` with `task.json.kind = "planner"`, `features: []`, the batch as `brief`; started by the dispatcher on `planner.runtime` (host: unattended profile, role `planner` on its session address; vm: 3g). The directory is deleted after the run; the final text is discarded. Usage from the outbox-less run: the dispatcher reads the session files' `usage` before deleting and adds to `planner_usage`.
+- Run: `tasks/planner-<n>/` with `task.json.kind = "planner"`, `features: []`, the batch as `brief`; started by the dispatcher on `planner.runtime`, or unset a VM once the image is there and the host until then (host: unattended profile, role `planner` on its session address; vm: 3g). The directory is deleted after the run; the final text is discarded. Usage from the outbox-less run: the dispatcher reads the session files' `usage` before deleting and adds to `planner_usage`.
 
 ### Planner plugin (`src/agent/planner-plugin.ts`, F5's binary)
 

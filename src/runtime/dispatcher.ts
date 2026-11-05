@@ -489,6 +489,9 @@ export const dispatcherModule: Module = {
     timer = setInterval(tick, 1000);
     wake();
   },
+  async reload() {
+    if (ctx) tasks.refreshOrigins(ctx);
+  },
   async stop() {
     stopping = true;
     clearInterval(timer);
