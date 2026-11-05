@@ -18,7 +18,7 @@ export function prompt(task: TaskJson): string {
       "- there is no terminal here, and no root: `script`, `expect`, Python's `pty`, an interactive prompt and `sudo` fail by design. Use the non-interactive form (`npm init -y`, `GIT_SEQUENCE_EDITOR=…`); what needs a terminal, or root, the owner runs",
     !chat &&
       p.dof !== "/dof" &&
-      "- $HOME is your own: of the owner's home you can read only the toolchains and the project, and /mnt, /srv, /tmp and /var/log are hidden too. A read refused there is the sandbox as well: do not investigate it, say in your summary which path you needed (the owner can add it to `policy.read`)",
+      "- $HOME is your own and starts empty, so a `~/…` in the brief is the owner's home, not yours. Of theirs you can read only the toolchains and the project; every other part of it, the other projects, /mnt, /srv, /tmp and /var/log are hidden. One refused or missing read there is the whole answer: no other tool, spelling or user (`stat`, python, `cp`, `/proc`, `ssh -G`, `sudo`), no search for a copy, as nothing gets through and each try costs the budget. Do the rest of the task, then end it with `done`, naming the path you needed (the owner can add it to `policy.read`) and what is left undone. Do not guess the value",
     p.clone && `- the project clone: ${p.clone}${task.clone_url ? ` (origin ${task.clone_url})` : ""}`,
     p.schedule && `- this run's persistent directory (kept between runs of its schedule): ${p.schedule}`,
   ].filter(Boolean);

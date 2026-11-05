@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { pending } from "../agent/inbox.ts";
 import { scan } from "../agent/loop.ts";
 import type { Ctx } from "../ctx.ts";
 import * as paths from "../paths.ts";
@@ -93,7 +94,12 @@ export async function recover(c: Ctx): Promise<void> {
     kind: string;
   }[];
   for (const { id, kind } of rows) {
-    if (kind === "chat") tasks.setStatus(id, "waiting");
+    // a chat waits for the owner, unless a message of theirs the session never drained is waiting for it: nothing else
+    // would wake it, and their line stayed unanswered on the page
+    if (kind === "chat") {
+      const { cursor } = scan(join(paths.out(id), "sessions"));
+      tasks.setStatus(id, pending(paths.task(id), cursor).length ? "queued" : "waiting");
+    }
     // a firing runs at most once: a run that never reached the model is over
     else if (kind === "run" && scan(join(paths.out(id), "sessions")).tokens === 0) await tasks.close(id, "failed");
     // resume in the same directory; the agent closes dangling tool calls (F5)
