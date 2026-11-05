@@ -166,7 +166,11 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       .join("\n\n");
     const writer = b.comment?.user ?? b.pullrequest?.author ?? b.issue?.reporter;
     const written = b.comment?.content?.raw ?? (opened || (result ?? ""));
-    const text = u && writer && idOf(writer) !== idOf(u) ? NOT_THEIRS : written;
+    // only a writer known to be the actor: an anonymous reporter is null, and a delivery may have no actor
+    const text = obj && (!idOf(u) || idOf(writer) !== idOf(u)) ? NOT_THEIRS : written;
+    // another bot's end of a PR reaches its task as a status does, no author (github.ts)
+    const robot = !ci && !!u && (own || u.type === "app_user");
+    const ender = robot && !own && /^pullrequest:(fulfilled|rejected)$/.test(type) && idOf(writer) !== idOf(u);
     return {
       dof: name,
       key,
@@ -182,13 +186,13 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       // CI results carry no author (they never start work) and are not bot traffic: they must reach their task
       // trust follows who wrote the text the event carries (as GitHub's `author_association`), not who touched it
       author:
-        u && !ci
+        u && !ci && !ender
           ? {
               user: idOf(u),
               member: await member(p, b.comment?.user ?? b.pullrequest?.author ?? b.issue?.reporter ?? u),
             }
           : null,
-      bot: !ci && !!u && (own || u.type === "app_user"),
+      bot: robot && !ender,
       summary: `${type} ${p}${thread ?? ""} by ${nick(u)}: ${text}`,
       refs: thread ? [ref(p, thread)] : prs.map((n) => ref(p, `!${n}`)),
     };
@@ -361,7 +365,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       const pr = await json<Pull>(`${R(p)}/pullrequests/${b.pullrequest.id}`);
       return {
         changes: await prTop(p, pr, action === "created" || action === "updated"),
-        wake: ["created", "fulfilled", "rejected"].includes(action),
+        wake:
+          ["created", "fulfilled", "rejected"].includes(action) && (!!e.author || e.refs.some((r) => deps.hasRef(r))),
       };
     },
 

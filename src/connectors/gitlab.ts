@@ -204,11 +204,16 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const u: User | undefined =
       b.user ?? (b.user_username ? { id: b.user_id ?? -1, username: b.user_username } : undefined);
     const own = u ? (await me())?.id === u.id : false;
-    const bot = !pipeline && !!u && (own || u.bot === true || BOT_NAME.test(u.username));
+    const robot = !pipeline && !!u && (own || u.bot === true || BOT_NAME.test(u.username));
+    // another bot's end of an MR reaches its task as a pipeline does, no author (github.ts)
+    const ending = type === "merge_request" && (a?.action === "close" || a?.action === "merge");
+    const ender = robot && !own && ending && a?.author_id !== u?.id;
+    const bot = robot && !ender;
     const result = pipeline && a?.sha ? `${a.status} on ${a.sha.slice(0, 7)}` : a?.status;
     const opened = [a?.title, a?.description].filter(Boolean).join("\n\n");
     const written = a?.note ?? (opened || (result ?? b.ref ?? ""));
-    const text = u && a?.author_id !== undefined && a.author_id !== u.id ? NOT_THEIRS : written;
+    // only a writer known to be the actor (a pipeline's and a push's text is the forge's)
+    const text = a && !pipeline && (!u || a.author_id !== u.id) ? NOT_THEIRS : written;
     return {
       dof: name,
       key,
@@ -216,7 +221,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       payload: { type, body: b, ...(pipeline ? { mrs } : {}) } satisfies Wrapped,
       // pipelines carry no author (they never start work) and are not bot traffic: they must reach their task
       // trust follows who wrote the text the event carries (as GitHub's `author_association`), not who touched it
-      author: u && !pipeline ? { user: u.username, member: await member(p, a?.author_id ?? u.id) } : null,
+      author: u && !pipeline && !ender ? { user: u.username, member: await member(p, a?.author_id ?? u.id) } : null,
       bot,
       summary: `${type}${a?.action ? `.${a.action}` : ""} ${p}${thread ?? ""} by ${u?.username ?? "?"}: ${text}`,
       refs: thread ? [ref(p, thread)] : mrs.map((n) => ref(p, `!${n}`)),
@@ -383,7 +388,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           const mr = await json<MR>(`${P(p)}/merge_requests/${a.iid}`);
           return {
             changes: await prTop(p, mr, ["open", "reopen", "update"].includes(act)),
-            wake: ["open", "close", "reopen", "merge"].includes(act),
+            wake:
+              ["open", "close", "reopen", "merge"].includes(act) && (!!e.author || e.refs.some((r) => deps.hasRef(r))),
           };
         }
         case "pipeline": {
@@ -403,7 +409,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
               }),
             ),
           );
-          return { changes, wake: open.some((m) => onHead(m) && deps.hasRef(ref(p, `!${m.iid}`))) };
+          // a result on an MR that ended asks nothing of its task
+          const live = (m: MR) => m.state === "opened" && onHead(m);
+          return { changes, wake: open.some((m) => live(m) && deps.hasRef(ref(p, `!${m.iid}`))) };
         }
         default:
           return none; // push (the repo mirror's business)

@@ -9,6 +9,10 @@ import type { ConnectorDeps, Event, Incoming } from "../types.ts";
  * owner's own unquoted order and with `scope.project` open (round 19). */
 export const NOT_THEIRS = "(its text is someone else's: read it in the mirror)";
 
+/** How a PR or MR's end, or its reopening, opens an event's summary (each connector's `<type>.<action>`). */
+export const PR_TURN =
+  /^(pull_request\.(merged|closed|reopened)|merge_request\.(merge|close|reopen)|pullrequest:(fulfilled|rejected)) /;
+
 /**
  * The webhook listener's hand-off to the gateway loop. `push` queues one event and resolves when the gateway acks it
  * (after its INSERT, before any mirror work), so the listener answers `200` only once the row exists. One consumer.

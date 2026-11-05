@@ -191,7 +191,15 @@ const eventRow = (text: string) =>
 const waitEvent = (text: string) => until(() => eventRow(text), 15_000, `event ${text}`);
 const taskRow = (id: string) =>
   db((d) => d.prepare("SELECT * FROM tasks WHERE id = ?").get(id)) as
-    | { id: string; status: string; brief: string; project: string | null; runtime: string; error: string | null }
+    | {
+        id: string;
+        status: string;
+        brief: string;
+        project: string | null;
+        runtime: string;
+        error: string | null;
+        summary: string | null;
+      }
     | undefined;
 
 before(async () => {
@@ -684,45 +692,77 @@ test("a stranger's event taints the batch anyway: a tainted task's result rides 
   db((d) => d.prepare("DELETE FROM tasks WHERE id = ?").run(id));
 });
 
-test("task_close refuses a chat task, a task waiting on its timers and one whose request waits", { skip }, async () => {
+test("task_close refuses a chat task, one on its timers, one at work, one whose request waits unless the owner ended its PR", {
+  skip,
+}, async () => {
   const t = new Date().toISOString();
-  const ins = (id: string, kind: string) =>
+  const ins = (id: string, kind: string, status = "waiting") =>
     db((d) =>
       d
         .prepare(
           `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated)
-           VALUES (?, ?, 'x', 'x', 'waiting', '{"credentials":[],"repos":[]}', '{}', '{"tokens":0}', 'host', '[]', ?, ?)`,
+           VALUES (?, ?, 'x', 'x', ?, '{"credentials":[],"repos":[]}', '{}', '{"tokens":0}', 'host', '[]', ?, ?)`,
         )
-        .run(id, kind, t, t),
+        .run(id, kind, status, t, t),
     );
   ins("tc-chat", "chat");
   ins("tc-timer", "unattended");
-  ins("tc-asks", "unattended");
-  db((d) =>
-    d
-      .prepare(
-        "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:slack', 'tc', 'tc-asks', '{}', 'pending', ?)",
-      )
-      .run(t),
-  );
+  ins("tc-work", "unattended", "running"); // no session: a queued row, the dispatcher would start
+  const asks = (id: string) => {
+    ins(id, "unattended");
+    db((d) =>
+      d
+        .prepare(
+          "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:slack', ?, ?, '{}', 'pending', ?)",
+        )
+        .run(`tc-${id}`, id, t),
+    );
+  };
+  const turn = (id: string, key: string, trusted: number, summary: string) =>
+    db((d) => {
+      d.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(`g:o/r:!${id}`, id);
+      d.prepare(
+        "INSERT INTO events(dof, key, ts, trusted, bot, payload, created, summary, refs, consumed) VALUES ('g', ?, ?, ?, 0, 'null', ?, ?, ?, -1)",
+      ).run(key, t, trusted, t, summary, JSON.stringify([`g:o/r:!${id}`]));
+    });
+  asks("tc-asks");
+  asks("tc-moot");
+  turn("tc-moot", "m1", 1, "pull_request.merged o/r!1 by toshi: (its text)");
+  asks("tc-back");
+  turn("tc-back", "b1", 1, "pull_request.closed o/r!2 by toshi: (its text)");
+  turn("tc-back", "b2", 1, "pull_request.reopened o/r!2 by toshi: (its text)");
+  asks("tc-theirs");
+  turn("tc-theirs", "t1", 0, "pull_request.closed o/r!3 by mallory: (its text)");
   db((d) =>
     d
       .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
       .run(new Date(Date.now() + 864e5).toISOString(), t),
   );
   planner(`export default ({ n }) => n === 0
-    ? { calls: ["tc-chat", "tc-timer", "tc-asks"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    ? { calls: ["tc-chat", "tc-timer", "tc-work", "tc-asks", "tc-moot", "tc-back", "tc-theirs"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
     : { text: "ok" };`);
   const count = batches().length;
   slack.post("C1", { user: "U1", text: "close them" });
   const b = await nextBatch(count);
-  await until(() => toolResults(b).length === 3);
-  const [chat, timer, asks] = toolResults(b);
+  await until(() => toolResults(b).length === 7);
+  const [chat, timer, work, asked, moot, back, theirs] = toolResults(b);
   assert.match(String(chat?.output), /not_found: no task tc-chat/);
   assert.match(String(timer?.output), /invalid: task tc-timer has 1 timer/);
   assert.equal(taskRow("tc-chat")?.status, "waiting");
   assert.equal(taskRow("tc-timer")?.status, "waiting");
-  assert.match(String(asks?.output), /invalid: task tc-asks has a request waiting for the owner/);
+  assert.match(String(work?.output), /invalid: task tc-work is running/);
+  assert.equal(taskRow("tc-work")?.status, "running");
+  db((d) => d.prepare("UPDATE tasks SET status = 'failed' WHERE id = 'tc-work'").run());
+  assert.match(String(asked?.output), /invalid: task tc-asks has a request waiting for the owner/);
+  assert.ok(!moot?.isError, String(moot?.output));
+  assert.equal(taskRow("tc-moot")?.status, "done");
+  assert.match(String(taskRow("tc-moot")?.summary), /## Ended\npull_request\.merged o\/r!1 by toshi\n/);
+  const entry = db((d) => d.prepare("SELECT status FROM approvals WHERE task_id = 'tc-moot'").get()) as {
+    status: string;
+  };
+  assert.equal(entry.status, "expired");
+  assert.match(String(back?.output), /invalid: task tc-back has a request waiting/);
+  assert.match(String(theirs?.output), /invalid: task tc-theirs has a request waiting/);
   assert.match(batchText(b), /tc-asks "x" \(waiting, host, 0 tokens, 1 waiting for the owner\)/);
   assert.equal(taskRow("tc-asks")?.status, "waiting");
 });

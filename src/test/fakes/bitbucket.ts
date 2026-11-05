@@ -72,10 +72,15 @@ export class FakeBitbucket {
   members = new Set<string>();
   /** the token's own account (a repository access token's bot) */
   self = "hortus-bot";
+  /** other apps' accounts */
+  bots = new Set<string>();
   deliveries: { guid: string; event: string; payload: Record<string, unknown> }[] = [];
   gitAuths: string[] = [];
   calls: { method: string; path: string; url: string }[] = [];
   git = new GitHost("hortus-fake-bitbucket-");
+  /** an API merge moves the target branch to the head (a live Worker checks): a fake commit's tree holds one file, so only
+   * where nothing needs the branch's other files */
+  lands = false;
   private ids = 100;
   private tick = 0;
 
@@ -123,7 +128,7 @@ export class FakeBitbucket {
       uuid: `{${nickname}}`,
       nickname,
       display_name: nickname,
-      type: nickname === this.self ? "app_user" : "user",
+      type: nickname === this.self || this.bots.has(nickname) ? "app_user" : "user",
     };
   }
   private get(full: string): Repo {
@@ -325,6 +330,15 @@ export class FakeBitbucket {
     return this.send("pullrequest:fulfilled", r, by, { pullrequest: this.prJson(r, p) }, d);
   }
 
+  /** Bitbucket has no reopen: a declined PR stays declined */
+  declinePR(full: string, n: number, by: string, d?: DeliverOpts) {
+    const r = this.get(full);
+    const p = this.pr(full, n);
+    p.state = "DECLINED";
+    p.updated_on = this.ts();
+    return this.send("pullrequest:rejected", r, by, { pullrequest: this.prJson(r, p) }, d);
+  }
+
   /** A build status on `sha` (`SUCCESSFUL`, `FAILED`, `INPROGRESS`, `STOPPED`), keyed `ci`. */
   status(full: string, sha: string, state: string, d?: DeliverOpts) {
     const r = this.get(full);
@@ -453,7 +467,9 @@ export class FakeBitbucket {
     x = rest.match(/^\/pullrequests\/(\d+)\/merge$/);
     if (x && M === "POST") {
       const n = Number(x[1]);
-      await this.mergePR(full, n, this.self, { drop: true });
+      const p = this.pr(full, n);
+      if (this.lands) await this.git.git(full, "update-ref", `refs/heads/${p.base}`, p.sha);
+      await this.mergePR(full, n, this.self);
       return json(200, this.prJson(r, this.pr(full, n)));
     }
     x = rest.match(/^\/(issues|pullrequests)\/(\d+)(\/comments|\/diff)?$/);

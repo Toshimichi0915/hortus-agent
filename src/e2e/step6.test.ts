@@ -172,7 +172,7 @@ const ROUTE = `export default ({ n, events }) => {
   return { calls: events.map((e) => {
     const m = /matches task (\\S+)/.exec(e.tags);
     if (!m) return { name: "event_ignore", input: { event_ids: [e.id], reason: "no task" } };
-    if (/^pull_request\\.closed /.test(e.text)) return { name: "task_close", input: { task_id: m[1], outcome: "done" } };
+    if (/^pull_request\\.(closed|merged) /.test(e.text)) return { name: "task_close", input: { task_id: m[1], outcome: "done" } };
     return { name: "task_attach", input: { task_id: m[1], event_ids: [e.id] } };
   }) };
 };`;

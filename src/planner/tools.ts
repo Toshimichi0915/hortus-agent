@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { dirOf, gitOf } from "../connectors/forge.ts";
+import { dirOf, gitOf, PR_TURN } from "../connectors/forge.ts";
 import { dofNames, isCi, readableOf, taint, taintOf } from "../db.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
@@ -67,6 +67,19 @@ function route(taskId: string, evs: EventRow[]): void {
     for (const ref of refsOf(e))
       db.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(ref, taskId);
   }
+}
+
+/** The end of a PR of this task, if the last turn of one is an end (a reopening undoes it).
+ * ponytail: any of its PRs; a task with two PRs, one ended, loses what waits on the other. */
+function prEnd(id: string): { summary: string; trusted: number } | undefined {
+  const rows = pctx()
+    .db.prepare(
+      `SELECT e.summary, e.trusted FROM events e, json_each(e.refs) j JOIN task_refs r ON r.ref = j.value
+       WHERE r.task_id = ? ORDER BY e.id DESC`,
+    )
+    .all(id) as { summary: string | null; trusted: number }[];
+  const turn = rows.find((r): r is { summary: string; trusted: number } => PR_TURN.test(r.summary ?? ""));
+  return turn && !/^\S+reopen/.test(turn.summary) ? turn : undefined;
 }
 
 define("task_create", {
@@ -202,7 +215,11 @@ define("task_close", {
   roles: planner,
   input: z.object({ task_id: z.string(), outcome: z.enum(["done", "failed"]) }),
   async run({ task_id, outcome }) {
-    task(task_id);
+    const { status } = task(task_id);
+    // it has work in hand: a close at a PR's merge killed the Worker with the owner's last line unanswered and its
+    // "pushed to the PR" the last thing said (1 of 4 live). Its result comes here when it ends
+    if (status === "running" || status === "queued")
+      throw new RpcError("invalid", `task ${task_id} is ${status}; attach what is new and leave it open`);
     // a task waiting on its own timers is not finished, and closing deletes them: the owner decides that one
     const { n } = pctx().db.prepare("SELECT COUNT(*) AS n FROM schedules WHERE task_id = ?").get(task_id) as {
       n: number;
@@ -215,7 +232,18 @@ define("task_close", {
         "SELECT COUNT(*) AS w FROM approvals WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
       )
       .get(task_id) as { w: number };
-    if (w) throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
+    // but the owner's own end of the PR makes it moot: a merge by the forge's button left the Worker's merge request waiting
+    // and the close refused, 3 of 3 live, with a dead entry on the Approvals page until it expired (round 20)
+    const end = prEnd(task_id);
+    if (w && !end?.trusted)
+      throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
+    // the card's last word was the Worker's "open, not merged". ponytail: the card only: out/summary.md is the Worker's
+    // file, not one for hortusd to append to, so `logs/<id>/summary.md` keeps it
+    const how = end && /^\S+ \S+ by .*?(?=: )/.exec(end.summary)?.[0];
+    if (how)
+      pctx()
+        .db.prepare("UPDATE tasks SET summary = COALESCE(summary, '') || ? WHERE id = ?")
+        .run(`\n\n## Ended\n${how}\n`, task_id);
     await tasks.close(task_id, outcome);
     return { ok: true };
   },

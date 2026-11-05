@@ -160,7 +160,14 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     // a review's verdict is its state: an approval has no text, and the task saw nothing but "submitted"
     const review = p.review && [p.review.state.toLowerCase(), p.review.body].filter(Boolean).join(": ");
     const written = p.comment?.body ?? review ?? (opened || (result ?? (p as { ref?: string }).ref ?? ""));
-    const text = obj?.user && obj.user.login !== p.sender?.login ? NOT_THEIRS : written;
+    // only a writer known to be the actor: a null `user` or a delivery with no sender is nobody's to vouch for
+    const text = obj && (!p.sender || obj.user?.login !== p.sender.login) ? NOT_THEIRS : written;
+    // `closed` is both ends of a PR: the event was all the Planner had to tell a merge from a rejection
+    const action = p.action === "closed" && p.pull_request?.merged ? "merged" : p.action;
+    // a stale bot's close or a merge queue's merge: its task would wait for good on a PR that ended, so it reaches the
+    // Planner as CI does, no author and none of the PR's text. Not a bot closing its own PR, as our own merges are
+    const bot = !ci && p.sender?.type === "Bot";
+    const ender = bot && p.action === "closed" && !!p.pull_request && p.pull_request.user.login !== p.sender?.login;
     return {
       dof: name,
       key,
@@ -170,9 +177,12 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       ),
       payload: { type, body: p } satisfies Wrapped,
       // CI results carry no author (they never start work) and are not bot traffic: they must reach their task
-      author: p.sender && !ci ? { user: p.sender.login, member: MEMBER.has(obj?.author_association ?? "NONE") } : null,
-      bot: !ci && p.sender?.type === "Bot",
-      summary: `${type}${p.action ? `.${p.action}` : ""} ${repo}${thread ?? ""} by ${p.sender?.login ?? "?"}: ${text}`,
+      author:
+        p.sender && !ci && !ender
+          ? { user: p.sender.login, member: MEMBER.has(obj?.author_association ?? "NONE") }
+          : null,
+      bot: bot && !ender,
+      summary: `${type}${action ? `.${action}` : ""} ${repo}${thread ?? ""} by ${p.sender?.login ?? "?"}: ${text}`,
       refs: thread ? [ref(repo, thread)] : prs,
     };
   }
@@ -327,7 +337,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           const pr = await json<Pull>(`/repos/${repo}/pulls/${p.pull_request.number}`);
           return {
             changes: await prTop(repo, pr, diff),
-            wake: ["opened", "closed", "reopened"].includes(a),
+            // a bot's end (`author` null) matters only to a task on it
+            wake: ["opened", "closed", "reopened"].includes(a) && (!!e.author || e.refs.some((r) => deps.hasRef(r))),
           };
         }
         case "pull_request_review": {
@@ -355,7 +366,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
               }),
             ),
           );
-          return { changes, wake: prs.some((pr) => onHead(pr) && deps.hasRef(ref(repo, `!${pr.number}`))) };
+          // a result on a PR that ended asks nothing of its task
+          const live = (pr: Pull) => pr.state === "open" && onHead(pr);
+          return { changes, wake: prs.some((pr) => live(pr) && deps.hasRef(ref(repo, `!${pr.number}`))) };
         }
         case "repository":
           return p.action === "created" && p.repository

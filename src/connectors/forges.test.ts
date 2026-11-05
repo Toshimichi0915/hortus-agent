@@ -642,6 +642,43 @@ for (const h of H) {
     assert.match(summary, /someone else's/);
   });
 
+  test(`${dof}: a CI result on a PR that ended wakes nothing, even with a task on it`, async () => {
+    const sha = await h.commit("late", "l.txt", "l\n");
+    const pr = await h.openPR("toshi", "Late", "late", "d");
+    db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:!${pr.n}`);
+    await h.merge(pr.n, "toshi");
+    await until(() => fm(dof, `${D}/!${pr.n}/!${pr.n}.md`)?.frontmatter.state === "merged", 3000, "merged");
+    const w = await quiet();
+    await h.result(sha, "failure");
+    assert.equal(await quiet(), w);
+  });
+
+  test(`${dof}: a bot's end of a PR reaches the task on it, as nobody's words; with no task, nothing`, async () => {
+    const bot = { github: "stale[bot]", gitlab: "project_1_bot_x", bitbucket: "stale-app" }[dof];
+    gh.bots.add(bot);
+    bb.bots.add(bot);
+    await h.commit("stale", "st.txt", "st\n");
+    const mine = await h.openPR("toshi", "Mine, secretly planted", "stale", "d");
+    const other = await h.openPR("toshi", "Nobody's", "stale", "d");
+    db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:!${mine.n}`);
+    let w = await quiet();
+    const end = (await h.merge(mine.n, bot)) as Sent;
+    await until(() => wakes > w, 3000, "the task's end wakes");
+    const e = db.prepare("SELECT author, bot, trusted, summary FROM events WHERE key = ?").get(end.guid) as {
+      author: string | null;
+      bot: number;
+      trusted: number;
+      summary: string;
+    };
+    assert.deepEqual([e.author, e.bot, e.trusted], [null, 0, 0]);
+    assert.doesNotMatch(e.summary, /planted/);
+    assert.match(e.summary, /someone else's/);
+    w = await quiet();
+    await h.merge(other.n, bot);
+    await until(() => fm(dof, `${D}/!${other.n}/!${other.n}.md`)?.frontmatter.state === "merged", 3000, "merged");
+    assert.equal(await quiet(), w, "no task on it: no wake");
+  });
+
   test(`${dof}: trust by membership (owner trusted, a stranger not, members trust takes a member); cached`, async () => {
     const { n } = await h.openIssue("eve", "spam");
     const owner = await h.comment(n, "toshi", "mine");
@@ -1461,4 +1498,52 @@ test("sandboxEnv: insteadOf entries for gitlab (oauth2, its host) and bitbucket 
     .map(([, v]) => v);
   assert.ok(vals.includes("url.https://oauth2:hortus-secret-gle@gitlab.example.com:4443/.insteadOf"));
   assert.ok(vals.includes("bitbucket.org:4443:127.0.0.9"));
+});
+
+test("a text whose writer is not known to be the actor stays out: a null user, a delivery with no sender", async () => {
+  const sum = (guid: string) =>
+    until(
+      () => db.prepare("SELECT summary FROM events WHERE key = ?").get(guid) as { summary: string } | undefined,
+      3000,
+      guid,
+    );
+  const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+  // GitHub: `user` is nullable in the schema (a deleted account), `sender` is the owner
+  const g = await gh.openIssue("o/r", { user: "eve", title: "planted", body: "planted" });
+  const gp = copy(ghPayload(g.guid).request.payload) as { issue: { user: unknown }; sender?: unknown };
+  gp.issue.user = null;
+  gp.sender = { login: "toshi", type: "User" };
+  assert.doesNotMatch((await sum((await gh.deliver("issues", gp)).guid)).summary, /planted/);
+  delete gp.sender;
+  assert.doesNotMatch((await sum((await gh.deliver("issues", gp)).guid)).summary, /planted/);
+  // GitLab: no `user`, so no author: such an event taints nothing, so it must hold nobody's words
+  const l = await gl.openIssue("g/sub/p", { user: "eve", title: "planted", body: "planted" });
+  const lp = copy(own(gl.deliveries, l.guid).payload);
+  delete lp.user;
+  assert.doesNotMatch((await sum((await gl.deliver("issue", lp)).guid)).summary, /planted/);
+  // Bitbucket: an anonymous reporter is null; the owner's update carried the anonymous text as their own
+  const b = await bb.openIssue("w/r", { user: "eve", title: "planted", body: "planted" });
+  const bp = copy(own(bb.deliveries, b.guid).payload) as { issue: { reporter: unknown }; actor?: unknown };
+  bp.issue.reporter = null;
+  bp.actor = bb.user("toshi");
+  assert.doesNotMatch((await sum((await bb.deliver("issue:updated", bp)).guid)).summary, /planted/);
+  delete bp.actor;
+  assert.doesNotMatch((await sum((await bb.deliver("issue:updated", bp)).guid)).summary, /planted/);
+});
+
+test("github: a PR's two ends read apart; the owner's merge says merged", async () => {
+  await gh.commit("o/r", "ends", "e.txt", "e\n");
+  const a = await gh.openPR("o/r", { user: "toshi", title: "A", head: "ends", diff: "d" });
+  const b = await gh.openPR("o/r", { user: "toshi", title: "B", head: "ends", diff: "d" });
+  const sum = (guid: string) =>
+    until(
+      () => db.prepare("SELECT summary FROM events WHERE key = ?").get(guid) as { summary: string } | undefined,
+      3000,
+      guid,
+    );
+  assert.match(
+    (await sum((await gh.closeThread("o/r", a.n, "toshi", { merged: true })).guid)).summary,
+    /^pull_request\.merged /,
+  );
+  assert.match((await sum((await gh.closeThread("o/r", b.n, "toshi")).guid)).summary, /^pull_request\.closed /);
 });

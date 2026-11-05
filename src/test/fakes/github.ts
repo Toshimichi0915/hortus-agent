@@ -108,6 +108,9 @@ export class FakeGitHub {
   /** associations by login (default NONE) */
   associations = new Map<string, string>();
   bots = new Set<string>(["hortus[bot]"]);
+  /** an API merge moves the target branch to the head (a live Worker checks): a fake commit's tree holds one file, so only
+   * where nothing needs the branch's other files */
+  lands = false;
   tokens = new Map<string, Token>();
   /** every installation token minted, in order */
   mints: Token[] = [];
@@ -343,13 +346,22 @@ export class FakeGitHub {
     t.updated_at = this.ts();
     if (t.pr) {
       t.pr.merged = !!o.merged;
-      return this.deliver(
-        "pull_request",
-        { action: "closed", number: n, pull_request: this.pullJson(r, t), ...this.base(r, by) },
-        d,
-      );
+      // the published payload: `action: closed` for both, `merged` and `merged_by` say which
+      const merge = o.merged ? { merged_by: { login: by }, merge_commit_sha: t.pr.head.sha } : {};
+      const pull_request = { ...this.pullJson(r, t), ...merge };
+      return this.deliver("pull_request", { action: "closed", number: n, pull_request, ...this.base(r, by) }, d);
     }
     return this.deliver("issues", { action: "closed", issue: this.issueJson(r, t), ...this.base(r, by) }, d);
+  }
+
+  reopen(full: string, n: number, by: string, d?: DeliverOpts) {
+    const r = this.get(full);
+    const t = r.things.get(n);
+    if (!t?.pr) throw new Error(`fake: no PR #${n}`);
+    t.state = "open";
+    t.updated_at = this.ts();
+    const payload = { action: "reopened", number: n, pull_request: this.pullJson(r, t) };
+    return this.deliver("pull_request", { ...payload, ...this.base(r, by) }, d);
   }
 
   async openPR(
@@ -467,7 +479,7 @@ export class FakeGitHub {
       latest_check_runs_count: o.runs ?? 1,
     };
     r.suites.push(s);
-    const prs = [...r.things.values()].filter((t) => t.pr && t.state === "open" && t.pr.shas.includes(sha));
+    const prs = [...r.things.values()].filter((t) => t.pr?.shas.includes(sha));
     const check_suite = { ...s, pull_requests: prs.map((t) => ({ number: t.number })) };
     return this.deliver("check_suite", { action: "completed", check_suite, ...this.base(r, "github-actions[bot]") }, d);
   }
@@ -679,7 +691,8 @@ export class FakeGitHub {
       if (!t?.pr) return json(404, { message: "Not Found" });
       if (body.sha && body.sha !== t.pr.head.sha)
         return json(409, { message: "Head branch was modified. Review and try the merge again." });
-      await this.closeThread(r.full_name, t.number, "hortus[bot]", { merged: true }, { drop: true });
+      if (this.lands) await this.git(r.full_name, "update-ref", `refs/heads/${t.pr.base.ref}`, t.pr.head.sha);
+      await this.closeThread(r.full_name, t.number, "hortus[bot]", { merged: true });
       return ok({ merged: true, sha: t.pr.head.sha });
     }
     x = at(/^\/pulls\/(\d+)\/reviews$/);

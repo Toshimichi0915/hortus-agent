@@ -25,7 +25,7 @@ export class GitHost {
     this.root = tempDir(prefix);
   }
   private dir = (full: string) => join(this.root, `${full}.git`);
-  private git(full: string, ...args: string[]) {
+  git(full: string, ...args: string[]) {
     return run("git", ["--git-dir", this.dir(full), ...args], { env: gitEnv }).then((r) => r.stdout.trim());
   }
   /** a bare repo whose `main` has one commit */
@@ -219,6 +219,9 @@ export class FakeGitLab {
   /** every REST request: method, the raw path (encoded ids kept), the URL as sent */
   calls: { method: string; path: string; url: string }[] = [];
   git = new GitHost("hortus-fake-gitlab-");
+  /** an API merge moves the target branch to the head (a live Worker checks): a fake commit's tree holds one file, so only
+   * where nothing needs the branch's other files */
+  lands = false;
   private users = new Map<string, User>();
   private ids = 100;
   private tick = 0;
@@ -457,13 +460,21 @@ export class FakeGitLab {
     return this.send("merge_request", this.get(path), by, { object_attributes: this.hookAttrs(t, "merge") }, d);
   }
 
+  /** `close` or `reopen`, as the UI's buttons */
+  closeMR(path: string, n: number, by: string, action: "close" | "reopen" = "close", d?: DeliverOpts) {
+    const t = this.thing(path, n, true);
+    t.state = action === "close" ? "closed" : "opened";
+    t.updated_at = this.ts();
+    return this.send("merge_request", this.get(path), by, { object_attributes: this.hookAttrs(t, action) }, d);
+  }
+
   /**
-   * A pipeline on `sha`, for the opened MR that had it as a head; `branch` sends it as a branch pipeline (no
+   * A pipeline on `sha`, for the MR that had it as a head, ended or not; `branch` sends it as a branch pipeline (no
    * `merge_request`, the connector looks it up); `result`: a merged-results pipeline, run on that merge commit.
    */
   pipeline(path: string, sha: string, status: string, o: { branch?: boolean; result?: string } = {}, d?: DeliverOpts) {
     const p = this.get(path);
-    const mr = [...p.mrs.values()].find((t) => t.mr?.shas.includes(sha) && t.state === "opened");
+    const mr = [...p.mrs.values()].find((t) => t.mr?.shas.includes(sha));
     const pl = { id: this.ids++, sha: o.result ?? sha, ref: mr?.mr?.source_branch ?? "main", status };
     p.pipelines.unshift(pl);
     if (mr?.mr?.sha === sha) mr.mr.head_pipeline = { id: pl.id, status };
@@ -600,7 +611,8 @@ export class FakeGitLab {
       if (!t?.mr) return json(404, { message: "404 Not found" });
       const sha = body.sha ?? q("sha");
       if (sha && sha !== t.mr.sha) return json(409, { message: "SHA does not match HEAD of source branch" });
-      await this.mergeMR(p.path, t.iid, this.self, { drop: true });
+      if (this.lands) await this.git.git(p.path, "update-ref", `refs/heads/${t.mr.target_branch}`, t.mr.sha);
+      await this.mergeMR(p.path, t.iid, this.self);
       return json(200, this.restJson(p, t));
     }
     x = rest.match(/^\/(issues|merge_requests)\/(\d+)(\/notes|\/changes|\/approvals)?$/);
