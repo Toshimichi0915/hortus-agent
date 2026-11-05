@@ -332,6 +332,33 @@ test("reconcile: a scope that throws keeps its cursor; the other scopes proceed"
   await H.gw.stop();
 });
 
+test("a dofs entry of no known type says so on Sources", async () => {
+  const H = harness(() => Config.parse({ dofs: { x: { type: "slak" } } }), {});
+  H.gw.start();
+  assert.equal(H.gw.list()[0]?.error, "no connector type slak");
+  await H.gw.stop();
+});
+
+test("scopes that fail (a forge started before its credential) are retried soon, not after the 10-min wait", async () => {
+  const cfg = Config.parse({ dofs: { sc: { type: "stub" } } });
+  let tries = 0;
+  const H = harness(() => cfg, {
+    stub: async () =>
+      stub("sc", {
+        scopes: async () => {
+          if (++tries === 1) throw new Error("HTTP 403");
+          return ["s"];
+        },
+        async *history() {
+          yield { changes: [{ op: "put", path: "s/x.md", body: "" }], cursor: "1" };
+        },
+      }),
+  });
+  H.gw.start();
+  await until(() => H.commits.length === 1, 5000, "the second try");
+  await H.gw.stop();
+});
+
 test("a stop during a backfill ends between its batches, the cursor at the last one", async () => {
   const cfg = Config.parse({ dofs: { long: { type: "stub" } } });
   let batches = 0;

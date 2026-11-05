@@ -1,4 +1,7 @@
-import { button, h, layout, type Page, time } from "../html.ts";
+import { join } from "node:path";
+import type { Ctx } from "../../ctx.ts";
+import { readCapped } from "../../hostile.ts";
+import { button, details, h, layout, type Page, time } from "../html.ts";
 
 export interface ScheduleListRow {
   id: number;
@@ -11,7 +14,16 @@ export interface ScheduleListRow {
   text: string | null;
   last_run: string | null;
   expires_at: string | null;
+  /** the latest run's summary (`withSummaries`) */
+  summary?: string | null;
 }
+
+/** Each row's `last-summary.md`: in the row's directory, which its runs can write, so read as hostile and capped. */
+export const withSummaries = (ctx: Ctx, rows: ScheduleListRow[]): ScheduleListRow[] =>
+  rows.map((r) => ({
+    ...r,
+    summary: readCapped(join(ctx.paths.schedule(r.id), "last-summary.md"), 16 * 1024)?.text ?? null,
+  }));
 
 const span = (sec: number) => (sec % 3600 === 0 ? `${sec / 3600}h` : sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`);
 
@@ -43,7 +55,7 @@ export function scheduleTable(rows: ScheduleListRow[], tz: string, withTask = tr
     iso ? h`<time datetime="${iso}" data-rel title="${inTz(iso, tz)}">${relative(iso)}</time>` : time(null);
   return h`<table><thead><tr>${withTask ? h`<th>Task</th>` : ""}<th>Text</th><th>Kind</th><th>Next fire</th><th>Last run</th><th>Expires</th><th></th></tr></thead><tbody>${rows.map(
     (r) =>
-      h`<tr>${withTask ? h`<td><a href="/tasks/${r.task_id}">${r.title || r.task_id}</a></td>` : ""}<td class="pre">${r.text ?? ""}</td><td>${kindOf(r)}</td><td>${next(r.fire_at)}</td><td>${time(r.last_run)}</td><td>${r.expires_at ? time(r.expires_at) : "never"}</td><td>${button(
+      h`<tr>${withTask ? h`<td><a href="/tasks/${r.task_id}">${r.title || r.task_id}</a></td>` : ""}<td class="pre">${r.text ?? ""}</td><td>${kindOf(r)}</td><td>${next(r.fire_at)}</td><td>${time(r.last_run)}${r.summary ? details("summary", r.summary) : ""}</td><td>${r.expires_at ? time(r.expires_at) : "never"}</td><td>${button(
         "Unschedule",
         "schedule.unset",
         { id: r.id },
@@ -63,6 +75,6 @@ export const schedules: Page = (ctx) => {
     ctx,
     "schedules",
     "Schedules",
-    h`<div data-refresh id="list">${rows.length ? scheduleTable(rows, ctx.config.owner.tz) : h`<p class="empty">no schedules</p>`}</div>`,
+    h`<div data-refresh id="list">${rows.length ? scheduleTable(withSummaries(ctx, rows), ctx.config.owner.tz) : h`<p class="empty">no schedules</p>`}</div>`,
   );
 };

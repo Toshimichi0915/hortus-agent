@@ -173,18 +173,19 @@ export function createGateway(deps: GatewayDeps): Gateway {
     }
   }
 
-  async function reconcileOnce(name: string, conn: Connector, signal: AbortSignal, only?: string): Promise<void> {
+  /** False when the scopes could not be listed: nothing was reconciled, and the loop tries again soon. */
+  async function reconcileOnce(name: string, conn: Connector, signal: AbortSignal, only?: string): Promise<boolean> {
     const history = conn.history?.bind(conn);
-    if (!history) return;
+    if (!history) return true;
     let scopes: string[];
     try {
       scopes = only ? [only] : await conn.scopes();
     } catch (e) {
       log.error(`${name}: scopes failed`, e);
-      return;
+      return false;
     }
     for (const scope of scopes) {
-      if (signal.aborted) return; // a first backfill runs for hours, and stopOne waits for this loop
+      if (signal.aborted) return true; // a first backfill runs for hours, and stopOne waits for this loop
       try {
         const row = getCursor.get(name, scope) as { cursor: string | null } | undefined;
         let n = 0;
@@ -192,21 +193,22 @@ export function createGateway(deps: GatewayDeps): Gateway {
           if (b.changes.length) await deps.commit(name, b.changes, `sync(${name}): ${scope} +${b.changes.length}`);
           setCursor.run(name, scope, b.cursor, now());
           n += b.changes.length;
-          if (signal.aborted) return;
+          if (signal.aborted) return true;
         }
         log.info(`sync(${name}): ${scope} +${n}`, { reconcile: true });
       } catch (e) {
         log.error(`${name}: reconcile ${scope} failed`, e);
       }
     }
+    return true;
   }
 
-  function reconcile(name: string, scope?: string): Promise<void> {
+  function reconcile(name: string, scope?: string): Promise<boolean> {
     const r = runners.get(name);
     const conn = r?.conn;
-    if (!r || !conn) return Promise.resolve();
+    if (!r || !conn) return Promise.resolve(true);
     const p = r.chain.then(() => reconcileOnce(name, conn, r.ac.signal, scope));
-    r.chain = p;
+    r.chain = p.then(() => {});
     return p;
   }
 
@@ -236,9 +238,12 @@ export function createGateway(deps: GatewayDeps): Gateway {
     const conn = r.conn;
     if (!conn || signal.aborted) return;
     const reconcileLoop = async () => {
-      while (!signal.aborted) {
-        await reconcile(name);
-        await sleep(RECONCILE_MS, signal);
+      // a forge started before its credential (the README's order), or on a bad network, has no scope row and so no
+      // Resync button: backoff, not the 10-min wait with a stale error on Sources
+      for (let i = 0; !signal.aborted; ) {
+        const ok = await reconcile(name);
+        i = ok ? 0 : i + 1;
+        await sleep(ok ? RECONCILE_MS : backoff(i), signal);
       }
     };
     await Promise.all([eventsLoop(name, r, conn, signal), reconcileLoop()]);
@@ -295,17 +300,16 @@ export function createGateway(deps: GatewayDeps): Gateway {
         cursor: string | null;
         last_sync: string | null;
       }[];
-      return Object.entries(deps.config().dofs)
-        .filter(([, cfg]) => deps.connectors[cfg.type])
-        .map(([dof, cfg]) => {
-          const r = runners.get(dof);
-          const s = r?.conn?.status() ?? { connected: false, error: r?.error ?? "not started" };
-          const scopes = rows
-            .filter((x) => x.dof === dof)
-            .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
-          const error = s.error ?? r?.error;
-          return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
-        });
+      return Object.entries(deps.config().dofs).map(([dof, cfg]) => {
+        const r = runners.get(dof);
+        const unknown = !deps.connectors[cfg.type] && `no connector type ${cfg.type}`;
+        const s = r?.conn?.status() ?? { connected: false, error: r?.error ?? (unknown || "not started") };
+        const scopes = rows
+          .filter((x) => x.dof === dof)
+          .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
+        const error = s.error ?? r?.error;
+        return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
+      });
     },
     async resync(dof, scope) {
       if (!runners.get(dof)?.conn) throw new RpcError("not_found", `no running source ${dof}`);

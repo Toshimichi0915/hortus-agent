@@ -142,11 +142,23 @@ async function chat(args: string[], rpc: RpcClient): Promise<void> {
     lastError = t;
     process.exitCode = 1;
   };
+  // the web chat shows a pending entry inline; here only the model's words would say the Worker waits on the owner
+  const told = new Set<unknown>();
+  const waiting = async (task: string) => {
+    const c = (await rpc.call("task.get", { id: task }).catch(() => null)) as { approvals: Row[] } | null;
+    for (const a of c?.approvals ?? []) {
+      if (!told.has(a.id)) console.error(grey(`approval #${s(a.id)} pending (${s(a.category)}): hortus approvals`));
+      told.add(a.id);
+    }
+  };
   const follow = async (task: string) => {
     try {
       const p = printer();
       // the owner's own lines: the REPL user typed them
-      for await (const ev of rpc.stream("task.stream", { id: task })) if (typeOf(ev) !== "owner") p.print(ev);
+      for await (const ev of rpc.stream("task.stream", { id: task })) {
+        if (typeOf(ev) !== "owner") p.print(ev);
+        if (typeOf(ev) === "status") await waiting(task);
+      }
     } catch (e) {
       if (!closing) report(e);
     }
@@ -261,12 +273,17 @@ const commands: Record<string, Command> = {
             .map(s)
             .join(" ");
           console.log([`#${s(a.id)}`, a.status, a.category, a.task_id, where].map(s).join("\t"));
+          if (a.status === "approved" && a.category === "merge" && a.reason)
+            console.log(`\tnot landed: ${s(a.reason)} (Retry is on the Approvals page)`);
           if (a.status !== "pending") continue;
           // what the Approvals page warns of: `approve` here is the same decision, and no entry page to open first
           const taint = ((a.payload as Row | null)?.untrusted ?? []) as string[];
           if (sum.rendered) console.log(`\t${s(sum.rendered)}`);
           if (taint.length) console.log(`\ttainted: ${taint.join("; ")}`);
           if (a.grantable) console.log(`\tapprove --grant ${s(a.id)} also allows ${s(a.category)} for this task`);
+          const missing = ((sum.missing ?? []) as Row[]).map((m) => m.name);
+          if (missing.length)
+            console.log(`\tno value yet for ${missing.join(", ")}: the Approvals page takes them with the approval`);
         }
         if (cut) console.log(cutLine("approvals"));
         return;
@@ -291,10 +308,9 @@ const commands: Record<string, Command> = {
   close: {
     usage: "close <id> [failed]                 close a task (done unless failed)",
     async run([id, outcome], rpc) {
-      await rpc.call("task.close", {
-        id: needId(id, "close <id> [failed]"),
-        outcome: outcome === "failed" ? "failed" : "done",
-      });
+      // a typo must not record the opposite outcome: a closed task stays closed
+      if (outcome !== undefined && outcome !== "failed") throw new Usage("usage: hortus close <id> [failed]");
+      await rpc.call("task.close", { id: needId(id, "close <id> [failed]"), outcome: outcome ?? "done" });
       console.log(`closed ${id}`);
     },
   },

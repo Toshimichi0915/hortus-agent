@@ -80,12 +80,15 @@ function searchAs(q: SearchQuery, caller: Caller): SearchHit[] {
   return hits;
 }
 
+/** fts.ts compares these as ISO prefixes: `yesterday` or `7d` would silently match nothing (or everything). */
+const Day = z.string().regex(/^\d{4}(-\d{2}(-\d{2}([T ].*)?)?)?$/, "a date: YYYY-MM-DD");
+
 const Query = z.object({
   q: z.string().min(1),
   in: z.string().optional(),
   author: z.string().optional(),
-  since: z.string().optional(),
-  until: z.string().optional(),
+  since: Day.optional(),
+  until: Day.optional(),
   limit: z.number().int().positive().max(200).optional(),
 });
 

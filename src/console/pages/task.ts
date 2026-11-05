@@ -21,7 +21,7 @@ import {
 } from "../html.ts";
 import { approvalEntry, pendingFor } from "./approvals.ts";
 import { cutRows, lastReplies, type ReplyRow, replyLine } from "./chat.ts";
-import { type ScheduleListRow, scheduleTable } from "./schedules.ts";
+import { type ScheduleListRow, scheduleTable, withSummaries } from "./schedules.ts";
 import { type TaskRow, taskActions } from "./tasks.ts";
 
 interface MsgRow {
@@ -108,7 +108,7 @@ ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join(";
 <p><a href="/tasks/${id}/log" target="_blank" rel="noopener">session.md</a></p>${log ? details("console.log", log) : ""}
 <div class="actions">${taskActions(t)}${open ? button("Close as failed", "task.close", { id, outcome: "failed" }, { confirm: true }) : ""}</div>
 ${pending.length ? h`<h2>Waiting for you</h2>${pending.map((a) => approvalEntry(a))}` : ""}
-${timers.length ? h`<h2>Schedules</h2>${scheduleTable(timers, ctx.config.owner.tz, false)}` : ""}
+${timers.length ? h`<h2>Schedules</h2>${scheduleTable(withSummaries(ctx, timers), ctx.config.owner.tz, false)}` : ""}
 <h2>Messages</h2>${more(q, "messages", outbox.rows.length, outbox.total)}${outbox.rows.length ? h`<ul class="msgs">${outbox.rows.map(msg)}</ul>` : empty(q, "none")}
 <h2>Stream</h2>${replies.length ? h`${cutRows(id, replies)}<div class="stream">${streamLines(replies)}</div>` : h`<p class="empty">none</p>`}
 <h2>Inbox</h2>${more(q, "inbox messages", inbox.rows.length, inbox.total)}${inbox.rows.length ? h`<ul class="msgs">${inbox.rows.map(msg)}</ul>` : empty(q, "empty")}

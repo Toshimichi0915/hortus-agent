@@ -12,6 +12,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
+import { z } from "zod";
 import { Config } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
@@ -23,7 +24,7 @@ import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
 import { HISTORY } from "../proxy/pipeline.ts";
-import { call } from "../rpc.ts";
+import { call, define } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
@@ -232,8 +233,29 @@ const pendingId = (r: R): number => {
 };
 const approve = (id: number) => call("approval.decide", { id, decision: "approve" }, owner);
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+const rejectedLogins: number[] = [];
+define("login.reject", {
+  roles: ["owner"],
+  input: z.object({ id: z.number() }),
+  run: ({ id }) => void rejectedLogins.push(id),
+});
 
 // ---------------------------------------------------------------------------------------------------------------------
+
+test("a login entry cannot be approved outside its view; reject closes the view", async () => {
+  const id = Number(
+    ctx.db
+      .prepare(
+        "INSERT INTO approvals(kind, category, summary, status, requested_at) VALUES ('login', 'login', '{}', 'pending', ?)",
+      )
+      .run(new Date().toISOString()).lastInsertRowid,
+  );
+  await assert.rejects(approve(id), new RegExp(`sign in at /approvals/${id}/login`));
+  assert.equal(row(id).status, "pending");
+  await call("approval.decide", { id, decision: "reject" }, owner);
+  assert.deepEqual(rejectedLogins, [id]);
+  ctx.db.prepare("DELETE FROM approvals WHERE id = ?").run(id);
+});
 
 test("auto: the first post asks for a durable grant; after one click every later post passes via the judge", async () => {
   const first = await send({});

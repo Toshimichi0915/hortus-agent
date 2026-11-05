@@ -109,6 +109,25 @@ test("an action is busy while in flight; Esc disarms a confirm; focus survives t
   assert.equal(await ev(`${close}.hasAttribute("aria-disabled")`), false);
 });
 
+test("a re-render keeps a credential being typed and an open fold", { skip }, async () => {
+  const summary = JSON.stringify({ name: "n", new: true, manifest: "{}", missing: [{ name: "n", type: "token" }] });
+  const { lastInsertRowid: id } = ctx.db
+    .prepare(
+      "INSERT INTO approvals(kind, category, summary, status, requested_at) VALUES ('request', 'transforms', ?, 'pending', 'x')",
+    )
+    .run(summary);
+  await go("/approvals");
+  const field = `document.querySelector('[name="credentials.n.value"]')`;
+  const fold = `document.querySelector('#a${id} details')`;
+  await ev(`${field}.value = "sk-typed", ${fold}.open = true`);
+  await ev(`${field}.dataset.old = "1"`);
+  bus.emit("approvals", {});
+  await until(`!${field}.dataset.old`); // the swap happened: a new element
+  assert.equal(await ev(`${field}.value`), "sk-typed");
+  assert.equal(await ev(`${fold}.open`), true);
+  ctx.db.prepare("DELETE FROM approvals WHERE id = ?").run(id);
+});
+
 // decided elsewhere (another tab, the CLI, the phone) while this page's stream was down
 define("approval.decide", {
   roles: ["owner"],

@@ -37,7 +37,7 @@ import type { Forge, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { dirOf, gitOf, mergeTarget } from "./forge.ts";
+import { dirOf, gitOf, mergeTarget, rest } from "./forge.ts";
 import { patchOf } from "./gitlab.ts";
 import { connectors } from "./index.ts";
 
@@ -1562,4 +1562,12 @@ test("github: a PR's two ends read apart; the owner's merge says merged", async 
     /^pull_request\.merged /,
   );
   assert.match((await sum((await gh.closeThread("o/r", b.n, "toshi")).guid)).summary, /^pull_request\.closed /);
+});
+
+test("a forge's failed GET carries the body: Sources shows why, not only the status", async () => {
+  const fetch = async () => new Response("hortus: installation token: minting failed: HTTP 401\n", { status: 502 });
+  await assert.rejects(
+    rest({ name: "gl", fetch }, "http://x", {}).get("/y"),
+    /gl GET \/y: HTTP 502 hortus: installation token/,
+  );
 });

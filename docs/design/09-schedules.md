@@ -22,7 +22,7 @@ Tools `schedule(text, { at | every | cron }, tz?, script?)` → `id`, `unschedul
 
 ### Console › Schedules page
 
-Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last run, expires; "unschedule". `hortus schedules` prints the same table.
+Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last run with its summary folded under it, expires; "unschedule". `hortus schedules` prints the same table, without the summary.
 
 ## Functional tests
 

@@ -106,7 +106,11 @@ define("settings.set", {
     if (!r.success) throw new RpcError("invalid", oneLine(r.error), r.error.issues);
     save(r.data, c.paths.config());
     await c.reload();
-    return { ok: true };
+    // kept (Config is loose, for a newer version's keys), but a typo (`polcy`) would otherwise read as saved and in force
+    const unknown = Object.keys(r.data).filter((k) => !(k in Config.shape));
+    return unknown.length
+      ? { ok: true, message: `saved; not settings hortusd knows: ${unknown.join(", ")}` }
+      : { ok: true };
   },
 });
 

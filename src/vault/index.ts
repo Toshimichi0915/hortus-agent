@@ -2,7 +2,7 @@
 import { z } from "zod";
 import type { Ctx, Module } from "../ctx.ts";
 import { onApproved as landMerge } from "../projects/merge.ts";
-import { define } from "../rpc.ts";
+import { call, define } from "../rpc.ts";
 import { RpcError, type VaultEntry } from "../types.ts";
 import * as ca from "./ca.ts";
 import * as gate from "./gate.ts";
@@ -102,6 +102,15 @@ define("approval.decide", {
     grant: z.boolean().optional(),
   }),
   run: async ({ id, decision, credentials, reason, grant }) => {
+    // a login is decided in its view: "approved" here would tell the Worker to go on with nobody signed in, no cookies
+    const kind = ctx().db.prepare("SELECT kind FROM approvals WHERE id = ? AND status = 'pending'").get(id) as
+      | { kind: string }
+      | undefined;
+    if (kind?.kind === "login") {
+      if (decision === "approve")
+        throw new RpcError("invalid", `a login is finished in the console: sign in at /approvals/${id}/login`);
+      return call("login.reject", { id }, { role: "owner" });
+    }
     // a transforms entry is claimed, installed and decided by approveTransform
     if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
       gate.decide(id, decision, "owner", { reason, grant });

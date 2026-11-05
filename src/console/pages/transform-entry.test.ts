@@ -29,6 +29,12 @@ test("transforms entry: one header line, configured names, password fields posti
   assert.ok(!form.includes("credentials.slack"));
 });
 
+test("transforms entry: a github-app's private key is a textarea, or the PEM loses its newlines", () => {
+  const form = transformForm(7, { ...s, missing: [{ name: "gh", type: "github-app" }] }).html;
+  assert.match(form, /<textarea name="credentials\.gh\.privateKey"/);
+  assert.match(form, /<input type="number" name="credentials\.gh\.appId"/);
+});
+
 test("transforms entry: a changed transform.js says so even when the manifest is the same", () => {
   const view = summaryView("request", "transforms", { ...s, new: false, manifestDiff: " {}\n", codeChanged: 3 }).html;
   assert.match(view, /\(changed\)/);

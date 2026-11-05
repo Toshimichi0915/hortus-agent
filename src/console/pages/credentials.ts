@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { button, error, h, layout, type Page, time, tryCall } from "../html.ts";
 
 /** `credential.list` rows (vault/index.ts) */
@@ -12,11 +13,14 @@ interface Cred {
 const pw = (name: string, label: string) =>
   h`<label>${label} <input type="password" name="${name}" autocomplete="off"></label>`;
 
+/** The form's suggestions: what ships in `transforms/` (a typo here fails later, as a connector's 403). */
+const TRANSFORMS = readdirSync(new URL("../../transforms/", import.meta.url)).sort();
+
 /** Fields per type are shown by CSS (`form:has(option[value=…]:checked)`); empty fields are not sent. */
 const form = h`<form class="cred" data-call="credential.set" data-reset>
 <label>Name <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{0,63}" title="lowercase letters, digits, _ and -"></label>
 <label>Type <select name="type"><option value="token">token</option><option value="github-app">github-app</option><option value="webhook-secret">webhook-secret</option><option value="aws">aws</option></select></label>
-<label>Transform <input name="transform"></label>
+<label>Transform <input name="transform" list="transforms"></label><datalist id="transforms">${TRANSFORMS.map((t) => h`<option value="${t}">`)}</datalist>
 <label>Hosts <input name="hosts" data-list placeholder="comma-separated" pattern="[A-Za-z0-9.\\-]+(\\s*,\\s*[A-Za-z0-9.\\-]+)*"></label>
 <fieldset class="f-token f-webhook-secret">${pw("value", "Value")}</fieldset>
 <fieldset class="f-github-app"><label>App id <input type="number" name="appId"></label><label>Installation id <input type="number" name="installationId"></label><label>Private key (PEM) <textarea name="privateKey" rows="4" autocomplete="off" spellcheck="false"></textarea></label></fieldset>
