@@ -19,7 +19,7 @@ import * as paths from "../paths.ts";
 import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
-import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
+import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed, sessionPath } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
@@ -216,7 +216,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         return;
       }
       const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
-      env.PATH = `${join(paths.ctl(row.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
+      env.PATH = `${join(paths.ctl(row.id), "bin")}:${sessionPath()}`;
       // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
       await prepareClone(task, env.HORTUS_RPC_LOCAL, say);
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
@@ -403,7 +403,7 @@ async function finish(
 const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => void) => Promise<Child>> = {
   host: async (task, onStdout) => {
     const { env } = await loopbackLink(task.id, "planner");
-    env.PATH = `${join(paths.ctl(task.id), "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
+    env.PATH = `${join(paths.ctl(task.id), "bin")}:${sessionPath()}`;
     const c = ctx?.config as Config;
     return spawnSandboxed({
       task,

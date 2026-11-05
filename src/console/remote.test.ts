@@ -265,6 +265,33 @@ test("enroll.code is loopback only; session.revoke makes the revoked session's n
   assert.match(settings.body, /made at the machine/);
 });
 
+test("passkey.delete: its assertion is refused, its sessions end, other devices stay; the last one may go", async () => {
+  const a = auth();
+  const lost = token(await enrol(a, "lost"));
+  const b = auth();
+  const kept = token(await enrol(b, "kept"));
+  assert.equal((await signIn(a)).status, 200);
+  const list = (await call("passkey.list", {}, { role: "owner" })) as { id: string; device: string }[];
+  const id = list.find((k) => k.device === "lost")?.id;
+  assert.ok(id);
+  assert.match((await remote("/settings", { cookie: kept })).body, /Passkeys[\s\S]*lost/);
+  assert.equal((await remote("/api/passkey.delete", { body: { id }, cookie: kept })).status, 200);
+  assert.equal((await remote("/api/session.list", { body: {}, cookie: lost })).status, 401);
+  assert.equal((await remote("/api/session.list", { body: {}, cookie: kept })).status, 200);
+  const again = await signIn(a);
+  assert.equal(again.status, 400);
+  assert.match(again.body, /not enrolled/);
+  assert.equal((await signIn(b)).status, 200);
+  await assert.rejects(call("passkey.delete", { id }, { role: "owner" }), /no such passkey/);
+  await assert.rejects(call("passkey.delete", { id: "x" }, { role: "worker", task: "T" }));
+  // a session from before they named a passkey may be the lost device's: it goes too
+  ctx.db.prepare("UPDATE console_sessions SET passkey = NULL WHERE device = 'kept'").run();
+  const rest = (await call("passkey.list", {}, { role: "owner" })) as { id: string }[];
+  for (const k of rest) await call("passkey.delete", { id: k.id }, { role: "owner" });
+  assert.equal((await remote("/api/session.list", { body: {}, cookie: kept })).status, 401);
+  assert.deepEqual(await call("passkey.list", {}, { role: "owner" }), []);
+});
+
 test("session.revoke ends the revoked session's open SSE stream", async () => {
   const cookie = token(await enrol(auth(), "sse"));
   const got: string[] = [];

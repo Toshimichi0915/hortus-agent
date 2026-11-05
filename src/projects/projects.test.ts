@@ -245,6 +245,25 @@ test("non-git: snapshots skip excluded paths; the clone never sees them; restore
   assert.ok(snaps.length >= 3);
 });
 
+test("a checkout that is a linked worktree: the clone keeps no alternates into what a Worker cannot read", async () => {
+  const wt = join(root, "g-worktree");
+  g(checkout, "worktree", "add", "-q", "--detach", wt, "HEAD");
+  const before = ctx.config.projects.g;
+  assert.ok(before);
+  ctx.config.projects.g = { ...before, path: wt };
+  try {
+    const row = ctx.db.prepare("SELECT * FROM tasks WHERE id = 'ta'").get() as unknown as TaskRow;
+    const dir = join(root, "wt-clone");
+    const tj = taskJson(ctx.config, row);
+    await prepareClone({ ...tj, paths: { ...tj.paths, clone: dir } });
+    assert.ok(!existsSync(join(dir, ".git/objects/info/alternates")));
+    assert.ok(g(dir, "log", "--oneline").length > 0);
+  } finally {
+    ctx.config.projects.g = before;
+    g(checkout, "worktree", "remove", "--force", wt);
+  }
+});
+
 /** A Worker's clone of `project` on hortus/<task> with one commit writing `file`, pushed through the route. */
 async function deliver(taskId: string, project: string, file: string, text: string, base?: string): Promise<string> {
   client = as(taskId);

@@ -376,3 +376,15 @@ test("missed while hortusd was down (3 days, across the fall-back): one run at t
   tick();
   assert.equal(runsOf(p.id).length, 1);
 });
+
+test("a run left after its parent closed cannot set a timer: nothing would ever delete it", async () => {
+  const p = parent();
+  const { id } = await set(p.id, { every: 300 });
+  T += 6 * MIN;
+  tick();
+  const run = ctx.db.prepare("SELECT id FROM tasks WHERE parent = ?").get(p.id) as { id: string };
+  await tasks.close(p.id, "done");
+  assert.equal(ctx.db.prepare("SELECT 1 FROM schedules WHERE id = ?").get(id), undefined);
+  await assert.rejects(set(run.id, { every: 300 }), /is closed/);
+  assert.equal((ctx.db.prepare("SELECT count(*) AS n FROM schedules").get() as { n: number }).n, 0);
+});

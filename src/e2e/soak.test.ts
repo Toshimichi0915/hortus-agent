@@ -345,5 +345,7 @@ test(`soak: ${MINUTES} min of churn (${[...ONLY].join(",")}), bounded growth`, {
   // +44 MB/100 tasks
   const peak = Math.max(...samples.filter((s) => s.tasks >= warm.tasks).map((s) => s.heapTotal));
   const grew = per100("rss") - (LONG ? 0 : ((peak - warm.heapTotal) / Math.max(1, n)) * 100);
-  if (n >= 100) assert.ok(grew < (LONG ? 1 : 10), `rss ${grew} MB per 100 tasks`);
+  // ponytail: the short bound is 25: rss still climbs to its plateau inside the short window (16 MB/100 tasks once in 12
+  // runs, round 16, where 10 minutes on the same tree gave 0.26): it catches a gross leak, HORTUS_TEST_SOAK=1 a small one
+  if (n >= 100) assert.ok(grew < (LONG ? 1 : 25), `rss ${grew} MB per 100 tasks`);
 });

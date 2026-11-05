@@ -70,6 +70,8 @@ const migrations: string[] = [
   `ALTER TABLE search_meta ADD COLUMN author TEXT;
   UPDATE search_meta SET author = (SELECT author FROM search WHERE search.rowid = search_meta.rowid);
   CREATE INDEX search_meta_author ON search_meta(dof, author);`,
+  // review round 16: which passkey a session signed in with, so deleting it ends them (null: from before this)
+  "ALTER TABLE console_sessions ADD COLUMN passkey TEXT;",
 ];
 
 const TAINT_MAX = 5;

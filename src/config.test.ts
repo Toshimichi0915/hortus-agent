@@ -42,6 +42,13 @@ test("invalid JSON or schema → throws naming the path", () => {
   assert.throws(() => load(bad), { message: `${bad}: owner.tz: not an IANA time zone (e.g. Asia/Tokyo)` });
 });
 
+test("policy path lists are absolute: `~/x` would name nothing, a deny that denies nothing", () => {
+  for (const k of ["deny", "cache", "read"]) {
+    assert.throws(() => Config.parse({ policy: { [k]: ["~/x"] } }));
+    assert.deepEqual(Config.parse({ policy: { [k]: ["/x"] } }).policy[k], ["/x"]);
+  }
+});
+
 test("policyFor: forced human, exact key, * fallback, empty policy", () => {
   const c = Config.parse({
     policy: { merge: "auto", transforms: "auto", login: "auto", "origin:x.com": "auto", "*": "auto" },

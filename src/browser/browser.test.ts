@@ -495,6 +495,14 @@ test("browser.login for an origin with a stored login → a grant entry; approvi
     .slice(n0)
     .map((x) => JSON.parse(x.body));
   assert.ok(msgs.some((m) => m.from === "cookies" && m.data.some((c: { name: string }) => c.name === "auth")));
+  // the site's session ended: asking again after the cookies went out reaches the owner, as a login
+  const again = (await call(
+    "browser.login",
+    { url: "http://app.fake.test/", why: "logged out" },
+    { role: "worker", task: "T4" },
+  )) as { status: string; kind: string; approval: number };
+  assert.equal(again.kind, "login", JSON.stringify(again));
+  await api("login.reject", { id: again.approval });
 });
 
 test("a slow login page: the view takes input from its first frame, while the page is still loading", {
@@ -592,6 +600,20 @@ test("Credentials: captured origins listed; forget deletes them and old placehol
   const r = await raw({ host: "site.test", path: "/me", headers: { cookie: `session=hortus-secret-${row.name}` } });
   assert.equal(r.status, 403);
   assert.match(r.body, /unknown credential/);
+  // a task that held the site's grant is out too: its next browser_login is a login, not "granted" and no cookies
+  ctx.db
+    .prepare(
+      "INSERT INTO approvals(kind, category, hash, task_id, status) VALUES ('grant', 'origin:forgot.test', 'grant:origin:forgot.test', 'T4', 'approved')",
+    )
+    .run();
+  await api("captured.forget", { origin: "forgot.test" });
+  const login = (await call(
+    "browser.login",
+    { url: "http://forgot.test/", why: "forgotten" },
+    { role: "worker", task: "T4" },
+  )) as { kind: string; approval: number };
+  assert.equal(login.kind, "login", JSON.stringify(login));
+  await api("login.reject", { id: login.approval });
   rmSync(fixtures, { recursive: true, force: true });
 });
 

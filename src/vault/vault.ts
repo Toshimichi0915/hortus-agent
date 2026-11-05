@@ -65,7 +65,11 @@ export function touch(name: string): void {
 export const minted = new Map<string, { value: string; expires: number }>();
 let mintedVersion = 0;
 export function mint(key: string, value: string, ttlMs: number): void {
-  minted.set(key, { value, expires: Date.now() + ttlMs });
+  const now = Date.now();
+  // kept past `expires` (a token lives an hour, it is reused for 50 min), then dropped: every value costs every scrub,
+  // and a key per task and repo set grew the set for as long as the daemon ran
+  for (const [k, m] of minted) if (m.expires + ttlMs < now) minted.delete(k);
+  minted.set(key, { value, expires: now + ttlMs });
   mintedVersion++;
 }
 

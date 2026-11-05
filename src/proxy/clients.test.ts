@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { createGzip } from "node:zlib";
+import { jar } from "../browser/jar.ts";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb, taintOf } from "../db.ts";
@@ -72,6 +73,11 @@ const fake = http.createServer((req, res) => {
       const v = u === "/cookie" ? "real-cookie-value" : "rotated-value";
       res.writeHead(200, { "content-type": "text/plain", "set-cookie": `sid=${v}; Path=/` });
       return res.end(v);
+    }
+    // a rolling session: every response sets the cookie again, and its hour starts over
+    if (u === "/roll") {
+      res.writeHead(200, { "content-type": "text/plain", "set-cookie": "roll=rolling-cookie-value; Max-Age=3600" });
+      return res.end("ok");
     }
     // a login page: gzipped, the cookie echoed in the body and cut in two by a flush
     if (u === "/login") {
@@ -350,6 +356,19 @@ test("a text body keeps its bytes: curl --data-binary of a file with a BOM", asy
 
 test("no transform, streamed: an upstream that dies mid-body fails the client's read, never a clean short file", async () => {
   await assert.rejects(curl("cdn.test", "/cut"), /curl: \((18|56|92)\)/);
+});
+
+test("a cookie the site sets again counts its Max-Age from then: the jar keeps a rolling session", async () => {
+  const held = () => jar(ctx.db, "T").find((c) => c.name === "roll");
+  await curl("cdn.test", "/roll");
+  const first = held()?.expires as number;
+  assert.ok(first);
+  ctx.db
+    .prepare("UPDATE captured SET created = ? WHERE json_extract(meta, '$.cookieName') = 'roll'")
+    .run(new Date(Date.now() - 2 * 3600_000).toISOString());
+  assert.equal(held(), undefined, "two hours old and unset since: gone");
+  await curl("cdn.test", "/roll");
+  assert.ok((held()?.expires ?? 0) >= first);
 });
 
 // last: it taints the task

@@ -2,13 +2,13 @@ import { existsSync } from "node:fs";
 import type { Ctx } from "../../ctx.ts";
 import { button, details, h, layout, PAUSED, type Page, type Params, raw, time } from "../html.ts";
 import { svg } from "../qr.ts";
-import { certSource, liveEnroll, sessions } from "../remote.ts";
+import { certSource, liveEnroll, passkeyList, sessions } from "../remote.ts";
 
 export const settings: Page = (ctx, p) => {
   const c = ctx.config;
   const paused = existsSync(ctx.paths.paused());
   const notes = c.judge_notes ?? {};
-  const policy = Object.entries(c.policy).filter(([k]) => k !== "deny" && k !== "cache");
+  const policy = Object.entries(c.policy).filter(([k]) => !["deny", "cache", "read"].includes(k));
   return layout(
     ctx,
     "settings",
@@ -26,7 +26,7 @@ ${remote(ctx, p)}
     }<p class="hint">Edit policy and judge_notes in the JSON below.</p></section>
 <h2>hortusd.json</h2><form data-call="settings.set" class="editor">
 <textarea name="config" data-json rows="24" spellcheck="false">${JSON.stringify(c, null, 2)}</textarea>
-<button>Save and reload</button></form>${c.dev ? h`<h2>Development</h2>${details("dev", c.dev)}` : ""}`,
+<button>Save and reload</button><p class="hint">The console's own <code>console</code> keys and the <code>proxy</code> ports apply at the next start of hortusd.</p></form>${c.dev ? h`<h2>Development</h2>${details("dev", c.dev)}` : ""}`,
   );
 };
 
@@ -38,6 +38,7 @@ function remote(ctx: Ctx, p: Params) {
   const at = p.caller?.remote;
   const code = at ? undefined : liveEnroll(ctx.db);
   const rows = sessions(ctx.db, p.caller?.session);
+  const keys = passkeyList(ctx.db);
   return h`<section data-refresh id="remote"><h2>Remote</h2>
 <p>Listening on <code>${c.listen}</code> as <code>${c.host ?? ""}</code>; certificate ${certSource() ?? "not loaded"}.</p>
 <h3>Enrol a device</h3>${
@@ -61,5 +62,14 @@ function remote(ctx: Ctx, p: Params) {
             }</td></tr>`,
         )}</tbody></table>`
       : h`<p class="empty">no remote sessions</p>`
+  }
+<h3>Passkeys</h3>${
+    keys.length
+      ? h`<table><thead><tr><th>Device</th><th>Enrolled</th><th>Last used</th><th></th></tr></thead><tbody>${keys.map(
+          (k) =>
+            h`<tr><td>${k.device}</td><td>${time(k.created)}</td><td>${time(k.last_use)}</td><td>${button("Delete", "passkey.delete", { id: k.id }, { confirm: true, cls: "bad" })}</td></tr>`,
+        )}</tbody></table>
+<p class="hint">Lost a device? Delete its passkey: it cannot sign in again, and its sessions end. With the last one gone, a device enrols again from the machine.</p>`
+      : h`<p class="empty">no passkeys</p>`
   }</section>`;
 }

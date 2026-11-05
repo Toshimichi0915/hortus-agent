@@ -9,17 +9,22 @@ const list = (xs: string[]) => (xs.length ? xs.join(", ") : "none");
 
 export function prompt(task: TaskJson): string {
   const p = task.paths;
+  const chat = task.kind === "chat";
   const where = [
     `- DOFs (mirrored sources, read-only Markdown): ${p.dof}; this task can read ${list(task.scope.dofs ?? [])}`,
     p.repos && `- forge repo mirrors (read-only): ${p.repos}`,
     `- your scratch directory (cwd unless told otherwise): ${p.work}; temporary files go here too. A write refused under /tmp or your home (\`Permission denied\`) is the sandbox, not a fault: do not investigate it, put the file here, even if the brief named that path, and say so in your summary`,
+    chat &&
+      "- there is no terminal here, and no root: `script`, `expect`, Python's `pty`, an interactive prompt and `sudo` fail by design. Use the non-interactive form (`npm init -y`, `GIT_SEQUENCE_EDITOR=…`); what needs a terminal, or root, the owner runs",
+    !chat &&
+      p.dof !== "/dof" &&
+      "- $HOME is your own: of the owner's home you can read only the toolchains and the project, and /mnt, /srv, /tmp and /var/log are hidden too. A read refused there is the sandbox as well: do not investigate it, say in your summary which path you needed (the owner can add it to `policy.read`)",
     p.clone && `- the project clone: ${p.clone}${task.clone_url ? ` (origin ${task.clone_url})` : ""}`,
     p.schedule && `- this run's persistent directory (kept between runs of its schedule): ${p.schedule}`,
   ].filter(Boolean);
   const projects = Object.entries(task.projects ?? {}).map(
     ([name, pr]) => `- ${name}: ${pr.path} (main branch ${pr.main}, ${pr.runtime})`,
   );
-  const chat = task.kind === "chat";
   const forge = Object.entries(task.repo_urls ?? {}).map(([r, url]) => {
     const i = r.indexOf(":");
     return `- ${r}: ${url} (read cache ${p.repos}/${r.slice(0, i)}/${dirOf(r.slice(i + 1))}.git)`;

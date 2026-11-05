@@ -207,7 +207,11 @@ export async function prepareClone(
   const p = project(name);
   await startSync(name, note);
   if (!existsSync(dir)) {
-    const ref = isGit(p) ? ["--reference", resolve(p.path)] : [];
+    // only where the objects are the checkout's own: git refuses a linked worktree, and a Worker sees the checkout alone,
+    // so a clone with alternates beyond it could not read them. Without it the clone is a full copy of the origin
+    const objects = join(p.path, ".git/objects");
+    const ref =
+      existsSync(objects) && !existsSync(join(objects, "info/alternates")) ? ["--reference", resolve(p.path)] : [];
     await git(["clone", "-q", "--no-local", ...ref, paths.project(name), dir]);
     await git(["-C", dir, "checkout", "-q", "-b", `hortus/${task.id}`]);
     await git(["-C", dir, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);

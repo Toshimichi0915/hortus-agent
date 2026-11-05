@@ -117,5 +117,7 @@ export const transformsDofModule: Module = {
     if (shipped.length) log.info("shipped transforms", { names: shipped });
     await load();
   },
+  // a forge manifest's hosts are expanded from `dofs` at load: a DOF added or moved in Settings needs the table again
+  reload: load,
   async stop() {},
 };

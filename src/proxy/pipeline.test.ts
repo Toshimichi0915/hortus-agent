@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -27,7 +28,8 @@ import { tempDir } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
-import { read as readVault, write as writeVault } from "../vault/vault.ts";
+import { installationToken } from "../vault/ops.ts";
+import { mint, minted, read as readVault, scrubber, write as writeVault } from "../vault/vault.ts";
 import { coreFetch, links, listen, proxyModule, unlisten } from "./index.ts";
 import { egress, hashTemplate } from "./pipeline.ts";
 import { CLIENT_IDLE } from "./server.ts";
@@ -601,6 +603,31 @@ test("refs from slack's response() on chat.postMessage land in task_refs for the
   assert.equal(row.task_id, "T");
 });
 
+test("a ref a closed task left goes to the task working there now; a live task's stays", async () => {
+  const ref = "slack:C1:111.222";
+  const owner_ = () =>
+    (ctx.db.prepare("SELECT task_id FROM task_refs WHERE ref = ?").get(ref) as { task_id: string }).task_id;
+  const post = () =>
+    send({
+      host: "slack.com",
+      method: "POST",
+      path: "/api/chat.postMessage",
+      headers: { ...slackAuth, "content-type": "application/json" },
+      body: JSON.stringify({ channel: "C1", text: "second visit" }),
+    });
+  const posted = async () => {
+    await call("approval.decide", { id: JSON.parse((await post()).body).approval, decision: "approve" }, owner);
+    assert.equal((await post()).status, 200);
+  };
+  ctx.db.prepare("INSERT INTO tasks(id, kind, status) VALUES ('Tgone', 'unattended', 'running')").run();
+  ctx.db.prepare("UPDATE task_refs SET task_id = 'Tgone' WHERE ref = ?").run(ref);
+  await posted();
+  assert.equal(owner_(), "Tgone", "live: it keeps its ref");
+  ctx.db.prepare("UPDATE tasks SET status = 'done' WHERE id = 'Tgone'").run();
+  await posted();
+  assert.equal(owner_(), "T");
+});
+
 test("hash: body whitespace matters, header order does not", () => {
   const t = (headers: Record<string, string>, body: string) =>
     hashTemplate({ method: "POST", url: "https://slack.com/api/x", headers, body, stream: false });
@@ -655,6 +682,31 @@ test("hortusd.internal: /rpc/<method> with the caller from the link, client X-Ho
   assert.equal(big.status, 413);
 });
 
+test("a live frame relay learns a value rotated after its handshake", { timeout: 20_000 }, async () => {
+  links.register("127.0.0.9", "core", null, "test");
+  const ws = new WebSocket(`wss://127.0.0.1:${ports.https}/socket`, {
+    servername: "api.gh.test",
+    headers: { host: "api.gh.test", authorization: "Bearer hortus-secret-gh" },
+    ca,
+    localAddress: "127.0.0.9",
+  } as WebSocket.ClientOptions);
+  await once(ws, "open");
+  const before = readVault();
+  try {
+    writeVault({ ...before, gh: { type: "token", value: "ghp-rotated-4567", transform: "ghfake" } });
+    const heard = once(ws, "message");
+    for (const c of wss.clients) c.send("invalid token ghp-rotated-4567");
+    assert.equal(String((await heard)[0]), "invalid token hortus-secret-gh");
+    const closed = once(ws, "close");
+    ws.send("ghp-rotated-4567");
+    assert.equal((await closed)[0], 1008, "a raw value of the new key is refused as the old one was");
+  } finally {
+    writeVault(before);
+    ws.close();
+    links.release("127.0.0.9");
+  }
+});
+
 test("WebSocket: bytes relay both ways and closing one side closes the other", async () => {
   const ws = new WebSocket(`wss://127.0.0.1:${ports.https}/socket`, {
     servername: "ws.test",
@@ -688,6 +740,74 @@ test("credential.list never returns values; credential.set validates hosts", asy
     owner,
   );
   assert.equal(transforms.byHost("ollama.com")?.credential, "ollama-cloud");
+});
+
+test("credential.set: a rotation keeps what the form left empty; a new value replaces the old in the scrubber", async () => {
+  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-2" }, owner);
+  assert.deepEqual(readVault()["ollama-cloud"], {
+    transform: "openai",
+    hosts: ["ollama.com"],
+    type: "token",
+    value: "ol-secret-2",
+  });
+  assert.equal(transforms.byHost("ollama.com")?.credential, "ollama-cloud");
+  assert.equal(scrubber().text("x ol-secret-2 y"), "x hortus-secret-ollama-cloud y");
+  assert.equal(scrubber().text("x ol-secret-1 y"), "x ol-secret-1 y");
+  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-2", hosts: ["a.test"] }, owner);
+  assert.deepEqual(readVault()["ollama-cloud"]?.hosts, ["a.test"], "what the form does send replaces");
+});
+
+test("a minted token is not reused past a new key or a delete, stays scrubbed, and leaves the set once dead", async () => {
+  mint("ollama-cloud#k", "minted-token-0001", 60_000);
+  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-3" }, owner);
+  assert.ok((minted.get("ollama-cloud#k")?.expires ?? Infinity) <= Date.now());
+  assert.equal(scrubber().find("minted-token-0001"), "hortus-secret-ollama-cloud");
+  mint("ollama-cloud#dead", "minted-token-0002", -2000);
+  mint("ollama-cloud#live", "minted-token-0003", 1000);
+  assert.equal(minted.has("ollama-cloud#dead"), false);
+  assert.equal(scrubber().find("minted-token-0002"), undefined);
+  assert.equal(scrubber().find("minted-token-0003"), "hortus-secret-ollama-cloud");
+  await call("credential.delete", { name: "ollama-cloud" }, owner);
+  assert.ok((minted.get("ollama-cloud#live")?.expires ?? Infinity) <= Date.now());
+});
+
+test("a one-off token keeps its place in the scrub set when an older one leaves it", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  await call(
+    "credential.set",
+    { name: "app", type: "github-app", appId: 1, installationId: 2, privateKey: pem },
+    owner,
+  );
+  let n = 0;
+  const f = mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response(JSON.stringify({ token: `one-off-token-${++n}` })),
+  );
+  try {
+    mint("app#dead", "dead-token-0001", -60 * 60_000);
+    await installationToken("app", ["r"], {});
+    await installationToken("app", ["r"], {});
+  } finally {
+    f.mock.restore();
+  }
+  assert.equal(scrubber().find("one-off-token-1"), "hortus-secret-app");
+  assert.equal(scrubber().find("one-off-token-2"), "hortus-secret-app");
+  await call("credential.delete", { name: "app" }, owner);
+});
+
+test("a credential deleted and added again asks for its grant again; an unrelated grant stays", async () => {
+  const grant = ctx.db.prepare(
+    "INSERT INTO approvals(kind, category, hash, status) VALUES ('grant', ?, ?, 'approved') RETURNING id",
+  );
+  await call("credential.set", { name: "again", type: "token", value: "first-key-0001" }, owner);
+  grant.get("credential:again", "grant:again");
+  grant.get("credential:other", "grant:other");
+  assert.equal(gate.granted("credential:again", null), true);
+  await call("credential.delete", { name: "again" }, owner);
+  assert.equal(gate.granted("credential:again", null), false);
+  assert.equal(gate.granted("credential:other", null), true);
 });
 
 test("the session's own model credential: no gate, placeholders in its body (the conversation) pass", async () => {

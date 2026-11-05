@@ -18,6 +18,8 @@ type Mode = "ro" | "rw" | "rn";
 
 export interface ProfileTask {
   id: string;
+  /** the task's `scope.project`: its checkout is the one the profile shows (`--reference`), the others stay hidden */
+  project?: string;
   clone?: string;
   schedule?: string;
   /** the DOFs it can read (task.json scope.dofs): only their worktrees and repos are granted, never all of dof/ */
@@ -57,6 +59,15 @@ function resolve(p: string): string {
 
 const under = (p: string, d: string): boolean => p === d || p.startsWith(d === "/" ? "/" : `${d}/`);
 
+/** ponytail: a chat has the owner's reach and a list of stores cannot be complete (an unattended session is shown what is
+ * listed instead: `HOME_READ`). These are the common ones: agents, wallets, app profiles, histories (v7 › Round 16). */
+const STORES =
+  `.claude .claude.json .codex .gemini .copilot .1password .electrum .electrum-ravencoin .bitcoin .monero Monero
+  .thunderbird .pulumi .terraform.d .vault-token .s3cfg .boto .config/rclone .config/op .config/1Password .config/Claude
+  .config/Code .config/Cursor .config/discord .config/github-copilot .config/evolution .config/Slack .config/Signal
+  .config/google-chrome-beta .config/microsoft-edge .config/vivaldi .bash_history .zsh_history .psql_history .mysql_history
+  .local/share/fish/fish_history .mariadb_history .python_history .node_repl_history`.split(/\s+/);
+
 /** The deny set: v7's list, the real ~/.hortus, HORTUS_HOME, and `policy.deny`, as resolved absolute paths. */
 export function denySet(config: Pick<Config, "policy">): string[] {
   const h = homedir();
@@ -68,16 +79,18 @@ export function denySet(config: Pick<Config, "policy">): string[] {
       (p) => join(h, p),
     ),
     // tools' credentials in plain files (the session's gh and npm get their own config, host.ts › sandboxEnv)
-    ...[".npmrc", ".config/gh", ".config/glab-cli", ".git-credentials", ".config/git/credentials", ".pypirc"].map(
-      (p) => join(h, p),
+    ...[".npmrc", ".config/gh", ".config/glab-cli", ".git-credentials", ".config/git/credentials", ".pypirc"].map((p) =>
+      join(h, p),
     ),
     ...[".cargo/credentials", ".cargo/credentials.toml", ".gradle/gradle.properties"].map((p) => join(h, p)),
     ...[".m2/settings.xml", ".m2/settings-security.xml"].map((p) => join(h, p)),
     ...[".local/share/keyrings", ".mozilla", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware"].map(
       (p) => join(h, p),
     ),
+    ...STORES.map((p) => join(h, p)),
     "/run/docker.sock",
     "/var/run/docker.sock",
+    "/run/libvirt", // the `libvirt` group is root, as `docker` is
     "/sys/fs/cgroup",
     // v7 lists bus and keyring; the whole runtime dir also hides systemd/private (systemd-run --user = escape),
     // gnupg and ssh-agent sockets, which a session could otherwise connect to.
@@ -129,10 +142,26 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   }
 }
 
+/** All an unattended session sees of `$HOME`: where toolchains install, none a credential store (v7 › Review round 16).
+ * Not `.gitconfig`: git takes a hidden one silently, but dies on a shown one's `include` of a hidden file. */
+const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/mise .local/share/fnm .local/share/pipx
+  .local/share/uv/python .local/share/uv/tools .nvm .fnm .volta .asdf .pyenv .rbenv .rustup .cargo/bin .bun .deno go/bin
+  .dotnet .sdkman`.split(/\s+/);
+
+/** The owner's data outside `$HOME`, hidden from unattended sessions like what is in it: what tasks and programs left in
+ * `/tmp`, disks, other homes, and what the uid or its groups can read of the system: core dumps (the memory of what
+ * crashed), the journal, libvirt's disks, firmware variables. A project or tool there goes in `policy.read`. */
+const HIDDEN = `/home /mnt /media /run/media /srv /tmp /var/tmp /var/log /var/mail /var/spool /var/lib/systemd/coredump
+  /var/lib/libvirt /sys/firmware`.split(/\s+/);
+
 const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "shm"].map((d) => `/dev/${d}`);
 
 /** The directive text for one task under `kind`. */
-export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "policy">): string {
+export function profile(
+  kind: Kind,
+  task: ProfileTask,
+  config: Pick<Config, "policy"> & Partial<Pick<Config, "projects">>,
+): string {
   // ponytail: /dev/pts is the owner's terminals and /dev/input their keyboard (the `input` group, or a seat's ACL), keys
   // read with no ioctl, and Landlock cannot tell a session's pty from theirs: no pty on a host Worker, chat or not (script,
   // expect); hortus chat is pipes, and a VM has its own
@@ -144,14 +173,23 @@ export function profile(kind: Kind, task: ProfileTask, config: Pick<Config, "pol
   const base: Mode = kind === "chat" ? "rw" : "ro";
   // unattended: of /dev, only RW_DEV: `ro` opened /dev/fb0 (the screen) and the owner's console /dev/tty<n>. /dev/stdout
   // and /dev/fd are links, which need no rule. ponytail: a chat keeps the rest, the owner's boards and /dev/kvm with them
-  grant("/", base, base === "rw" ? denyRw : [...deny, "/dev"], out);
+  // unattended: of `$HOME` only what is listed, not `ro` less what is hidden: the stores on one machine cannot be listed
+  const home = resolve(homedir());
+  const own = task.project ? config.projects?.[task.project]?.path : undefined;
+  const others = Object.values(config.projects ?? {})
+    .map((p) => resolve(p.path))
+    .filter((p) => kind === "unattended" && !(own && under(resolve(own), p)));
+  grant("/", base, base === "rw" ? denyRw : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"], out);
   if (kind === "unattended") {
+    for (const p of [own, process.execPath, ...HOME_READ.map((e) => join(home, e)), ...(config.policy.read ?? [])])
+      if (p && existsSync(p)) grant(resolve(p), "ro", [...deny, ...others], out);
     // ponytail: no /tmp (v7 › Host): what a session writes there any other can read and nothing removes, so TMPDIR is
     // out/tmp and a tool that hardcodes /tmp gets EACCES; `policy.cache: ["/tmp"]` gives it back, with the leak
     for (const p of [...RW_DEV, ...(config.policy.cache ?? [])])
       if (existsSync(p)) grant(resolve(p), "rn", denyRw, out);
   }
-  for (const p of ro) if (existsSync(p)) grant(p, "ro", deny, out);
+  // a Worker runs dist/ and node_modules; the units are held read-only for a chat, which would otherwise write them
+  for (const p of kind === "chat" ? ro : ro.slice(0, 2)) if (existsSync(p)) grant(p, "ro", deny, out);
   // Carve-outs under the denied HORTUS_HOME, still minus every other deny entry (policy.deny inside out/, say).
   const hortus = [resolve(join(homedir(), ".hortus")), resolve(paths.home())];
   const rest = deny.filter((d) => !hortus.includes(d));

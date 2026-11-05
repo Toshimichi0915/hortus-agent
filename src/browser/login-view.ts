@@ -282,14 +282,24 @@ define("browser.login", {
       throw new RpcError("forbidden", `host not in origins: ${host} (final: tell the owner with send)`);
     const origin = registrable(host);
     const db = ctx().db;
-    if (grantedOrigins(db, task).includes(origin)) return { status: "granted", cookies: sendCookies(task, origin) };
+    const granted = grantedOrigins(db, task).includes(origin);
+    // asked again after its cookies went out: they did not hold (the site's session ended, which hortusd cannot see).
+    // Answering "granted" for good left no way to the owner: only a new login helps
+    const spent =
+      granted &&
+      db
+        .prepare(
+          "SELECT 1 FROM inbox WHERE task_id = ? AND json_extract(body, '$.from') = 'cookies' AND json_extract(body, '$.text') LIKE ?",
+        )
+        .get(task, `% for ${origin} are in %`) !== undefined;
+    if (granted && !spent) return { status: "granted", cookies: sendCookies(task, origin) };
     const open = db
       .prepare(
         "SELECT id, kind FROM approvals WHERE status = 'pending' AND task_id = ? AND ((kind = 'login' AND hash = ?) OR (kind = 'grant' AND hash = ?))",
       )
       .get(task, `login:${origin}`, `grant:origin:${origin}`) as { id: number; kind: string } | undefined;
     if (open) return { status: "pending", approval: open.id, kind: open.kind, url: gate.approvalUrl(open.id) };
-    const n = loginCookies(db, origin);
+    const n = spent ? 0 : loginCookies(db, origin);
     if (n > 0) {
       const g = gate.check({
         caller,
@@ -426,12 +436,20 @@ define("captured.list", {
   run: () => capturedOrigins(ctx().db),
 });
 
-/** Deletes every captured row of an origin: the placeholders in old jars then answer 403 (unknown credential). */
+/**
+ * Deletes every captured row of an origin: the placeholders in old jars then answer 403 (unknown credential). Its
+ * grants go too: a task holding one heard "granted" with no cookies, and the next login reached every old holder.
+ */
 define("captured.forget", {
   roles: [...owner],
   input: z.object({ origin: z.string().min(1).max(253) }),
   run({ origin }) {
     const r = ctx().db.prepare("DELETE FROM captured WHERE origin = ?").run(origin);
+    ctx()
+      .db.prepare(
+        "UPDATE approvals SET status = 'expired', reason = 'the site was forgotten' WHERE kind = 'grant' AND category = ? AND status = 'approved'",
+      )
+      .run(`origin:${origin}`);
     return { deleted: Number(r.changes) };
   },
 });

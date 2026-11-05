@@ -86,6 +86,8 @@ export function set(
   caller: Caller,
 ): { id: number; fire_at: string; expires_at: string | null } {
   const taskId = ownerOf(caller);
+  // a run outlives its parent's close, which deleted the rows: one set now would fire under a closed task for good
+  if (tasks.isClosed(tasks.get(taskId).status)) throw new RpcError("invalid", `task ${taskId} is closed`);
   const { text, at, every, cron, script } = input;
   if ([at, every, cron].filter((v) => v !== undefined).length !== 1)
     throw new RpcError("invalid", "give exactly one of at, every, cron");

@@ -182,16 +182,12 @@ function lookup(db: DatabaseSync, req: IncomingMessage): string | undefined {
   return hash;
 }
 
-function login(db: DatabaseSync, req: IncomingMessage, res: ServerResponse, device: string): void {
+function login(db: DatabaseSync, req: IncomingMessage, res: ServerResponse, device: string, passkey: string): void {
   const token = randomBytes(32).toString("base64url");
   const t = now();
-  db.prepare("INSERT INTO console_sessions(hash, device, created, last_seen, address) VALUES (?, ?, ?, ?, ?)").run(
-    sha(token),
-    device,
-    t,
-    t,
-    req.socket.remoteAddress ?? "",
-  );
+  db.prepare(
+    "INSERT INTO console_sessions(hash, device, created, last_seen, address, passkey) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(sha(token), device, t, t, req.socket.remoteAddress ?? "", passkey);
   // Max-Age is the browser's cap (400 days): the idle limit is enforced here, by last_seen
   res.setHeader("Set-Cookie", `${COOKIE}=${token}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000`);
 }
@@ -335,7 +331,7 @@ async function webauthn(s: State, path: string, req: IncomingMessage, res: Serve
           t,
         );
         log.info("passkey enrolled", { device, address });
-        login(db, req, res, device);
+        login(db, req, res, device, c.id);
         return json(res, 200, { ok: true });
       }
       case "/webauthn/login/options": {
@@ -380,12 +376,12 @@ async function webauthn(s: State, path: string, req: IncomingMessage, res: Serve
           throw new Refused("Sign-in failed: the passkey's answer could not be verified.");
         });
         if (!v.verified) throw new Refused("Sign-in failed: the passkey's answer could not be verified.");
-        db.prepare("UPDATE passkeys SET counter = ?, last_use = ? WHERE id = ?").run(
-          v.authenticationInfo.newCounter,
-          now(),
-          row.id,
-        );
-        login(db, req, res, row.device);
+        const live = db
+          .prepare("UPDATE passkeys SET counter = ?, last_use = ? WHERE id = ?")
+          .run(v.authenticationInfo.newCounter, now(), row.id);
+        // deleted while the assertion was being verified
+        if (!live.changes) throw new Refused("This passkey is not enrolled here.");
+        login(db, req, res, row.device, row.id);
         return json(res, 200, { ok: true });
       }
       default:
@@ -415,6 +411,16 @@ export function sessions(db: DatabaseSync, current?: string): SessionOut[] {
     .all() as unknown as (Omit<SessionOut, "id" | "current"> & { hash: string })[];
   return rows.map(({ hash, ...r }) => ({ id: hash, ...r, current: hash === current }));
 }
+
+export interface PasskeyOut {
+  id: string;
+  device: string;
+  created: string;
+  last_use: string;
+}
+
+export const passkeyList = (db: DatabaseSync): PasskeyOut[] =>
+  db.prepare("SELECT id, device, created, last_use FROM passkeys ORDER BY created").all() as unknown as PasskeyOut[];
 
 /** The live enrolment code (the newest), with its URL. */
 export function liveEnroll(db: DatabaseSync): { code: string; url: string; expires_at: string } | undefined {
@@ -454,6 +460,28 @@ define("session.list", {
   roles: ["owner"],
   input: z.object({}).loose().default({}),
   run: (_, caller) => (state ? sessions(state.ctx.db, caller.session) : []),
+});
+
+define("passkey.list", {
+  roles: ["owner"],
+  input: z.object({}).loose().default({}),
+  run: () => (state ? passkeyList(state.ctx.db) : []),
+});
+
+/** v6's "until the session is revoked" means nothing for a lost device while its passkey signs in again. Its sessions go
+ * with it, and those from before sessions named their passkey, which could be its. The last one may go: loopback enrols. */
+define("passkey.delete", {
+  roles: ["owner"],
+  input: z.object({ id: z.string() }),
+  run({ id }) {
+    const s = running();
+    if (!s.ctx.db.prepare("DELETE FROM passkeys WHERE id = ?").run(id).changes)
+      throw new RpcError("not_found", "no such passkey");
+    s.ctx.db.prepare("DELETE FROM console_sessions WHERE passkey = ? OR passkey IS NULL").run(id);
+    s.ctx.log("console").info("passkey deleted", { id: id.slice(0, 12) });
+    bus.emit("sessions");
+    return { ok: true };
+  },
 });
 
 define("session.revoke", {

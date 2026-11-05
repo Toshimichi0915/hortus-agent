@@ -110,7 +110,7 @@ Unit, with a temp task dir and a fake provider (a plugin providing `providers: {
 - `done("")`: no outbox file, no summary call.
 - Quoting: a non-owner inbox file renders the `[inbox n] from=… trusted=false` header and the `<<<quoted … >>>` fence; an owner one has no fence; text containing `>>>` is still fenced correctly (the fence uses a random suffix when the text contains the fence).
 - Stdout: every line parses as JSON; an image tool result is `[image]` on stdout and intact in the session.
-- `HOME` trick: after startup `process.env.HOME` is the real home and core's `sessionsDir` is under `ctl/home`; `bash` tool children see the real `HOME`.
+- `HOME` trick: after startup `process.env.HOME` is the one the session was given (a chat: the owner's; unattended: its own, v7 › Review round 16) and core's `sessionsDir` is under `ctl/home`; `bash` tool children see that `HOME`.
 - `run` kind: a script printing nothing exits before any `complete`; one printing `x` makes `x` part of the first message; a failing one includes `exit 2` and the stderr tail; one sleeping 2 h is killed and reported.
 
 Live (DeepSeek, `ctl/home` with the real key, opt-in `HORTUS_TEST_LLM=1`): "list the files in your work dir and call done with their count" completes with a `result` and a `summary.md` under 300 words; an inbox message "stop, call done now" sent mid-run ends the run within one tool call.

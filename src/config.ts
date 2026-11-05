@@ -11,6 +11,8 @@ import * as paths from "./paths.ts";
 const Effort = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 const Mode = z.enum(["human", "auto"]);
 const Strings = z.array(z.string());
+/** a `~/x` here would name nothing, silently: for `policy.deny`, nothing denied */
+const Paths = z.array(z.string().startsWith("/", "an absolute path"));
 
 export const DofConfig = z.looseObject({
   type: z.string(),
@@ -115,9 +117,12 @@ export const Config = z.looseObject({
     })
     .optional(),
   projects: z.record(z.string().regex(PROJECT_NAME, PROJECT_NAME_HINT), ProjectConfig).default({}),
-  /** category (`credential:<name>`, `*`, …) → `human` | `auto`, plus the Landlock extensions `deny` and `cache` (path
-   * lists, v7 › Security). Read per request: a Settings edit applies to the next one. */
-  policy: z.object({ deny: Strings.optional(), cache: Strings.optional() }).catchall(Mode).default({ "*": "human" }),
+  /** category (`credential:<name>`, `*`, …) → `human` | `auto`, plus the Landlock extensions `deny`, `cache` and `read`
+   * (absolute paths, v7 › Security). Read per request: a Settings edit applies to the next one. */
+  policy: z
+    .object({ deny: Paths.optional(), cache: Paths.optional(), read: Paths.optional() })
+    .catchall(Mode)
+    .default({ "*": "human" }),
   /** category or `*` → owner text the `auto` judge reads after its fixed prompt (never in place of it) */
   judge_notes: z.record(z.string(), z.string()).optional(),
   /** test-only: host → where the proxy really connects; consumers refuse it unless HORTUS_HOME is set */

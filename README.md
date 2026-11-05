@@ -44,13 +44,26 @@ Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Unti
 host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy.
 
 A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
-tool caches in `~/.hortus/cache`. `/tmp` and everything under your home are read-only to it, and of `/dev` it has only
-`null`, `zero`, `full`, `random`, `urandom`, `tty` and `shm`: what you run yourself stays out of its reach, and so do your
-terminals, keyboard and screen. A chat session keeps `rw` on the rest, but no Worker, chat or not, has a pty on the host
-(`script`, `expect`). A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at the price of
-tasks seeing each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0`). `GOPATH`, `XDG_DATA_HOME`
-and the JVM's `java.io.tmpdir` point into the task's own directories, and `~/.m2/settings.xml` is denied, so a Worker's
-Maven runs without your mirrors and servers there.
+tool caches in `~/.hortus/cache`. It reads almost nothing of yours. Of your home it sees only its own project's checkout and
+where toolchains install (`~/.local/bin`, `~/.nvm`, `~/.rustup`, `~/.cargo/bin`, `~/go/bin`, … the list is
+`landlock.ts › HOME_READ`), and its `$HOME` is its own empty directory, so your dotfiles, `~/.gitconfig` included, are not
+read. `/tmp`, `/mnt`, `/media`, `/srv`, `/var/log`, core dumps and other homes are hidden as well, other projects' checkouts
+wherever they are, and of `/dev` it has only `null`, `zero`, `full`, `random`, `urandom`, `tty` and `shm`: what you run
+yourself stays out of its reach, and so do your terminals, keyboard and screen.
+
+What a Worker really needs from there goes in `policy.read` (absolute paths, read-only, an entry of the deny set inside one
+stays denied): `"policy": { "read": ["/home/you/tools", "/srv/data"] }`. A binary linked from an allowed directory needs its
+target listed too (`~/.local/bin/foo` → `~/apps/foo`), or the Worker gets `Permission denied`; the card says which path. A
+Worker's `$HOME` is not yours, so a tool it runs does not see your configuration there; a project needing one wants it in
+the repository.
+
+A chat session keeps `rw` on the rest, minus the deny set: `~/.ssh`, `~/.gnupg`, the cloud, package-manager and agent
+credentials, browser and app profiles, wallets and shell histories. That is a list, and a list cannot be complete: a
+chat has your reach, with you watching. No Worker, chat or not, has a pty on the host (`script`, `expect`, Python's `pty`)
+or `sudo`. A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at the price of tasks seeing
+each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0`). `GOPATH`, `XDG_DATA_HOME` and the JVM's
+`java.io.tmpdir` point into the task's own directories, and `~/.m2/settings.xml` is denied, so a Worker's Maven runs
+without your mirrors and servers there.
 
 The console is `http://127.0.0.1:7700`. `hortus help` lists the CLI commands (`tasks`, `chat`, `approvals`, `search`,
 `schedules`, `pause`, …).

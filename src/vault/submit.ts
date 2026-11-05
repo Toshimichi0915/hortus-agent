@@ -287,6 +287,26 @@ export async function submit(s: Submission, caller: Caller): Promise<SubmitResul
     configured: names.filter((n) => Object.hasOwn(vault, n)),
     tests,
   };
+  // one open entry per transform, as for merges: the older one's diff is against what is enabled, so approving the list
+  // top down, newest first, ended on the older version with nothing on the page to say so
+  const older = db
+    .prepare(
+      `SELECT id, task_id FROM approvals WHERE kind = 'request' AND category = 'transforms' AND status = 'pending'
+        AND json_extract(summary, '$.name') = ? AND hash != ?`,
+    )
+    .all(s.name, hash) as { id: number; task_id: string | null }[];
+  for (const o of older) {
+    db.prepare("UPDATE approvals SET status = 'replaced', reason = 'a newer version was submitted' WHERE id = ?").run(
+      o.id,
+    );
+    if (o.task_id && o.task_id !== caller.task)
+      gate.deps.inboxWrite(o.task_id, {
+        from: "approval",
+        trusted: true,
+        text: `transform ${s.name}: another task submitted a newer version; yours will not be installed`,
+        data: { approval: o.id },
+      });
+  }
   const g = gate.check({ caller, category: "transforms", hash, summary, consequential: false });
   if (g === "pass") return { approval: null };
   // the latest files of this hash ride on the entry (a resubmission with only new tests refreshes them); `fresh` from

@@ -8,7 +8,7 @@ import * as ca from "./ca.ts";
 import * as gate from "./gate.ts";
 import { approveTransform } from "./submit.ts";
 import * as transforms from "./transforms.ts";
-import { bind, ctx, NAME, read, write } from "./vault.ts";
+import { bind, ctx, minted, NAME, read, write } from "./vault.ts";
 
 export { ca, gate, transforms };
 export { transformsDofModule } from "./dof.ts";
@@ -146,13 +146,23 @@ const CredentialInput = z.discriminatedUnion("type", [
   z.object({ ...Common, type: z.literal("aws"), keyId: z.string().min(1), secret: z.string().min(1) }),
 ]);
 
+/** Tokens minted from `name` are no longer handed out (still scrubbed): a new key or installation mints its own. */
+function retire(name: string): void {
+  for (const [k, m] of minted) if (k.startsWith(`${name}#`)) m.expires = Math.min(m.expires, Date.now());
+}
+
 define("credential.set", {
   roles: ["owner"],
   input: CredentialInput,
   run: ({ name, ...entry }) => {
     const v = read();
     const prev = v[name];
-    write({ ...v, [name]: { ...entry, ...(prev?.last_use ? { last_use: prev.last_use } : {}) } as VaultEntry });
+    // rotating is the form with a new value: what it left empty stays, or the key loses its hosts and every request
+    // its destination. ponytail: clearing `hosts` or `transform` is delete and add
+    const { transform, hosts, last_use } = prev ?? {};
+    const kept = { ...(transform && { transform }), ...(hosts && { hosts }), ...(last_use && { last_use }) };
+    write({ ...v, [name]: { ...kept, ...entry } as VaultEntry });
+    retire(name);
     return { ok: true };
   },
 });
@@ -174,6 +184,13 @@ define("credential.delete", {
       throw new RpcError("invalid", `${name} is in use by ${users.join(", ")}: change that in Settings first`);
     delete v[name];
     write(v);
+    retire(name);
+    // the owner's click was for this key: a new one under the name asks again
+    ctx()
+      .db.prepare(
+        "UPDATE approvals SET status = 'expired', reason = 'the credential was deleted' WHERE kind = 'grant' AND category = ? AND status = 'approved'",
+      )
+      .run(`credential:${name}`);
     return { ok: true };
   },
 });

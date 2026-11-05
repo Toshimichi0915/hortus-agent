@@ -3,7 +3,7 @@
  * Vault). `{secret:name}` inserts the value, `{basic:user:name}` the base64 of `user:value`, `{sign:op(args)}` runs
  * `ops[op]` with a JSON argument list whose first element is the credential name. A new operation is one entry here.
  */
-import { createHmac, createSign, timingSafeEqual } from "node:crypto";
+import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Role, VaultEntry } from "../types.ts";
 import { awsDate, type Signing, sigv4 } from "./sigv4.ts";
 import { type CapturedRow, ctx, mint, minted, read } from "./vault.ts";
@@ -169,7 +169,7 @@ export async function installationToken(
   });
   if (!res.ok) throw new Error(`minting failed: HTTP ${res.status}`);
   const { token } = (await res.json()) as { token: string };
-  mint(key ?? `${name}#once#${minted.size}`, token, TOKEN_TTL_MS);
+  mint(key ?? `${name}#once#${randomUUID()}`, token, TOKEN_TTL_MS);
   return token;
 }
 

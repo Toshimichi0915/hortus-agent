@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
@@ -61,14 +61,28 @@ export interface Loopback {
   https: number;
 }
 
+/** A session's PATH: the system unit's is systemd's own, without what the owner installed under $HOME. Not hortusd's: it
+ * runs outside every sandbox, and a chat writes these. */
+export const sessionPath = (): string =>
+  [
+    process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    dirname(process.execPath),
+    ...[".local/bin", ".local/share/pnpm", ".cargo/bin", "go/bin", ".bun/bin", ".deno/bin"].map((p) =>
+      join(homedir(), p),
+    ),
+  ].join(":");
+
 /** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */
 export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback): Record<string, string> {
   const ctl = paths.ctl(task.id);
+  const m2 = join(homedir(), ".m2", "repository");
   const env: Record<string, string> = {
     HOME: homedir(),
-    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    PATH: sessionPath(),
     LANG: process.env.LANG ?? "C.UTF-8",
     TERM: "dumb",
+    // no terminal: the owner's core.editor (nvim here) would wait on it for good in `rebase -i`, `merge`, `commit --amend`
+    GIT_EDITOR: "true",
     HORTUS_TASK: join(ctl, "task.json"),
     // core's bash saves a long output in tmpdir() with the default mode: under /tmp that was a world-readable copy of
     // what this task read (past scope.dofs, untainted) that no close removed. Goes with tasks/<id>.
@@ -80,7 +94,8 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     npm_config_userconfig: join(paths.out(task.id), "work", ".cache", "npmrc"),
     // ~/.m2/settings.xml is denied too, and Maven dies on one it cannot read (a NullPointerException, no path): user.home
     // moves it for Maven's JVM alone. `-s` in MAVEN_ARGS would beat a project's own `-s`: the first one wins
-    MAVEN_OPTS: `-Duser.home=${join(paths.out(task.id), "work", ".cache")} -Dmaven.repo.local=${join(homedir(), ".m2", "repository")}`,
+    // the owner's repository, or the task's: with entries denied in ~/.m2 a session cannot create a new one there
+    MAVEN_OPTS: `-Duser.home=${join(paths.out(task.id), "work", ".cache")} -Dmaven.repo.local=${existsSync(m2) ? m2 : join(paths.out(task.id), "work", ".cache", ".m2", "repository")}`,
     MAVEN_USER_HOME: join(paths.out(task.id), "work", ".cache", ".m2"),
   };
   const ca = join(ctl, "ca.crt");
@@ -96,6 +111,10 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     ["commit.gpgsign", "false"],
     // git-lfs asks the forge for locks before every push: a credentialed POST, so a second approval per try
     ["lfs.locksverify", "false"],
+    // what `git lfs install` wrote to ~/.gitconfig, which a Worker does not read (caches): pointers otherwise
+    ["filter.lfs.clean", "git-lfs clean -- %f"],
+    ["filter.lfs.smudge", "git-lfs smudge -- %f"],
+    ["filter.lfs.process", "git-lfs filter-process"],
   ];
   // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
   // under the user each forge expects (18-gitlab-bitbucket.md)
@@ -124,7 +143,7 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
 export function caches(out: string): Record<string, string> {
   const w = join(out, "work", ".cache");
   const shared = paths.cache();
-  const real = (p: string) => {
+  const dir = (p: string) => {
     try {
       mkdirSync(p);
     } catch {}
@@ -135,15 +154,27 @@ export function caches(out: string): Record<string, string> {
     }
   };
   const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"], npm: ["_cacache"] };
-  if ([join(out, "work"), w, shared].every(real))
+  if ([join(out, "work"), w, join(w, "home"), shared].every(dir))
     for (const [tool, subs] of Object.entries(links))
-      if (real(join(w, tool)) && real(join(shared, tool)))
+      if (dir(join(w, tool)) && dir(join(shared, tool)))
         for (const s of subs)
           try {
             // EEXIST on a restart leaves the link be
-            if (real(join(shared, tool, s))) symlinkSync(join(shared, tool, s), join(w, tool, s));
+            if (dir(join(shared, tool, s))) symlinkSync(join(shared, tool, s), join(w, tool, s));
           } catch {}
+  const real = homedir();
   return {
+    // the owner's is hidden (landlock.ts › profile), and a file a tool may not open is not one that is missing: libgit2
+    // dies on ~/.gitconfig (`cargo new`, a git dependency), git warns on every run. Its own: nothing there, and writable
+    HOME: join(w, "home"),
+    // what finds itself by $HOME, where HOME_READ shows it
+    RUSTUP_HOME: join(real, ".rustup"),
+    PYENV_ROOT: join(real, ".pyenv"),
+    RBENV_ROOT: join(real, ".rbenv"),
+    ASDF_DATA_DIR: join(real, ".asdf"),
+    VOLTA_HOME: join(real, ".volta"),
+    MISE_DATA_DIR: join(real, ".local/share/mise"),
+    PYTHONUSERBASE: join(real, ".local"),
     CARGO_HOME: join(w, "cargo"),
     GRADLE_USER_HOME: join(w, "gradle"),
     // pnpm's store defaults to $PNPM_HOME/store (npm_config_store_dir made npm warn on every command)
@@ -164,7 +195,8 @@ export function caches(out: string): Record<string, string> {
     // ./mvnw unpacks Maven there, ~/.m2/wrapper otherwise
     MAVEN_USER_HOME: join(shared, "m2"),
     // the JVM ignores TMPDIR: /tmp is compiled in, so every createTempFile and JUnit @TempDir failed under Maven and Gradle
-    JAVA_TOOL_OPTIONS: `-Djava.io.tmpdir=${join(out, "tmp")}`,
+    // and user.home comes from passwd, not HOME
+    JAVA_TOOL_OPTIONS: `-Djava.io.tmpdir=${join(out, "tmp")} -Duser.home=${join(w, "home")}`,
   };
 }
 
@@ -198,6 +230,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
     o.kind,
     {
       id,
+      ...(o.task.scope.project ? { project: o.task.scope.project } : {}),
       clone: o.task.paths.clone,
       schedule: o.task.paths.schedule,
       dofs: o.task.scope.dofs ?? [],

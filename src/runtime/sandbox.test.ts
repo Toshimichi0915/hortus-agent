@@ -253,6 +253,120 @@ function suite(): void {
       assert.match(readFileSync(file, "utf8"), /^rn \/dev\/null$/m);
       assert.ok(!readFileSync(file, "utf8").includes("/dev/stdout"));
     });
+    test("$HOME: only what is listed, however the store is named; a project's checkout only for its own task", async () => {
+      const fx = join(root, "fx-home");
+      const homeNow = process.env.HOME;
+      const plant = (p: string, body = "s", mode = 0o644) => {
+        mkdirSync(join(p, ".."), { recursive: true });
+        writeFileSync(p, body, { mode });
+      };
+      const own = join(fx, "work/a");
+      const other = join(fx, "work/b");
+      plant(join(fx, ".claude/.credentials.json"));
+      plant(join(fx, "nobody-listed-this/key"));
+      plant(join(fx, ".gitconfig"));
+      plant(join(fx, ".local/share/keys/x"));
+      plant(join(fx, ".config/systemd/user/x.service")); // read-only for a chat, hidden here: a unit can hold a key
+      plant(join(own, ".env"));
+      plant(join(other, ".env"));
+      plant(join(fx, ".nvm/versions/bin/tool"), "#!/bin/sh\necho tool\n", 0o755);
+      plant(join(fx, "apps/foo"), "#!/bin/sh\necho foo\n", 0o755);
+      mkdirSync(join(fx, ".local/bin"));
+      symlinkSync("../../.nvm/versions/bin/tool", join(fx, ".local/bin/tool"));
+      symlinkSync("../../apps/foo", join(fx, ".local/bin/foo"));
+      // a project outside any home, and in a tree the walk from / would otherwise grant whole
+      const outside = "/usr/share/zoneinfo";
+      const projects = { a: { path: own }, b: { path: other }, c: { path: outside } };
+      const asFixture = (policy: { read?: string[] }) => {
+        const real = process.env.HOME;
+        process.env.HOME = fx;
+        try {
+          return profile(
+            "unattended",
+            { ...task, project: "a" },
+            { policy: policy as Config["policy"], projects: projects as unknown as Config["projects"] },
+          );
+        } finally {
+          process.env.HOME = real;
+        }
+      };
+      const p = asFixture({});
+      denied(await shimSh(p, `cat ${fx}/.claude/.credentials.json`));
+      denied(await shimSh(p, `cat ${fx}/nobody-listed-this/key`));
+      denied(await shimSh(p, `cat ${fx}/.gitconfig`));
+      denied(await shimSh(p, `cat ${fx}/.local/share/keys/x`));
+      denied(await shimSh(p, `cat ${fx}/.config/systemd/user/x.service`));
+      denied(await shimSh(p, `cat ${other}/.env`));
+      denied(await shimSh(p, `cat ${outside}/UTC`));
+      denied(await shimSh(p, `ls ${fx}`));
+      plant(join(fx, "made-later/key"));
+      denied(await shimSh(p, `cat ${fx}/made-later/key`));
+      ok(await shimSh(p, `cat ${own}/.env`)); // --reference reads it; hortusd cloned from it
+      denied(await shimSh(p, `touch ${own}/x`));
+      assert.equal((await shimSh(p, `${fx}/.nvm/versions/bin/tool`)).out, "tool\n");
+      assert.equal((await shimSh(p, `${fx}/.local/bin/tool`)).out, "tool\n"); // a link between two listed places
+      denied(await shimSh(p, `${fx}/.local/bin/foo`)); // out of them: the target is what is checked
+      assert.equal((await shimSh(asFixture({ read: [join(fx, "apps")] }), `${fx}/.local/bin/foo`)).out, "foo\n");
+      // policy.read shows a tree, less what is denied inside it, and never another project
+      const wide = asFixture({ read: [join(fx, "work")] });
+      ok(await shimSh(wide, `cat ${own}/.env`));
+      denied(await shimSh(wide, `cat ${other}/.env`));
+      // a home outside /home (/var/home/me, /root) is hidden for being $HOME, not by HIDDEN
+      process.env.HOME = outside;
+      const elsewhere = profile("unattended", task, config);
+      process.env.HOME = homeNow;
+      denied(await shimSh(elsewhere, `cat ${outside}/UTC`));
+      // nothing of the task's own runs off the list: the agent starts from a package and node outside it
+      ok(await shimSh(p, `${process.execPath} -e 0`));
+    });
+    test("the owner's data outside $HOME is hidden: /tmp, disks, the journal, core dumps", async () => {
+      for (const d of ["/tmp", "/mnt", "/srv", "/var/log", "/var/tmp", "/var/lib/systemd/coredump", "/sys/firmware"])
+        if (existsSync(d)) denied(await shimSh(prof(), `ls ${d}`));
+      ok(await shimSh(prof(), "ls /usr/bin /etc > /dev/null"));
+      const walked = profile("unattended", task, Config.parse({ policy: { cache: ["/tmp"] } }));
+      ok(await shimSh(walked, "ls /tmp > /dev/null"));
+    });
+    test("an unattended session's HOME is its own: hidden dotfiles read as absent", async () => {
+      const out = join(root, "home-out");
+      mkdirSync(join(out, "work"), { recursive: true });
+      const env = caches(out);
+      assert.equal(env.HOME, join(out, "work/.cache/home"));
+      assert.equal(env.RUSTUP_HOME, join(homedir(), ".rustup"));
+      assert.match(env.JAVA_TOOL_OPTIONS ?? "", /-Duser\.home=.*\.cache\/home/);
+      const r = await shimRun(`rw ${out}\n${prof()}`, "", [
+        "--",
+        "env",
+        `HOME=${env.HOME}`,
+        "sh",
+        "-c",
+        "git config --global a.b c && git config --global a.b && test -w ~",
+      ]);
+      assert.equal(r.out, "c\n", r.err);
+      assert.equal(r.err, "");
+    });
+    test("a session's PATH has what the owner installed under $HOME, hortusd's own does not", () => {
+      const task2 = { id: "T", scope: { credentials: [] } } as unknown as TaskJson;
+      const dirs = (sandboxEnv(task2).PATH ?? "").split(":");
+      for (const d of [".local/bin", ".cargo/bin", "go/bin"]) assert.ok(dirs.includes(join(homedir(), d)), d);
+      assert.ok(dirs.includes(join(process.execPath, "..")));
+      assert.equal(sandboxEnv(task2).GIT_EDITOR, "true"); // no terminal: an editor would wait for good
+    });
+    test("a chat's Maven: the owner's repository when there is one, else the task's, which it can create", () => {
+      const task2 = { id: "T", scope: { credentials: [] } } as unknown as TaskJson;
+      const fx = join(root, "m2-home");
+      const real = process.env.HOME;
+      process.env.HOME = fx;
+      try {
+        assert.match(
+          sandboxEnv(task2).MAVEN_OPTS ?? "",
+          /maven\.repo\.local=.*tasks\/T\/out\/work\/\.cache\/\.m2\/repository/,
+        );
+        mkdirSync(join(fx, ".m2/repository"), { recursive: true });
+        assert.ok(sandboxEnv(task2).MAVEN_OPTS?.includes(`maven.repo.local=${join(fx, ".m2/repository")}`));
+      } finally {
+        process.env.HOME = real;
+      }
+    });
     test("caches: task-local tool homes, shared caches linked, never through a planted link", () => {
       const out = join(root, "cache-out");
       mkdirSync(join(out, "work"), { recursive: true });
@@ -317,6 +431,8 @@ function suite(): void {
       denied(await shimSh(prof(), `cat ${homedir()}/.hortus/secrets.json > /dev/null`));
       denied(await shimSh(prof(), `cat ${H}/vault.json`));
       denied(await shimSh(prof(), `cat ${secret}/f`));
+      for (const p of [".claude", ".claude.json", ".codex", ".gemini", ".config/Code", ".bash_history"])
+        assert.ok(denySet(config).includes(join(realpathSync(homedir()), p)), p);
       // opens the shim for writing without changing it (a shim running elsewhere makes the kernel say ETXTBSY first)
       const w = await shimSh(prof(), `: >> ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`);
       assert.match(w.err, /Permission denied|Text file busy/, w.err);

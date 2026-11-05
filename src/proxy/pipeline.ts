@@ -973,7 +973,10 @@ function addRefs(p: Prepared, all: string[] | undefined, allRepos: string[] | un
   const refs = all?.map(named).filter(own);
   const repos = allRepos?.map(named).filter(own);
   const db = ctx().db;
-  for (const r of refs ?? []) db.prepare("INSERT OR IGNORE INTO task_refs(ref, task_id) VALUES (?, ?)").run(r, task);
+  // a live task keeps its ref; a closed one's goes to the task working there now (the Planner sees open tasks' refs)
+  const ref = db.prepare(`INSERT INTO task_refs(ref, task_id) VALUES (?, ?) ON CONFLICT(ref) DO UPDATE SET
+    task_id = excluded.task_id WHERE (SELECT status FROM tasks WHERE id = task_refs.task_id) IN ('done', 'failed')`);
+  for (const r of refs ?? []) ref.run(r, task);
   if (repos?.length && p.consequential && p.approved) {
     const row = taskRow(task);
     const scope = row?.scope ?? {};
@@ -1035,7 +1038,9 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   // Set-Cookie is captured first, whatever the body (HEAD, 204, a stream, binary): the browser never gets a real value
   if (p.cookie && headers["set-cookie"] !== undefined) {
     try {
-      const r = transforms.response(COOKIE, { status, headers: joined(headers), body: null }, p.raw);
+      // unscrubbed: a value it already knows would read as a placeholder and its new Expires be lost (a rolling session)
+      const raw = joined(flatHeaders(res.headers));
+      const r = transforms.response(COOKIE, { status, headers: raw, body: null }, p.raw);
       if (r.capture?.length) {
         store(p, r.capture);
         scrub = scrubber(p.host);
@@ -1157,12 +1162,13 @@ function store(p: Prepared, list: Capture[]): void {
     const meta = JSON.stringify({ ...c.meta, key, host: p.host, task, via: p.client.role });
     const old = db
       .prepare(
-        "SELECT id, name, created FROM captured WHERE origin = ? AND kind IS ? AND json_extract(meta, '$.key') = ? AND json_extract(meta, '$.task') IS ?",
+        "SELECT id, name FROM captured WHERE origin = ? AND kind IS ? AND json_extract(meta, '$.key') = ? AND json_extract(meta, '$.task') IS ?",
       )
-      .get(c.origin, c.kind ?? null, key, task) as { id: number; name: string; created: string } | undefined;
+      .get(c.origin, c.kind ?? null, key, task) as { id: number; name: string } | undefined;
+    // `created` is this value's: a Max-Age counts from it (jar.ts), and a site's rolling session sets it on every response
     const r = db
       .prepare("INSERT INTO captured(name, value, origin, kind, created, last_use, meta) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(`c-new-${randomUUID()}`, c.value, c.origin, c.kind ?? null, old?.created ?? t, t, meta);
+      .run(`c-new-${randomUUID()}`, c.value, c.origin, c.kind ?? null, t, t, meta);
     if (old) db.prepare("DELETE FROM captured WHERE id = ?").run(old.id);
     db.prepare("UPDATE captured SET name = coalesce(?, 'c-' || id) WHERE id = ?").run(
       old?.name ?? null,

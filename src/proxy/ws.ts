@@ -15,7 +15,7 @@ import type { Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { HANDLE, handles, resolvable, resolveHandle } from "../vault/ops.ts";
 import * as transforms from "../vault/transforms.ts";
-import { effectiveHosts, hostIn, manifestEntry, PREFIX, read as readVault, touch } from "../vault/vault.ts";
+import { effectiveHosts, hostIn, manifestEntry, PREFIX, read as readVault, scrubber, touch } from "../vault/vault.ts";
 import type { Client } from "./links.ts";
 import {
   bound,
@@ -57,7 +57,7 @@ const MAX_REFUSAL = 1024 * 1024;
 
 /** A client text frame → the text to send upstream, or why it is refused. */
 export function frameOut(p: Prepared, text: string): { text: string } | { refuse: string } {
-  if (p.scrub.find(text)) return { refuse: "raw credential" };
+  if (scrubber(p.host).find(text)) return { refuse: "raw credential" };
   if (text.search(HANDLE) !== -1) return { refuse: "handle syntax: use hortus-secret-<name> placeholders" };
   let body = text;
   if (text.includes(PREFIX) && p.tf) {
@@ -125,6 +125,8 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   // inside the Receiver's write, uncaught, and end hortusd. Cut to 125 bytes (123 for a close reason), and any other
   // throw in a handler ends this relay, not the process.
   const ctl = (b: Buffer, max = 125) => (b.length > max ? b.subarray(0, max) : b);
+  // read per frame: this relay outlives its handshake, and a value rotated meanwhile goes up in the next frame
+  const scrub = () => scrubber(p.host);
   const reason = (s: string) => ctl(Buffer.from(s), 123);
   const safe =
     <A extends unknown[]>(f: (...a: A) => void) =>
@@ -152,7 +154,7 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   fromUp.on(
     "message",
     safe((data: Buffer, binary: boolean) =>
-      toClient.send(binary ? data : p.scrub.text(data.toString("utf8")), { ...frame, binary, mask: false }),
+      toClient.send(binary ? data : scrub().text(data.toString("utf8")), { ...frame, binary, mask: false }),
     ),
   );
   fromClient.on(
@@ -165,11 +167,11 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   );
   fromUp.on(
     "ping",
-    safe((d: Buffer) => toClient.ping(ctl(p.scrub.bytes(d)), false)),
+    safe((d: Buffer) => toClient.ping(ctl(scrub().bytes(d)), false)),
   );
   fromUp.on(
     "pong",
-    safe((d: Buffer) => toClient.pong(ctl(p.scrub.bytes(d)), false)),
+    safe((d: Buffer) => toClient.pong(ctl(scrub().bytes(d)), false)),
   );
   fromClient.on(
     "conclude",
@@ -178,7 +180,7 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   fromUp.on(
     "conclude",
     safe((code: number, why: Buffer) =>
-      toClient.close(code === 1005 ? undefined : code, reason(p.scrub.text(why.toString("utf8"))), false),
+      toClient.close(code === 1005 ? undefined : code, reason(scrub().text(why.toString("utf8"))), false),
     ),
   );
   fromClient.on("error", kill);

@@ -582,6 +582,18 @@ test("an approval that failed after its claim keeps the names it introduces: the
   assert.equal((await entry(id)).status, "approved");
 });
 
+test("a newer version replaces the pending one: approving the list top down cannot roll back", async () => {
+  const one = (await submit("twice", files("twice"))).approval as number;
+  const changed = files("twice");
+  changed["transform.js"] = `${changed["transform.js"]}\n// v2\n`;
+  const two = (await submit("twice", changed)).approval as number;
+  assert.notEqual(one, two);
+  assert.equal((await entry(one)).status, "replaced");
+  await assert.rejects(decide(one, "approve", { twice: { value: "v" } }));
+  await decide(two, "approve", { twice: { value: "v" } });
+  assert.match(transforms.get("twice")?.code ?? "", /v2/);
+});
+
 test("a resubmission while the owner's approval installs returns that entry, not a second pending one", async () => {
   const id = (await submit("busy", files("busy"))).approval as number;
   ctx.db.prepare("UPDATE approvals SET status = 'installing' WHERE id = ?").run(id);
@@ -616,4 +628,23 @@ test("a release's shipped transform replaces the earlier release's copy; an unch
   await dof.load();
   assert.deepEqual(transforms.get("shipx")?.manifest.consequential, ["POST api.shipx.com/**"]);
   assert.equal(existsSync(join(paths.dof("transforms"), "shipx", "tests/old.json")), false);
+});
+
+test("Settings: a forge DOF added or moved reaches the proxy's table without a restart", async () => {
+  const prev = ctx.config;
+  const on = async (host?: string) => {
+    ctx.config = Config.parse({ ...prev, dofs: host ? { gle: { type: "gitlab", host } } : {} });
+    await transformsDofModule.reload?.(prev);
+  };
+  try {
+    assert.equal(transforms.byHost("gl.corp.test"), undefined);
+    await on("gl.corp.test");
+    assert.equal(transforms.byHost("gl.corp.test")?.name, "gitlab");
+    await on("gl2.corp.test");
+    assert.equal(transforms.byHost("gl.corp.test"), undefined, "the old host goes with it");
+    assert.equal(transforms.byHost("gl2.corp.test")?.name, "gitlab");
+  } finally {
+    ctx.config = prev;
+    await transformsDofModule.reload?.(prev);
+  }
 });
