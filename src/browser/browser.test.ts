@@ -182,6 +182,29 @@ test("the registrable-domain rule (TypeScript and the cookie transform agree); t
   for (const r of transforms.runTests("cookie")) assert.ok(r.ok, `${r.file}: ${r.diff}`);
 });
 
+test("a page cannot call hortusd.internal: its fetch is the session's address, and no RPC or push is its to make", {
+  skip: !hasChromium,
+}, async () => {
+  const { s } = await worker("T", "127.0.0.2");
+  const post = (scheme: string, mode: string) =>
+    `fetch("${scheme}://hortusd.internal/rpc/browser.login", { method: "POST", mode: "${mode}",
+      body: JSON.stringify({ url: "https://fake.test/hostile-page", why: "a page asked" }) }).then(() => "sent", String)`;
+  const before = approvals();
+  for (const scheme of ["https", "http"]) {
+    await s.navigate(`${scheme}://fake.test/`);
+    await s.eval(post(scheme, "no-cors"));
+  }
+  assert.equal(approvals(), before, "a page opened an approval as the Worker");
+  // the Worker's own tools have no Origin: they still get through
+  const own = await raw({
+    host: "hortusd.internal",
+    path: "/rpc/ping",
+    method: "POST",
+    headers: { "sec-fetch-mode": "cors" },
+  });
+  assert.doesNotMatch(own.body, /not for pages/);
+});
+
 test("CDP: navigate through the proxy, screenshot PNG, eval, tree, console", { skip: !hasChromium }, async () => {
   const { s } = await worker("T", "127.0.0.2");
   // TLS through the proxy: the leaf minted for the SNI verifies against the hortus CA (pinned by its SPKI)
