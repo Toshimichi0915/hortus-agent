@@ -43,6 +43,11 @@ Worker VMs need an image: `hortus image build` (runs `scripts/build-image.sh` un
 Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Until it exists, VM tasks run as sandboxed
 host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy.
 
+A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
+tool caches in `~/.hortus/cache`. `/tmp` and everything under your home are read-only to it, and it has no pty: what you
+run yourself stays out of its reach. A project whose tooling hardcodes `/tmp` wants `"policy": { "cache": ["/tmp"] }`, at
+the price of tasks seeing each other's files there, or a VM.
+
 The console is `http://127.0.0.1:7700`. `hortus help` lists the CLI commands (`tasks`, `chat`, `approvals`, `search`,
 `schedules`, `pause`, …).
 

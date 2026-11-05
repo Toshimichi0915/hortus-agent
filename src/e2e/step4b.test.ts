@@ -24,7 +24,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const FAKE = (dir: string) => `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const DIR = ${JSON.stringify(dir)};
-const EVENT = /^- \\[(e\\d+)\\] (\\S+) \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
+const EVENT = /^- \\[(e\\d+)\\] (\\S+)[^(\\n]* \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
 const complete = async (req, onText) => {
   const id = (process.env.HORTUS_TASK ?? "").split("/").at(-3);
   const file = DIR + "/" + id + ".jsonl";

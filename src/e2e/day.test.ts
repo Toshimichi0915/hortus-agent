@@ -27,7 +27,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // it also stands in for the `openai` type, so planner.provider can be an openai credential the judge calls for real
 const FAKE = (dir: string) => `
 const DIR = ${JSON.stringify(dir)};
-const EVENT = /^- \\[(e\\d+)\\] (\\S+) \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
+const EVENT = /^- \\[(e\\d+)\\] (\\S+)[^(\\n]* \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
 let n = 0;
 const complete = async (req, onText) => {
   n++;
