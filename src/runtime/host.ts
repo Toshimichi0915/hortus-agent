@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "../config.ts";
 import { gitOf } from "../connectors/forge.ts";
 import { logger } from "../log.ts";
-import { lines, MAX_LINE, openAppend } from "../hostile.ts";
+import { lines, MAX_LINE, openAppend, replaceFile } from "../hostile.ts";
 import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
-import { abi, type Kind, profile, shim } from "./landlock.ts";
+import { abi, HOME_READ, type Kind, profile, shim } from "./landlock.ts";
 import * as sessionNet from "./session-net.ts";
 
 export interface SpawnOpts {
@@ -62,15 +62,18 @@ export interface Loopback {
 }
 
 /** A session's PATH: the system unit's is systemd's own, without what the owner installed under $HOME. Not hortusd's: it
- * runs outside every sandbox, and a chat writes these. */
-export const sessionPath = (): string =>
-  [
+ * runs outside every sandbox, and a chat writes these. Version managers first, as in the owner's shell: behind
+ * `/usr/bin` a project's `.python-version` would run the system's python, and say nothing. */
+const sessionPath = (): string => {
+  const home = (l: string[]) => l.map((p) => join(homedir(), p));
+  return [
+    ...home([".pyenv/shims", ".pyenv/bin", ".rbenv/shims", ".rbenv/bin", ".asdf/shims", ".volta/bin"]),
+    ...home([".local/share/mise/shims"]),
     process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     dirname(process.execPath),
-    ...[".local/bin", ".local/share/pnpm", ".cargo/bin", "go/bin", ".bun/bin", ".deno/bin"].map((p) =>
-      join(homedir(), p),
-    ),
+    ...home([".local/bin", ".local/share/pnpm", ".cargo/bin", "go/bin", ".bun/bin", ".deno/bin"]),
   ].join(":");
+};
 
 /** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */
 export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback): Record<string, string> {
@@ -78,7 +81,7 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
   const m2 = join(homedir(), ".m2", "repository");
   const env: Record<string, string> = {
     HOME: homedir(),
-    PATH: sessionPath(),
+    PATH: `${join(ctl, "bin")}:${sessionPath()}`,
     LANG: process.env.LANG ?? "C.UTF-8",
     TERM: "dumb",
     // no terminal: the owner's core.editor (nvim here) would wait on it for good in `rebase -i`, `merge`, `commit --amend`
@@ -140,7 +143,7 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
  * Workers' shared caches (`paths.cache()`) linked in: never the owner's, as `~/.cache` holds what the owner runs outside
  * any sandbox (ms-playwright's browsers, pre-commit's hooks, cargo's sources). `out/` and the caches are the Workers':
  * nothing is created through a link one planted. */
-export function caches(out: string): Record<string, string> {
+export function caches(out: string, path = sessionPath()): Record<string, string> {
   const w = join(out, "work", ".cache");
   const shared = paths.cache();
   const dir = (p: string) => {
@@ -154,7 +157,10 @@ export function caches(out: string): Record<string, string> {
     }
   };
   const links: Record<string, string[]> = { cargo: ["registry", "git"], gradle: ["caches"], npm: ["_cacache"] };
-  if ([join(out, "work"), w, join(w, "home"), shared].every(dir))
+  const real = homedir();
+  if ([join(out, "work"), w, join(w, "home"), shared].every(dir)) {
+    // `git init` in the scratch directory, then `git add -A`: the task's HOME and caches are nobody's commit
+    replaceFile(join(w, ".gitignore"), "*\n");
     for (const [tool, subs] of Object.entries(links))
       if (dir(join(w, tool)) && dir(join(shared, tool)))
         for (const s of subs)
@@ -162,8 +168,17 @@ export function caches(out: string): Record<string, string> {
             // EEXIST on a restart leaves the link be
             if (dir(join(shared, tool, s))) symlinkSync(join(shared, tool, s), join(w, tool, s));
           } catch {}
-  const real = homedir();
+    // what the profile shows, where a project's scripts look (`. ~/.nvm/nvm.sh`, `~/.cargo/env`): nvm is only a shell
+    // function, and nothing else finds it. ponytail: not `.local`, whose `~/.local/bin` installers write; it is on PATH
+    for (const e of HOME_READ)
+      try {
+        if (!e.startsWith(".local/") && existsSync(join(real, e)) && dir(dirname(join(w, "home", e))))
+          symlinkSync(join(real, e), join(w, "home", e));
+      } catch {}
+  }
   return {
+    // what this task installs, ahead of the owner's: `go install`, `cargo install`, `uv tool`, `pnpm add -g`
+    PATH: [...["home/.local/bin", "cargo/bin", "go/bin", "pnpm", "bin"].map((p) => join(w, p)), path].join(":"),
     // the owner's is hidden (landlock.ts › profile), and a file a tool may not open is not one that is missing: libgit2
     // dies on ~/.gitconfig (`cargo new`, a git dependency), git warns on every run. Its own: nothing there, and writable
     HOME: join(w, "home"),
@@ -249,9 +264,10 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
     throw e;
   }
 
+  const env = sandboxEnv(o.task, o.config, o.loopback);
   const child = spawn(shim.path, ["--", ...o.cmd], {
     cwd: o.cwd,
-    env: { ...sandboxEnv(o.task, o.config, o.loopback), ...(o.kind === "unattended" ? caches(out) : {}), ...o.env },
+    env: { ...env, ...(o.kind === "unattended" ? caches(out, env.PATH) : {}), ...o.env },
     stdio: ["ignore", "pipe", "pipe", "pipe"],
   });
   const [, stdout, stderr, fd3] = child.stdio as unknown as [null, Readable, Readable, Writable];

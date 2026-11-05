@@ -144,9 +144,9 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
 
 /** All an unattended session sees of `$HOME`: where toolchains install, none a credential store (v7 › Review round 16).
  * Not `.gitconfig`: git takes a hidden one silently, but dies on a shown one's `include` of a hidden file. */
-const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/mise .local/share/fnm .local/share/pipx
-  .local/share/uv/python .local/share/uv/tools .nvm .fnm .volta .asdf .pyenv .rbenv .rustup .cargo/bin .bun .deno go/bin
-  .dotnet .sdkman`.split(/\s+/);
+export const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/mise .local/share/fnm .local/share/pipx
+  .local/share/uv/python .local/share/uv/tools .nvm .fnm .volta .asdf .tool-versions .pyenv .rbenv .rustup .cargo/bin
+  .cargo/env .bun .deno go/bin .dotnet .sdkman`.split(/\s+/);
 
 /** The owner's data outside `$HOME`, hidden from unattended sessions like what is in it: what tasks and programs left in
  * `/tmp`, disks, other homes, and what the uid or its groups can read of the system: core dumps (the memory of what

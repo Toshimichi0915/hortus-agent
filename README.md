@@ -55,7 +55,10 @@ What a Worker really needs from there goes in `policy.read` (absolute paths, rea
 stays denied): `"policy": { "read": ["/home/you/tools", "/srv/data"] }`. A binary linked from an allowed directory needs its
 target listed too (`~/.local/bin/foo` → `~/apps/foo`), or the Worker gets `Permission denied`; the card says which path. A
 Worker's `$HOME` is not yours, so a tool it runs does not see your configuration there; a project needing one wants it in
-the repository.
+the repository. What is listed is linked into it (`~/.nvm`, `~/.cargo/env`, `~/.tool-versions`, not `~/.local`, which is its
+own), read-only: a Worker runs your pyenv, rbenv, asdf, mise and volta shims, ahead of `/usr/bin` as in your shell, but
+installs a new version only into a project or a venv (`pip install --user` gets `Permission denied`), and what it installs
+itself (`go install`, `cargo install`, `uv tool`) is on its `PATH`. `~/.config/mise` is not shown: `mise use -g` is yours alone.
 
 A chat session keeps `rw` on the rest, minus the deny set: `~/.ssh`, `~/.gnupg`, the cloud, package-manager and agent
 credentials, browser and app profiles, wallets and shell histories. That is a list, and a list cannot be complete: a

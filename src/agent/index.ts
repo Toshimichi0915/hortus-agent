@@ -1,6 +1,6 @@
 /**
  * hortus-agent's entry (05-agent.md). The bin imports @hortus/core first with HOME = ctl/home, so by the time this
- * module loads, core has read the task's ~/.hortus and HOME is the owner's again.
+ * module loads, core has read the task's ~/.hortus and HOME is the session's again.
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

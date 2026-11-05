@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { appendText, lines, readCapped, readDir, replaceFile } from "./hostile.ts";
+import { appendText, lines, readCapped, readDir, replaceFile, rmTree } from "./hostile.ts";
 import { tempDir } from "./test/until.ts";
+
+test("rmTree: a tree a session left read-only goes, and what a link in it names stays as it was", () => {
+  const d = tempDir("hortus-rmtree-");
+  const outside = join(d, "outside");
+  mkdirSync(outside);
+  chmodSync(outside, 0o555);
+  const t = join(d, "task");
+  mkdirSync(join(t, "ro/deep"), { recursive: true });
+  writeFileSync(join(t, "ro/deep/f"), "x");
+  symlinkSync(outside, join(t, "ro/link"));
+  chmodSync(join(t, "ro/deep"), 0o555);
+  chmodSync(join(t, "ro"), 0o555);
+  rmTree(t);
+  assert.equal(existsSync(t), false);
+  assert.equal(execFileSync("stat", ["-c", "%a", outside], { encoding: "utf8" }).trim(), "555");
+  chmodSync(outside, 0o755); // tempDir's cleanup
+});
 
 test("hostile files: links and FIFOs are never followed, read or blocked on", () => {
   const d = tempDir("hortus-hostile-");

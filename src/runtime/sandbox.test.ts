@@ -344,6 +344,52 @@ function suite(): void {
       assert.equal(r.out, "c\n", r.err);
       assert.equal(r.err, "");
     });
+    test("a moved HOME: what the profile shows is where scripts look, version managers beat /usr/bin, a task's installs run", async () => {
+      const fx = join(root, "fx-links");
+      const out = join(root, "links-out");
+      const put = (p: string, body: string, mode = 0o644) => {
+        mkdirSync(join(fx, p, ".."), { recursive: true });
+        writeFileSync(join(fx, p), body, { mode });
+      };
+      put(".nvm/nvm.sh", "echo nvm\n");
+      put(".cargo/env", "echo cargo\n");
+      put(".cargo/credentials.toml", "token\n");
+      put(".tool-versions", "node 1\n");
+      put(".pyenv/shims/python", "#!/bin/sh\necho shim\n", 0o755);
+      mkdirSync(join(out, "work"), { recursive: true });
+      const real = process.env.HOME;
+      process.env.HOME = fx;
+      try {
+        const env = caches(out);
+        const p = profile("unattended", { ...task, id: "O" }, config);
+        const w = join(out, "work/.cache");
+        const r = await shimRun(`rw ${out}\n${p}`, "", [
+          "--",
+          "env",
+          `HOME=${env.HOME}`,
+          `PATH=${env.PATH}`,
+          "sh",
+          "-c",
+          `. ~/.nvm/nvm.sh; . ~/.cargo/env; python; cat ~/.tool-versions; mkdir -p ${w}/go/bin; printf '#!/bin/sh\necho mine\n' > ${w}/go/bin/t; chmod +x ${w}/go/bin/t; t; mkdir ~/.local; touch ~/.local/x ~/.nvm/x`,
+        ]);
+        assert.equal(r.out, "nvm\ncargo\nshim\nnode 1\nmine\n", r.err);
+        denied(r); // ~/.nvm/x: the owner's still, read-only through the link
+        assert.match(r.err, /\.nvm\/x/);
+        assert.equal(existsSync(join(w, "home/.cargo/credentials.toml")), false); // only `bin` and `env`, as HOME_READ
+        const git = (...a: string[]) => spawnSync("git", a, { cwd: join(out, "work"), encoding: "utf8" });
+        git("init", "-q");
+        writeFileSync(join(out, "work/mine.txt"), "x");
+        git("add", "-A");
+        assert.equal(git("ls-files").stdout, "mine.txt\n"); // not the task's HOME and caches
+        rmSync(join(w, "home/.cargo"), { recursive: true });
+        symlinkSync(join(root, "elsewhere"), join(w, "home/.cargo"));
+        mkdirSync(join(root, "elsewhere"));
+        caches(out); // the next spawn: nothing through a planted link
+        assert.deepEqual(readdirSync(join(root, "elsewhere")), []);
+      } finally {
+        process.env.HOME = real;
+      }
+    });
     test("a session's PATH has what the owner installed under $HOME, hortusd's own does not", () => {
       const task2 = { id: "T", scope: { credentials: [] } } as unknown as TaskJson;
       const dirs = (sandboxEnv(task2).PATH ?? "").split(":");
