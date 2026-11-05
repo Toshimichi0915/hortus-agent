@@ -1004,3 +1004,61 @@ Nits, not changed: a transform disabled by a hand edit answers "already enabled"
 - Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: the unexplained stall above, 18 clean runs since.
 - **Ceilings of this round, in one place:** `/proc/<pid>/cmdline`; an `npmrc` in a `~/.nvm` node or a key in a `~/.local/bin` script; a toolchain outside the root list; a link out of the list; a chat's reach; a Worker on its own project reads that checkout's `.env`, as v6 gives it the checkout. `repos/` stays whole (round 7's ceiling).
 
+
+## Review round 17 — the owner's walk
+
+README followed literally on an empty home: `hortus install` wrote the real `/etc/systemd/system/hortusd.service` (home `/home/hortus-r17`, removed after), `systemctl enable --now`, real `hortus0` and nftables, the Planner and Workers on DeepSeek through `ollama-cloud` (transform `openai`, as the README's table says), fake Slack behind `dev.upstreams`. The first run with a real model and the installed unit together: the fake provider's scripts never wrote a long message, chose a credential or called `done` by itself.
+
+- **An owner's message was cut at 80 characters** (major, wrong result; the connectors' `summary`): `summary` is all the Planner, a brief and a task's inbox get of an event, and a task has no DOF by default, so "fix X, and do not touch Y" past 80 characters was lost; the live Planner wrote "the message was cut off" into the brief and the Worker guessed. A follow-up in a thread was cut the same way. 2,000 now, all six connectors; the gateway cuts its log line and commit subject to 120. Ceiling: a longer paste is cut, and whitespace stays collapsed; 50 × 2,000 characters fits a batch in the context.
+- **A session was offered `slack-app`** (major, wrong result; `tasks.ts › sessionCredentials`): the default scope was every vault name. The live Worker replied with `hortus-secret-slack-app`, an approval the owner would read as normal, for a call real Slack refuses for that token. A session's default now leaves out Slack's `*-app` and webhook secrets; a request with one asks the owner for a grant (`gate.ts`), which says what it is.
+- **`done` with a request waiting lost the reply** (major, wrong result; `prompt.ts`): after the merge landed, the Worker's Slack reply waited for approval, it said so with `send` and called `done`; the close expired the entry, and the owner never got the reply. A prompt line: end the turn without `done`. Measured 1 of 1 before, then 0 of 2 where the approval was held back. Ceiling: it is a prompt line, nothing refuses the `done`; the summary still says what was left open.
+- **`hortus image build` could not work on a real home** (major, a v6 step unreachable; `build-image.sh`): `hortusd` writes `ca.crt` 0600, a plain `cp` as root kept that, and `runuser agent certutil` could not read it. Every image so far came from `/tmp/hortus-vm-home`, whose CA a test wrote by hand. `install -m 644`.
+- **The two units.** `hortus install`: persistent, `User=`, `Environment=HOME=`, no `PATH` (systemd's), `Restart=on-failure`, `RestartPreventExitStatus=78`, `After=network-online.target`. `dev-run.sh`: transient (gone at a stop, so a `systemctl start` needs a unit file), `PATH=$PATH`, `HORTUS_HOME`, no restart, no `ExperimentalWarning` flag. Same capabilities, `Delegate`, `KillMode`, `LimitNOFILE`, `SupplementaryGroups=kvm`. `dev.upstreams` needs `HORTUS_HOME`, so this walk added a drop-in with it. README says all this now.
+- **Held, on the real unit:** git project and non-git project (`exclude`, shadow and origin at the merged sha, `status` clean) through clone, `npm test` on the unit's `PATH`, push, merge, approve; a chat in place, reopened after two restarts with its context; a `schedule` one-shot firing after a stop across its time; a stop mid-Worker and mid-VM: the merge had landed, the session was killed in 0.3 s, no session address, tap, rule or `qemu` left, and the task resumed and asked for its reply. `runtime: vm`: a live model in a guest (never run before), push, merge, resume. `ssh` under real nftables: `Connection timed out`, rc 255.
+- **Left after a stop, by design:** `hortus0` with `10.77.0.1` and the base `inet hortus` table; a start flushes them. They hold no session and refuse only `10.77.0.0/16`.
+- **Nits, left:** a running task's card shows the tokens of its last finished turn (0 on the first; the budget itself is enforced in the agent), and a failed run's `error` stays on the card during the next run until it ends; `upstream: the client went away` at info after each streamed model call; a coalesced "1 more approval pending" DM can arrive after the task closed; an image built for another home reads `failed: Connection error.`.
+- Not left as a test: a compact opt-in of this walk would need a Planner in `step3live`, whose fixture threads it would route. `step3live` keeps the unit and the live Worker; `visits.test.ts` the second visits.
+
+## Review round 17 — the moved `HOME`
+
+Through the real shim, unattended, fixture `HOME`, the unit's `PATH`.
+
+- **The root env vars did nothing under the system unit** (major, wrong result; `host.ts › sessionPath`): `PYENV_ROOT` and the rest point at a manager no `PATH` entry reached, so a project's `mise.toml` or `.python-version` silently ran `/usr/bin`'s. Shims come first, as in the owner's shell. `ctl/bin` moved into `sandboxEnv`.
+- **What `HOME_READ` shows was unreachable by `$HOME`** (major; `caches`): `. ~/.nvm/nvm.sh` is the only way to use nvm, and `~/.sdkman` and `~/.dotnet` have no root var here. Entries are linked into the session's `HOME`, read-only by what they point at. Landlock checks the target, so a link grants nothing. `.tool-versions` (versions only; asdf's global) and `.cargo/env` join `HOME_READ`.
+- **A task's own installs were not on its `PATH`** (minor; `caches`): `go install` and `uv tool` succeeded and then gave "not found". The task's bin directories come first.
+- **A read-only tree stopped a close** (major; `tasks.ts › finishClose`, `hostile.ts › rmTree`): one 0555 directory left the clone, the schedule rows and a retry on every start. Now `chmod -R`, which follows no link, then remove.
+- **`git add -A` in `work` took `.cache`** (minor; `caches`): `.cache/.gitignore`.
+- **Held:** `git config --global` persists across a resume in the same `out/` (a schedule run is a new task); `$HOME`, `Path.home()`, `os.homedir()` give the moved one; `ssh` uses `pw_dir` and fails on `known_hosts`, `Permission denied`; `hortus-agent`'s `HOME` trick (core reads `homedir()` at import only).
+- **Ceilings:** `~/.local` is the task's own, so a script naming `~/.local/bin/poetry` literally misses it; `poetry` on `PATH` finds it. `pip install --user` and `npm i -g` are EACCES (use a venv, a local install). `mise install`, `pyenv install` and the like cannot add a version: the owner's roots are read-only. `~/.config/mise` is hidden (`[env]` can hold secrets). There is no size limit on `out/`, only the disk. Planner directories go by plain `rmSync`.
+- **Toolchains:** mise v2026.11.1 and asdf v0.20.2 run, release fetched and sha256 verified. pyenv, rbenv and volta from their docs and source (no published checksum); only pyenv's place on `PATH` ran, with a stub.
+
+## Review round 17 — a hidden read
+
+Five briefs, three runs each, live DeepSeek, the real unattended profile, a fixture owner `HOME`, 600k tokens. Tool calls per run:
+
+| Brief | Before | Out of budget | After | Out of budget |
+| --- | --- | --- | --- | --- |
+| `~/.ssh/config` | 62, 49, 68 | 1 | 11, 22, 9 | 0 |
+| another project's file | 44, 30, 52 | 0 | 17, 13, 19 | 0 |
+| `~/.gitconfig` | 72, 44, 62 | 2 | 22, 15, 17 | 0 |
+| `/var/log/pacman.log` | 52, 57, 66 | 2 | 10, 10, 10 | 0 |
+| `/tmp` from an earlier step | 23, 30, 24 | 0 | 11, 14, 13 | 0 |
+
+- **A hidden read burnt the budget** (major, wrong result; `prompt.ts`): a hidden `~/x` is ENOENT in the moved `$HOME`, so round 16's "a read refused" did not match; the model tried `/proc/self/root`, `sudo`, `ssh -G`, `HOME=` and more, and 2 of 15 reached the owner only as the budget notice. The host-only line now says a brief's `~/…` is the owner's, one refused or missing read is the whole answer, and to do the rest and end with `done`. After: 15 of 15 named the path and guessed nothing, none claimed success. Landlock refused every read in every run. The model went direct to the provider in this harness, not through the proxy.
+
+## Review round 17 — second visits, run
+
+`src/e2e/visits.test.ts` (9 tests, default suite), on a real `HORTUS_NO_NET` daemon.
+
+- **A chat's unread message at a restart** (major, stuck; `recovery.ts › recover`): a chat running at a stop or crash went to `waiting`, and an undrained owner message had nothing to wake it. `queued` when the inbox is above the cursor; with nothing unread it waits.
+- **A moved checkout broke open clones** (major, stuck; `origin.ts › prepareClone`): alternates held the old path, and every git command failed. Rewritten at every start, with `replaceFile`: the fork's first `writeFileSync` followed a link the Worker could plant, so `hortusd` would have overwritten any file of the owner's (caught reading the merge; `projects.test.ts`). Ceiling: a move to a linked worktree leaves the clone broken, close the task; a session running during the move fails until its next start.
+- **`project.delete` left open merges** (major, wrong result; `project.delete`): approved it died on `not our ref`, and after a re-add its `approved` status answered the task's next request. They are `replaced`, and the task is told.
+- **A rename is a removal and an add** (ceiling): open tasks on the old name wait with `no project <old>`; the clone and the pushed branch in `<name>.git.removed-*` are kept, and adding the old name back resumes them. Moving tasks to a new name would be a new mechanism.
+- **Held:** a chat reopened after a restart with its context and page; a chat mid-turn with nothing unread; a project directory gone (a forced sync refused, `main` untouched); a transform v1, v2, v1 across two tasks and a restart (one open entry, older ones `replaced`, the survivor installs). Nit: two tasks submitting identical content get two entries, and approving both installs the same thing.
+
+## Review round 17 — housekeeping and the runs
+
+- **The round 10 stash** (`stash@{0}`, 11 files): every hunk's content is in `main` (checked by line for tests and fakes, by name for manifest entries and connector changes); dropped (`641e49e`).
+- **`dos` "20 Workers" window 60 s → 100 s** (test): beside `stress -c 32` and 64 test files, 78 of 1,280 searches were still queued at the client's own 60 s deadline, with hold 202 ms and p95 204 ms, 1 of 4 loaded runs. Not round 12's `ETIMEDOUT`. hold and p95 are what guard the console and did not change; a search that never ends still fails. After the change: 2 loaded runs, 1,280 of 1,280, hold 200–217 ms, p95 61–96 ms.
+- **Final runs.** `pnpm lint` clean. On the tree of this commit: default, `KEEP` unset, 3 × (625 tests: 596 pass, 0 fail, 29 skipped); `--test-concurrency=64` beside `stress -c 32`, 2 × 596/0. One step earlier, before only the `dos` window and these docs: default 3 × 596/0; loaded 596/0 and 595/1 (the `dos` failure above); `HORTUS_TEST_NET=1` 597 pass, 0 fail; `HORTUS_TEST_LLM=1` 604 pass, 0 fail; image rebuilt for the prompt; VM 23 pass, 0 fail, 3 skipped; VM with NET 14 pass, 0 fail, 12 skipped.
+- Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.

@@ -22,6 +22,7 @@ done
 
 - `git http-backend` behind `https://hortusd.internal/git/<name>[/…]` (03's internal router): CGI child with `GIT_PROJECT_ROOT=projects/`, `GIT_HTTP_EXPORT_ALL=1`, `PATH_INFO`, `REQUEST_METHOD`, `QUERY_STRING`, `CONTENT_TYPE`, `HORTUS_ROLE`, `HORTUS_TASK`; body streamed in, CGI output parsed for headers and streamed out. Push to a project not in `scope.project` (unattended) or not in `projects` (chat has every project) → 403 before CGI.
 - `sync(name, force?)`: a git project → `git -C projects/<name>.git fetch <path> <main>:<main>` (non-ff refused unless `force`, which uses `+<main>:<main>`); a non-git project → `shadow.snapshot(name)` then the fetch from the shadow. Called at every unattended start on the project, after every merge, and by `project.sync`.
+- `prepareClone` on a clone that exists rewrites its `objects/info/alternates` to the checkout's current path (`replaceFile`: the Worker owns that file).
 - `clone(task, name)`: `git clone --reference <checkout> https://hortusd.internal/git/<name> clones/<task>` runs inside the Worker (the prompt tells it; the dispatcher pre-creates nothing). The clone URL is in `task.json.paths.clone`. Host Workers: the clone goes through the proxy like any request (the session address), so the pre-receive sees the task.
 
 ### `src/projects/shadow.ts`
@@ -42,7 +43,7 @@ done
 
 ### Console › Projects page
 
-Add/remove (`project.set`/`project.delete`: `delete` leaves `projects/<name>.git` and `shadow/` in place, renamed `.removed-<ts>`), fields, `sync --force`, shadow snapshots (last 20, `git log` of the shadow) with "restore to this" (two-click confirm).
+Add/remove (`project.set`/`project.delete`: `delete` leaves `projects/<name>.git` and `shadow/` in place, renamed `.removed-<ts>`, and open merges on the project `replaced` with the task told), fields, `sync --force`, shadow snapshots (last 20, `git log` of the shadow) with "restore to this" (two-click confirm).
 
 ## Functional tests
 

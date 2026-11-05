@@ -30,6 +30,7 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   assert.match(prompt(forge), /\/tmp(?!\/)/); // read-only for an unattended session: the prompt says where temp files go
   // a brief's `~/x` is the owner's, and a Worker burnt its budget on what cannot pass (v7 › Round 17: 23-72 calls → 9-22)
   assert.match(prompt(forge), /`~\/…` in the brief is the owner's home[^\n]*One refused or missing read[^\n]*`done`/);
+  assert.match(prompt(forge), /waiting requests are dropped[^\n]*without `done`/); // a live Worker's reply died with its task
   assert.equal(b.system, a.system, "byte-identical across turns");
   assert.doesNotMatch(a.system, /coding agent/);
   assert.deepEqual(a.messages, [{ role: "user", content: "Do the test thing." }]);

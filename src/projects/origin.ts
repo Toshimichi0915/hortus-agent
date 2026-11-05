@@ -10,6 +10,7 @@ import { PassThrough } from "node:stream";
 import { z } from "zod";
 import { type Config, PROJECT_NAME, PROJECT_NAME_HINT, ProjectConfig, save } from "../config.ts";
 import { bus } from "../console/events.ts";
+import { replaceFile } from "../hostile.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { type Client, type IncomingRequest, internalRoutes, listen, type Out } from "../proxy/index.ts";
@@ -218,7 +219,8 @@ export async function prepareClone(
   } else if (existsSync(join(dir, ".git/objects/info/alternates"))) {
     // the checkout may have moved (project.set): every git command in the clone died on the old path
     // ponytail: a move to where --reference would not be used (a linked worktree) leaves the clone broken; close the task
-    writeFileSync(join(dir, ".git/objects/info/alternates"), `${resolve(p.path)}/.git/objects\n`);
+    // (replaceFile: the Worker owns this clone, and hortusd writing through a link it planted is the owner's file gone)
+    replaceFile(join(dir, ".git/objects/info/alternates"), `${resolve(p.path)}/.git/objects\n`);
   }
   if (loopback) {
     // the dispatcher's loopbackLink opened it already (listen returns the existing ports)

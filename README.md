@@ -111,6 +111,8 @@ that uses it and, optionally, the hosts it may go to. Values are write-only. The
 | `github-webhook` | webhook-secret | github | | the App's webhook secret |
 | `ollama-cloud` | token | openai | `ollama.com` | the API key |
 
+`slack-app` and webhook secrets stay `hortusd`'s: a session is not offered them.
+
 The Sources page says, per source, what is connected, what is missing, and (for forges) the webhook URL to give the
 service and how to tunnel it to the local listener.
 
@@ -142,10 +144,13 @@ real one. Two ways to run a development daemon:
   nftables and session addresses, so no capabilities are needed, only a delegated cgroup:
   `systemd-run --user --scope -p Delegate=yes env HORTUS_HOME=/tmp/hortus-dev HORTUS_NO_NET=1 dist/bin/hortusd.js` (the bins' shebang silences `node:sqlite`'s
   experimental warning; `node dist/bin/hortusd.js` prints it).
-  `dev.upstreams` in its `hortusd.json` points hosts at fake services.
+  `dev.upstreams` in its `hortusd.json` points hosts at fake services. It works only with `HORTUS_HOME` set (the daemon logs
+  an error and uses the real hosts otherwise), and the `hortus` CLI needs the same `HORTUS_HOME` to find that daemon.
 - With them: `scripts/dev-run.sh <name> <HORTUS_HOME> [ENV=value …]` starts it as a transient system unit with the real
   unit's capabilities (passwordless sudo); stop it with `sudo systemctl stop hortusd-<name>`, logs with
-  `journalctl -u hortusd-<name> -f`.
+  `journalctl -u hortusd-<name> -f`. It differs from the installed unit in four ways: it is transient (gone at a stop, so
+  no `systemctl start`), it passes your shell's `PATH` (the installed unit has systemd's), it sets `HORTUS_HOME`, and it has
+  no `Restart=`.
 
 The default suite runs unit tests and the end-to-end tests (`src/e2e/`: a real `hortusd` under `HORTUS_NO_NET=1` in a
 delegated user scope, fake upstream services from `src/test/fakes/` behind `dev.upstreams`, a fake model provider).

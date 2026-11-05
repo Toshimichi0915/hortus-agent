@@ -52,3 +52,5 @@ Step 4's Planner batch directory is started with `vm.start` and role `planner` o
 
 - Firecracker (v6 Deferred) replaces `vm.ts`'s command line and the shares with vsock; the dispatcher's `start/kill/wait` contract and the task directory do not change.
 - A share is one entry in a table (tag, path, ro); a run's `/schedule` is that one line.
+
+The guest's CA is the one in `$HORTUS_HOME/ca` at build time: an image built for another home fails every TLS request (`failed: Connection error.`). Round 17 ran `hortus image build` and a live model in a guest for the first time (v7 › Review round 17 — the owner's walk).

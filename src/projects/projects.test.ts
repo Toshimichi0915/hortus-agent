@@ -5,7 +5,17 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -262,6 +272,27 @@ test("a checkout that is a linked worktree: the clone keeps no alternates into w
     ctx.config.projects.g = before;
     g(checkout, "worktree", "remove", "--force", wt);
   }
+});
+
+test("a clone's alternates are rewritten at a start, and never through a link its Worker planted", async () => {
+  const row = ctx.db.prepare("SELECT * FROM tasks WHERE id = 'ta'").get() as unknown as TaskRow;
+  const tj = taskJson(ctx.config, row);
+  const dir = join(root, "alt-clone");
+  const t = { ...tj, paths: { ...tj.paths, clone: dir } };
+  await prepareClone(t);
+  const alt = join(dir, ".git/objects/info/alternates");
+  const good = readFileSync(alt, "utf8");
+  writeFileSync(alt, "/moved/away/.git/objects\n");
+  await prepareClone(t);
+  assert.equal(readFileSync(alt, "utf8"), good);
+  const victim = join(root, "owner-file");
+  writeFileSync(victim, "precious\n");
+  rmSync(alt);
+  symlinkSync(victim, alt);
+  await prepareClone(t);
+  assert.equal(readFileSync(victim, "utf8"), "precious\n");
+  assert.equal(readFileSync(alt, "utf8"), good);
+  assert.ok(!lstatSync(alt).isSymbolicLink());
 });
 
 /** A Worker's clone of `project` on hortus/<task> with one commit writing `file`, pushed through the route. */

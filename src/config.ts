@@ -82,7 +82,7 @@ export const Config = z.looseObject({
       budget: z
         .looseObject({ tokens: z.number().nonnegative().default(2e6), hours: z.number().nonnegative().default(4) })
         .prefault({}),
-      /** default scope.credentials; empty = every configured credential */
+      /** default scope.credentials; empty = every configured credential but those only hortusd uses (tasks.ts) */
       credentials: Strings.default([]),
       context_window: z.number().int().positive().default(131072),
       plugins: Strings.default([]),

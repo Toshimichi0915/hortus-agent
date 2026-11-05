@@ -199,7 +199,9 @@ test(
 
 test("20 Workers at once, each flooding RPCs and proxy requests: the console stays responsive", opts, async () => {
   // before round 6's turns and global buffering bound: hold 1.3 s, task.list p95 550 ms, rss +1.4 GB
-  const r = await measure("swarm", 64, 60_000, 700, 20);
+  // 100 s, not 60: at 96 runnable processes on 32 CPUs 78 of 1,280 searches were still queued at 60 s with hold 202 ms and
+  // p95 204 ms. hold and p95 are what guard the console, and a search that never ends still fails here
+  const r = await measure("swarm", 64, 100_000, 700, 20);
   assert.deepEqual(r, { "search 200": 20 * 64, "never gave up": 20 * 64, "endless 200 read 24 MB": 20 * 4 });
 });
 

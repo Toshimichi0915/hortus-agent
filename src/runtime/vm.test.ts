@@ -157,6 +157,12 @@ test("deadline: past 2^31-1 ms it re-arms instead of firing at once; clear stops
   }
 });
 
+test("build-image: the guest's copy of the CA is world-readable, as hortusd's 0600 ca.crt is not", () => {
+  // a plain `cp` kept 0600 as root: `runuser agent certutil` failed, so `hortus image build` failed on every real home
+  const script = readFileSync(new URL("../../scripts/build-image.sh", import.meta.url), "utf8");
+  assert.match(script, /^install -m 644 "\$ca" "\$root\/etc\/ssl\/certs\/hortus\.pem"/m);
+});
+
 test("missingImage names the first missing file and the fix", () => {
   const d = tempDir("hortus-img-");
   assert.equal(missingImage(d), `${join(d, "agent.ext4")} missing: run \`hortus image build\``);

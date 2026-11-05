@@ -125,3 +125,5 @@ Live (DeepSeek, `ctl/home` with the real key, opt-in `HORTUS_TEST_LLM=1`): "list
 - A feature tool set is a file under `src/agent/tools/` exporting `Tool[]`, enabled by name in `task.json.features`; `merge`, `schedule`, `browser` land that way in 3b/3c/3h without touching the loop.
 - Owner plugins in `ctl/home/.hortus/plugins/` load through core's own mechanism; a test plugin adding a `hello` tool is callable by the model.
 - The planner kind swaps the plugin (15-planner.md); the loop and resume are shared.
+
+Round 17 prompt lines: `done` with a request still waiting drops it, so end the turn without `done`; on a host session a brief's `~/…` is the owner's and one refused or missing read is the whole answer (v7 › Review round 17 — a hidden read).
