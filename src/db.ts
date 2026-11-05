@@ -82,8 +82,12 @@ const TAINT_MAX = 5;
  * At most TAINT_MAX distinct reasons are kept; the first ones say enough.
  */
 export function taint(db: DatabaseSync, task: string, reason: string): void {
-  const r = db.prepare("SELECT taint FROM tasks WHERE id = ?").get(task) as { taint: string | null } | undefined;
+  const r = db.prepare("SELECT taint, parent FROM tasks WHERE id = ?").get(task) as
+    | { taint: string | null; parent: string | null }
+    | undefined;
   if (!r) return;
+  // what a run read reaches the next one through `/schedule` and its summary: its parent carries it to them (taintOf)
+  if (r.parent) taint(db, r.parent, reason);
   const list = r.taint ? (JSON.parse(r.taint) as string[]) : [];
   if (list.includes(reason) || list.length >= TAINT_MAX) return;
   db.prepare("UPDATE tasks SET taint = ? WHERE id = ?").run(JSON.stringify([...list, reason]), task);
@@ -102,10 +106,12 @@ export const isCi = (c: Pick<Config, "dofs">, e: { dof: string; author: string |
 
 export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pick<Config, "dofs">): string[] {
   if (!task) return [];
-  const t = db.prepare("SELECT kind, taint, scope FROM tasks WHERE id = ?").get(task) as
-    | { kind: string | null; taint: string | null; scope: string | null }
+  const t = db.prepare("SELECT kind, taint, scope, parent FROM tasks WHERE id = ?").get(task) as
+    | { kind: string | null; taint: string | null; scope: string | null; parent: string | null }
     | undefined;
   if (!t) return [];
+  // a run's text and script are its parent's words: a tainted task's `schedule` is no way back to the judge
+  const parent = t.parent ? taintOf(db, t.parent, c) : [];
   const authors = (
     db.prepare("SELECT DISTINCT dof, author FROM events WHERE task_id = ? AND trusted = 0").all(task) as {
       dof: string;
@@ -116,6 +122,7 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     .slice(0, 5)
     .map((r) => `${r.dof}:${r.author ?? "?"}`);
   return [
+    ...parent,
     ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
     ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),
     ...(t.taint ? (JSON.parse(t.taint) as string[]) : []),

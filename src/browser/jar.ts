@@ -43,7 +43,7 @@ interface Meta {
 export function grantedOrigins(db: DatabaseSync, task: string): string[] {
   const rows = db
     .prepare(
-      "SELECT DISTINCT substr(category, 8) AS origin FROM approvals WHERE kind = 'grant' AND task_id = ? AND status = 'approved' AND category LIKE 'origin:%'",
+      "SELECT DISTINCT substr(category, 8) AS origin FROM approvals WHERE kind = 'grant' AND task_id IN (?1, (SELECT parent FROM tasks WHERE id = ?1)) AND status = 'approved' AND category LIKE 'origin:%'",
     )
     .all(task) as { origin: string }[];
   return rows.map((r) => r.origin);
