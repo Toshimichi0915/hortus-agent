@@ -26,7 +26,7 @@ const FIELDS: Record<string, [string, string][]> = {
   "github-app": [
     ["appId", "number"],
     ["installationId", "number"],
-    ["privateKey", "password"],
+    ["privateKey", "textarea"], // an <input> drops a PEM's newlines
   ],
   aws: [
     ["keyId", "password"],
@@ -53,7 +53,11 @@ export function transformForm(id: number, s: TransformSummary): Raw {
   const fields = (s.missing ?? []).map(({ name, type }) =>
     (FIELDS[type] ?? []).map(
       ([f, t]) =>
-        h`<label>${name} (${type})${FIELDS[type]?.length === 1 ? "" : h` ${f}`} <input type="${t}" name="credentials.${name}.${f}" autocomplete="off" placeholder="leave empty to add later"></label>`,
+        h`<label>${name} (${type})${FIELDS[type]?.length === 1 ? "" : h` ${f}`} ${
+          t === "textarea"
+            ? h`<textarea name="credentials.${name}.${f}" rows="4" autocomplete="off" spellcheck="false" placeholder="leave empty to add later"></textarea>`
+            : h`<input type="${t}" name="credentials.${name}.${f}" autocomplete="off" placeholder="leave empty to add later">`
+        }</label>`,
     ),
   );
   return h`<form class="actions" data-call="approval.decide" data-input="${JSON.stringify({ id, decision: "approve" })}">${fields}<button type="submit" class="ok">Approve</button>${button(

@@ -42,6 +42,8 @@ define("task.stream", {
     (async function* () {
       yield { type: "text", text: "hello from worker" };
       yield { type: "tool_call", id: "1", name: "bash", input: { command: "ls -la" } };
+      yield { type: "status", text: "idle" };
+      yield { type: "status", text: "idle" };
       await new Promise(() => {});
     })(),
 });
@@ -76,6 +78,14 @@ define("approval.list", {
       summary: { project: "web", branch: "hortus/t1", added: 3, removed: 1 },
       payload: null,
       grantable: false,
+    },
+    {
+      id: 1,
+      status: "approved",
+      category: "merge",
+      task_id: "t1",
+      reason: "checkout is not clean",
+      summary: { project: "web", branch: "hortus/t2", added: 1, removed: 0 },
     },
   ],
 });
@@ -205,6 +215,25 @@ test("hortus chat -r: Ctrl-C once stops the task, twice exits", async () => {
   p.kill("SIGINT");
   assert.equal(await exited, 130);
   assert.deepEqual(calls, [["task.stop", { id: "t1" }]]);
+});
+
+test("hortus chat says, once, that an approval waits; a merge that did not land says why; close refuses a typo", async () => {
+  const db = openDb(paths.db());
+  db.prepare(
+    "INSERT INTO approvals(id, kind, category, task_id, summary, status, requested_at) VALUES (9, 'request', 'credential:slack', 't1', '{}', 'pending', 'x')",
+  ).run();
+  const p = start(["chat", "-r", "t1"]);
+  let err = "";
+  p.stderr.on("data", (d) => (err += d));
+  await waitFor(() => err, /approval #9 pending \(credential:slack\): hortus approvals\n/);
+  await sleep(100);
+  assert.equal(err.match(/approval #9/g)?.length, 1);
+  p.stdin.end();
+  assert.match((await run(["approvals"])).out, /#1\tapproved\tmerge[^\n]*\n\tnot landed: checkout is not clean/);
+  calls.length = 0;
+  const typo = await run(["close", "t1", "faild"]);
+  assert.equal(typo.code, 64);
+  assert.deepEqual(calls, []);
 });
 
 test("hortus chat -r <unknown>: one error line, exit 1", async () => {

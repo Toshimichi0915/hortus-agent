@@ -261,6 +261,25 @@ test("every route renders on an empty DB, missing RPCs become an error line", as
   assert.equal((await get("/tasks/none/log")).status, 404);
 });
 
+test("Schedules shows the last run's summary; Credentials suggests the shipped transforms", async () => {
+  const now = new Date().toISOString();
+  ctx.db
+    .prepare("INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('sum1', 'chat', 'watch', 'waiting', ?, ?)")
+    .run(now, now);
+  const id = Number(
+    ctx.db
+      .prepare("INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sum1', '2030-01-01T00:00:00Z', 3600, 'w')")
+      .run().lastInsertRowid,
+  );
+  mkdirSync(paths.schedule(id), { recursive: true });
+  writeFileSync(join(paths.schedule(id), "last-summary.md"), "found <b>two</b> builds");
+  for (const page of ["/schedules", "/tasks/sum1"])
+    assert.match((await get(page)).body, /<summary>summary<\/summary><pre>found &lt;b&gt;two&lt;\/b&gt; builds/, page);
+  ctx.db.prepare("DELETE FROM schedules WHERE id = ?").run(id);
+  ctx.db.prepare("DELETE FROM tasks WHERE id = 'sum1'").run();
+  assert.match((await get("/credentials")).body, /<datalist id="transforms">.*<option value="openai">/s);
+});
+
 test("500 tasks render under 200 ms, hostile titles and replies are escaped everywhere", async () => {
   const XSS = "<script>alert(1)</script>";
   const ins = ctx.db.prepare(
@@ -341,6 +360,12 @@ test("settings.set: invalid → names the key, nothing written; valid → saved 
   assert.equal(JSON.parse(readFileSync(paths.config(), "utf8")).owner.tz, "UTC");
   assert.equal(reloads, 1);
   assert.equal(ctx.config.owner.tz, "UTC");
+  assert.equal(JSON.parse(ok.body).result.message, undefined);
+  // a typo'd key is kept, as a newer version's would be, and the save says it does nothing
+  const typo = await post("settings.set", { config: { ...ctx.config, polcy: { "*": "auto" } } });
+  assert.match(JSON.parse(typo.body).result.message, /not settings hortusd knows: polcy/);
+  await post("settings.set", { config: { ...ctx.config, polcy: undefined } });
+  reloads = 1;
   assert.equal((await post("pause.set", { paused: true })).status, 200);
   assert.ok(existsSync(paths.paused()));
   assert.match((await get("/settings")).body, /Paused\./);

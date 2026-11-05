@@ -116,10 +116,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const res = await deps.fetch(url.startsWith("http") ? url : `${api}${url}`, {
       headers: accept ? { ...headers, accept } : headers,
     });
-    if (!res.ok) {
-      await res.body?.cancel();
-      throw new Error(`github GET ${url}: HTTP ${res.status}`);
-    }
+    // the body says why (a wrong App key is the proxy's `hortus: installation token: …`): Sources shows this line
+    if (!res.ok) throw new Error(`github GET ${url}: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`.trim());
     return res;
   }
   const json = async <T>(url: string): Promise<T> => (await (await get(url)).json()) as T;

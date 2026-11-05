@@ -117,8 +117,8 @@ export function rest(deps: Pick<ConnectorDeps, "name" | "fetch">, api: string, h
       return get(new URL(to, abs).href, hops - 1);
     }
     if (!res.ok) {
-      await res.body?.cancel();
-      throw new HttpError(`${deps.name} GET ${url}: HTTP ${res.status}`, res.status);
+      const why = (await res.text()).slice(0, 200); // Sources shows this line: "HTTP 401" alone says nothing to fix
+      throw new HttpError(`${deps.name} GET ${url}: HTTP ${res.status} ${why}`.trim(), res.status);
     }
     return res;
   }

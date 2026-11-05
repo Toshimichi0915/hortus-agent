@@ -155,6 +155,8 @@ test("TLS: without console.tls the leaf is minted from the hortus CA for console
   const r = await remote("/");
   assert.equal(r.cert?.subjectaltname, `DNS:${HOST}`);
   assert.equal(r.cert?.issuer.CN, "hortus CA");
+  // a phone without the CA has no way in, and WebAuthn refuses a click-through: Settings says so
+  assert.match((await loopback("/settings")).body, /Each device must trust <code>[^<]*ca\.crt<\/code>/);
 });
 
 test("enrolment: a live code, a passkey row, a session; the code is single use and expires", async () => {

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Ctx } from "../../ctx.ts";
 import { button, details, h, layout, PAUSED, type Page, type Params, raw, time } from "../html.ts";
 import { svg } from "../qr.ts";
@@ -40,7 +41,11 @@ function remote(ctx: Ctx, p: Params) {
   const rows = sessions(ctx.db, p.caller?.session);
   const keys = passkeyList(ctx.db);
   return h`<section data-refresh id="remote"><h2>Remote</h2>
-<p>Listening on <code>${c.listen}</code> as <code>${c.host ?? ""}</code>; certificate ${certSource() ?? "not loaded"}.</p>
+<p>Listening on <code>${c.listen}</code> as <code>${c.host ?? ""}</code>; certificate ${certSource() ?? "not loaded"}.</p>${
+    c.tls
+      ? ""
+      : h`<p class="hint">Each device must trust <code>${join(ctx.paths.ca(), "ca.crt")}</code> first: a passkey needs a certificate the device accepts. Or set <code>console.tls</code>.</p>`
+  }
 <h3>Enrol a device</h3>${
     at
       ? h`<p class="hint">Enrolment codes are made at the machine, on the loopback console.</p>`

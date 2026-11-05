@@ -472,6 +472,14 @@ test("publishLog: a Worker's 48 MB of user turns renders and indexes capped, in 
   assert.ok(ms < 1000, `${ms} ms`);
 });
 
+test("dof.search: --since and --until that are no dates are refused, not an empty result", async () => {
+  for (const since of ["yesterday", "7d", "2026/11/01"])
+    await assert.rejects(call("dof.search", { q: "xyz", since }, { role: "owner" }), /YYYY-MM-DD/);
+  await assert.rejects(call("dof.search", { q: "xyz", until: "today" }, { role: "owner" }), /YYYY-MM-DD/);
+  for (const since of ["2026", "2026-11", "2026-11-01", "2026-11-01T03:00:00Z"])
+    await call("dof.search", { q: "xyz", since }, { role: "owner" });
+});
+
 test("dof.search taints a Worker's task with each untrusted hit it is shown; owner hits, owner callers do not", async () => {
   const add = db.prepare("INSERT INTO tasks(id, kind, title, status, scope) VALUES (?, 'unattended', ?, 'running', ?)");
   for (const id of ["W1", "W2"]) add.run(id, id, JSON.stringify({ dofs: ["slack"] }));
