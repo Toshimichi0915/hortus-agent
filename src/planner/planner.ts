@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { z } from "zod";
 import { quote } from "../agent/inbox.ts";
 import type { Config } from "../config.ts";
+import { PR_TURN } from "../connectors/forge.ts";
 import { bus } from "../console/events.ts";
 import { errorLine, parse, tokens } from "../console/html.ts";
 import type { Ctx, Module } from "../ctx.ts";
-import { now, taintOf } from "../db.ts";
+import { type DatabaseSync, now, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { runPlanner, tasks } from "../runtime/index.ts";
@@ -120,6 +121,21 @@ interface ResultRow {
 const oneLine = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0, n);
 
 /** The batch's one user message (15-planner.md › Input). The fixed system prompt is the planner plugin's. */
+/** Each PR/MR of a task (a `!<n>` in its refs) and its end, if its last turn is one (a reopening undoes it). A ref the
+ * task only commented on counts too, and its PR may stay open: then the task reads as not ended, the safe side.
+ * ponytail: a scan of `events` per PR of an open task, each batch; an index on `refs` if open PRs ever number hundreds. */
+export function prTurns(db: DatabaseSync, id: string): { ref: string; end?: { summary: string; trusted: number } }[] {
+  const turns = db.prepare("SELECT summary, trusted FROM events WHERE refs = json_array(?) ORDER BY id DESC");
+  const refs = db.prepare("SELECT ref FROM task_refs WHERE task_id = ? AND ref LIKE '%:!%'").all(id) as {
+    ref: string;
+  }[];
+  return refs.map(({ ref }) => {
+    const rows = turns.all(ref) as { summary: string | null; trusted: number }[];
+    const end = rows.find((r): r is { summary: string; trusted: number } => PR_TURN.test(r.summary ?? ""));
+    return end && !/^\S+reopen/.test(end.summary) ? { ref, end } : { ref };
+  });
+}
+
 export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): string {
   const refStmt = c.db.prepare(
     "SELECT r.task_id, t.status, t.project FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
@@ -167,6 +183,10 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
       .prepare("SELECT COUNT(*) AS n FROM approvals WHERE status = 'pending' AND task_id = ?")
       .get(t.id) as { n: number };
     if (asks) what.push(`${asks} waiting for the owner`);
+    // the Worker's report may predate the end, and this batch may be the only word of it: a close refused while it ran
+    // left the task on a PR that ended, with a report saying "open" (round 21)
+    const ended = prTurns(c.db, t.id).flatMap((p) => (p.end ? [p.ref] : []));
+    if (ended.length) what.push(`ended: ${ended.join(" ")}`);
     // a Worker's record (it may restate what a stranger wrote): a JSON string, data like the title
     const summary = t.summary ? ` — summary ${JSON.stringify(oneLine(t.summary, 300))}` : "";
     // a note would wait in its inbox (tasks.ts › restarts): the Planner sees why, as data like the summary

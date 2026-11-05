@@ -692,6 +692,18 @@ test("a stranger's event taints the batch anyway: a tainted task's result rides 
   db((d) => d.prepare("DELETE FROM tasks WHERE id = ?").run(id));
 });
 
+/** a PR of a task (`<id>` as the DOF, so that tasks do not share a ref) and, with `key`, an event on it */
+const prTurn = (id: string, n: number, key = "", trusted = 1, summary = "") =>
+  db((d) => {
+    const t = new Date().toISOString();
+    const ref = `${id}:o/r:!${n}`;
+    d.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(ref, id);
+    if (key)
+      d.prepare(
+        "INSERT INTO events(dof, key, ts, trusted, bot, payload, created, summary, refs, consumed) VALUES ('g', ?, ?, ?, 0, 'null', ?, ?, ?, -1)",
+      ).run(key, t, trusted, t, summary, JSON.stringify([ref]));
+  });
+
 test("task_close refuses a chat task, one on its timers, one at work, one whose request waits unless the owner ended its PR", {
   skip,
 }, async () => {
@@ -708,31 +720,24 @@ test("task_close refuses a chat task, one on its timers, one at work, one whose 
   ins("tc-chat", "chat");
   ins("tc-timer", "unattended");
   ins("tc-work", "unattended", "running"); // no session: a queued row, the dispatcher would start
-  const asks = (id: string) => {
+  const asks = (id: string, path = `/repos/o/r/pulls/1/merge`) => {
     ins(id, "unattended");
     db((d) =>
       d
         .prepare(
-          "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:slack', ?, ?, '{}', 'pending', ?)",
+          "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:slack', ?, ?, ?, 'pending', ?)",
         )
-        .run(`tc-${id}`, id, t),
+        .run(`tc-${id}`, id, JSON.stringify({ path }), t),
     );
   };
-  const turn = (id: string, key: string, trusted: number, summary: string) =>
-    db((d) => {
-      d.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(`g:o/r:!${id}`, id);
-      d.prepare(
-        "INSERT INTO events(dof, key, ts, trusted, bot, payload, created, summary, refs, consumed) VALUES ('g', ?, ?, ?, 0, 'null', ?, ?, ?, -1)",
-      ).run(key, t, trusted, t, summary, JSON.stringify([`g:o/r:!${id}`]));
-    });
   asks("tc-asks");
   asks("tc-moot");
-  turn("tc-moot", "m1", 1, "pull_request.merged o/r!1 by toshi: (its text)");
+  prTurn("tc-moot", 1, "m1", 1, "pull_request.merged o/r!1 by toshi: (its text)");
   asks("tc-back");
-  turn("tc-back", "b1", 1, "pull_request.closed o/r!2 by toshi: (its text)");
-  turn("tc-back", "b2", 1, "pull_request.reopened o/r!2 by toshi: (its text)");
+  prTurn("tc-back", 1, "b1", 1, "pull_request.closed o/r!1 by toshi: (its text)");
+  prTurn("tc-back", 1, "b2", 1, "pull_request.reopened o/r!1 by toshi: (its text)");
   asks("tc-theirs");
-  turn("tc-theirs", "t1", 0, "pull_request.closed o/r!3 by mallory: (its text)");
+  prTurn("tc-theirs", 1, "t1", 0, "pull_request.closed o/r!1 by mallory: (its text)");
   db((d) =>
     d
       .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
@@ -765,6 +770,112 @@ test("task_close refuses a chat task, one on its timers, one at work, one whose 
   assert.match(String(theirs?.output), /invalid: task tc-theirs has a request waiting/);
   assert.match(batchText(b), /tc-asks "x" \(waiting, host, 0 tokens, 1 waiting for the owner\)/);
   assert.equal(taskRow("tc-asks")?.status, "waiting");
+});
+
+test("the end of a PR frees only what waits on that PR, and a task with another open PR has not ended", {
+  skip,
+}, async () => {
+  const t = new Date().toISOString();
+  const add = (id: string, path?: string) =>
+    db((d) => {
+      d.prepare(
+        `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated)
+         VALUES (?, 'unattended', 'x', 'x', 'waiting', '{"credentials":[],"repos":[]}', '{}', '{"tokens":0}', 'host', '[]', ?, ?)`,
+      ).run(id, t, t);
+      if (path)
+        d.prepare(
+          "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at) VALUES ('request', 'credential:g', ?, ?, ?, 'pending', ?)",
+        ).run(`h-${id}`, id, JSON.stringify({ path }), t);
+    });
+  const merged = "pull_request.merged o/r!1 by toshi: (its text)";
+  // the merged mid-turn flow: !1 ended, the follow-up !2 open with its merge waiting
+  add("p2-open", "/repos/o/r/pulls/2/merge");
+  prTurn("p2-open", 1, "p2a", 1, merged);
+  prTurn("p2-open", 2);
+  // nothing waiting: the close goes through, but "ended" would be false
+  add("p2-clean");
+  prTurn("p2-clean", 1, "p2b", 1, merged);
+  prTurn("p2-clean", 2);
+  // both ended: both on the card
+  add("p2-both");
+  prTurn("p2-both", 1, "p2c", 1, merged);
+  prTurn("p2-both", 2, "p2d", 1, "pull_request.closed o/r!2 by toshi: (its text)");
+  // a request on something else: a merge says nothing of a post
+  add("p1-post", "/api/chat.postMessage");
+  prTurn("p1-post", 1, "p1a", 1, merged);
+  // nor of a comment on the PR itself: it can still go out, and it may be the Worker's reply
+  add("p1-reply", "/repos/o/r/issues/1/comments");
+  prTurn("p1-reply", 1, "p1e", 1, merged);
+  // a merge queue's bot, whichever sender GitHub uses: a merged PR takes no more requests
+  add("p1-queue", "/repos/o/r/pulls/1/merge");
+  prTurn("p1-queue", 1, "p1b", 0, "pull_request.merged o/r!1 by github-merge-queue[bot]: (its text)");
+  // the other forges' spellings
+  add("p1-gl", "/api/v4/projects/o%2Fr/merge_requests/1/merge");
+  prTurn("p1-gl", 1, "p1c", 1, "merge_request.merge g/r!1 by toshi: (its text)");
+  add("p1-bb", "/2.0/repositories/o/r/pullrequests/1/merge");
+  prTurn("p1-bb", 1, "p1d", 1, "pullrequest:fulfilled w/r!1 by toshi: (its text)");
+  const ids = ["p2-open", "p2-clean", "p2-both", "p1-post", "p1-reply", "p1-queue", "p1-gl", "p1-bb"];
+  planner(`export default ({ n }) => n === 0
+    ? { calls: ${JSON.stringify(ids)}.map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    : { text: "ok" };`);
+  const count = batches().length;
+  slack.post("C1", { user: "U1", text: "close these" });
+  const b = await nextBatch(count);
+  await until(() => toolResults(b).length === ids.length);
+  const [open, clean, both, post, reply, queue, gl, bb] = toolResults(b);
+  const entry = (id: string) =>
+    (db((d) => d.prepare("SELECT status FROM approvals WHERE task_id = ?").get(id)) as { status: string }).status;
+  assert.match(String(open?.output), /invalid: task p2-open has a request waiting/);
+  assert.equal(taskRow("p2-open")?.status, "waiting");
+  assert.equal(entry("p2-open"), "pending");
+  assert.ok(!clean?.isError, String(clean?.output));
+  assert.doesNotMatch(String(taskRow("p2-clean")?.summary), /## Ended/);
+  assert.ok(!both?.isError, String(both?.output));
+  const card = String(taskRow("p2-both")?.summary);
+  assert.match(card, /## Ended\n/);
+  assert.match(card, /pull_request\.merged o\/r!1 by toshi\n/);
+  assert.match(card, /pull_request\.closed o\/r!2 by toshi\n/);
+  assert.match(String(post?.output), /invalid: task p1-post has a request waiting/);
+  assert.equal(entry("p1-post"), "pending");
+  assert.match(String(reply?.output), /invalid: task p1-reply has a request waiting/);
+  assert.equal(entry("p1-reply"), "pending");
+  assert.ok(!queue?.isError, String(queue?.output));
+  assert.equal(entry("p1-queue"), "expired");
+  assert.match(String(taskRow("p1-queue")?.summary), /by github-merge-queue\[bot\]\n/);
+  assert.ok(!gl?.isError, String(gl?.output));
+  assert.equal(entry("p1-gl"), "expired");
+  assert.ok(!bb?.isError, String(bb?.output));
+  assert.equal(entry("p1-bb"), "expired");
+  // what the batch said of them, before any close
+  assert.match(batchText(b), /p2-open "x" \(waiting, [^)]*ended: p2-open:o\/r:!1\)/);
+  assert.match(batchText(b), /p2-both "x" \(waiting, [^)]*ended: p2-both:o\/r:!\d p2-both:o\/r:!\d\)/);
+  db((d) => d.prepare("DELETE FROM tasks WHERE id IN ('p2-open', 'p1-post', 'p1-reply')").run());
+});
+
+test("a Worker's turn that ends without done on a task whose PRs all ended still reaches the Planner", {
+  skip,
+}, async () => {
+  planner(`export default ({ n, events }) => n === 0 && events[0]
+    ? { calls: [{ name: "task_create", input: { title: "x", brief: "no directive: the turn ends with no done", event_ids: [events[0].id], scope: { project: "foo" } } }] }
+    : { text: "ok" };`);
+  let count = batches().length;
+  slack.post("C1", { user: "U1", text: "a task for the PR" });
+  const b = await nextBatch(count++);
+  const id = (JSON.parse(toolResults(b)[0]?.output ?? "{}") as { id: string }).id;
+  await until(() => taskRow(id)?.status === "waiting", 15_000, "the first turn");
+  // an open PR: a turn that ends so is the usual wait, nobody is asked
+  prTurn(id, 1);
+  await api("task.message", { id, text: "the first" });
+  await until(() => taskRow(id)?.status === "running" || batches().length > count, 15_000, "the second turn");
+  await until(() => taskRow(id)?.status === "waiting", 15_000, "the second turn's end");
+  await sleep(2500); // past the debounce
+  assert.equal(batches().length, count);
+  prTurn(id, 1, `end-${id}`, 1, "pull_request.merged o/r!1 by toshi: (its text)");
+  await api("task.message", { id, text: "the second" });
+  const r = await nextBatch(count++);
+  assert.match(batchText(r), new RegExp(`\\[${id}\\] result:\\n<<<quoted\\nits turn ended without done`));
+  assert.match(batchText(r), new RegExp(`${id} "x" \\(waiting, [^)]*ended: ${id}:o/r:!1\\)`));
+  await api("task.close", { id, outcome: "done" });
 });
 
 test("no project and no VM image: task_create fails with the doc's message; the Planner ignores instead", {

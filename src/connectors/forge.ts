@@ -14,6 +14,20 @@ export const PR_TURN =
   /^(pull_request\.(merged|closed|reopened)|merge_request\.(merge|close|reopen)|pullrequest:(fulfilled|rejected)) /;
 
 /**
+ * The PR or MR a request's path merges, as the tail of its ref (`o/r:!1`). Only a merge: a comment on an ended PR can still
+ * be posted, and it may be the Worker's reply.
+ * ponytail: REST by project name only. A GraphQL merge (`gh pr merge`, whose body names a node id) or GitLab's numeric
+ * project id names none, so that request stays until it is decided or expires.
+ */
+export function mergeTarget(path: string): string | undefined {
+  const m =
+    /\/(?:repos\/(.+?)\/pulls|projects\/(.+?)\/merge_requests|repositories\/(.+?)\/pullrequests)\/(\d+)\/merge(?:[/?]|$)/.exec(
+      path.replace(/%2F/gi, "/"),
+    );
+  return m ? `${m[1] ?? m[2] ?? m[3]}:!${m[4]}` : undefined;
+}
+
+/**
  * The webhook listener's hand-off to the gateway loop. `push` queues one event and resolves when the gateway acks it
  * (after its INSERT, before any mirror work), so the listener answers `200` only once the row exists. One consumer.
  */

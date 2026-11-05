@@ -167,7 +167,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     // a stale bot's close or a merge queue's merge: its task would wait for good on a PR that ended, so it reaches the
     // Planner as CI does, no author and none of the PR's text. Not a bot closing its own PR, as our own merges are
     const bot = !ci && p.sender?.type === "Bot";
-    const ender = bot && p.action === "closed" && !!p.pull_request && p.pull_request.user.login !== p.sender?.login;
+    const ender = bot && p.action === "closed" && !!p.pull_request && p.pull_request.user?.login !== p.sender?.login;
     return {
       dof: name,
       key,

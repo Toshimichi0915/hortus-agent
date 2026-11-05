@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { dirOf, gitOf, PR_TURN } from "../connectors/forge.ts";
+import { dirOf, gitOf, mergeTarget } from "../connectors/forge.ts";
 import { dofNames, isCi, readableOf, taint, taintOf } from "../db.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
@@ -13,7 +13,7 @@ import { tasks } from "../runtime/index.ts";
 import { missingImage } from "../runtime/vm.ts";
 import { type Caller, RpcError } from "../types.ts";
 import { read as readVault } from "../vault/vault.ts";
-import { type EventRow, isOwner, pctx, refsOf, renderEvent } from "./planner.ts";
+import { type EventRow, isOwner, pctx, prTurns, refsOf, renderEvent } from "./planner.ts";
 
 const planner = ["planner" as const];
 const EventIds = z.array(z.string()).min(1);
@@ -67,19 +67,6 @@ function route(taskId: string, evs: EventRow[]): void {
     for (const ref of refsOf(e))
       db.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(ref, taskId);
   }
-}
-
-/** The end of a PR of this task, if the last turn of one is an end (a reopening undoes it).
- * ponytail: any of its PRs; a task with two PRs, one ended, loses what waits on the other. */
-function prEnd(id: string): { summary: string; trusted: number } | undefined {
-  const rows = pctx()
-    .db.prepare(
-      `SELECT e.summary, e.trusted FROM events e, json_each(e.refs) j JOIN task_refs r ON r.ref = j.value
-       WHERE r.task_id = ? ORDER BY e.id DESC`,
-    )
-    .all(id) as { summary: string | null; trusted: number }[];
-  const turn = rows.find((r): r is { summary: string; trusted: number } => PR_TURN.test(r.summary ?? ""));
-  return turn && !/^\S+reopen/.test(turn.summary) ? turn : undefined;
 }
 
 define("task_create", {
@@ -227,23 +214,32 @@ define("task_close", {
     if (n) throw new RpcError("invalid", `task ${task_id} has ${n} timer${n > 1 ? "s" : ""}; it is waiting for them`);
     // a Worker's `done` with its reply still waiting (5 of 10 live runs, against the prompt): a close would drop the reply,
     // as `finishClose` expires what this counts. Its decision wakes the task, and the next `done` closes it
-    const { w } = pctx()
+    const waiting = pctx()
       .db.prepare(
-        "SELECT COUNT(*) AS w FROM approvals WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
+        "SELECT json_extract(summary, '$.path') AS path FROM approvals WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
       )
-      .get(task_id) as { w: number };
-    // but the owner's own end of the PR makes it moot: a merge by the forge's button left the Worker's merge request waiting
-    // and the close refused, 3 of 3 live, with a dead entry on the Approvals page until it expired (round 20)
-    const end = prEnd(task_id);
-    if (w && !end?.trusted)
+      .all(task_id) as { path: string | null }[];
+    // but the end of a PR makes its merge moot: a merge by the forge's button left the Worker's merge request waiting and
+    // the close refused, 3 of 3 live, with a dead entry on the Approvals page until it expired (round 20).
+    // Only with no other PR open, and only an end that stays: the owner's, or a merge, whoever's hand (a merge queue's
+    // sender is unpublished); a stranger's close may be undone
+    const prs = prTurns(pctx().db, task_id);
+    const ended = prs.flatMap((p) => (p.end ? [p.end] : []));
+    const over = ended.length === prs.length;
+    const moot = prs.filter((p) => over && (p.end?.trusted || /^\S*(merged?|fulfilled) /.test(p.end?.summary ?? "")));
+    const live = (path: string | null) => {
+      const on = mergeTarget(path ?? "");
+      return !on || !moot.some((p) => p.ref.endsWith(`:${on}`));
+    };
+    if (waiting.some((a) => live(a.path)))
       throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
     // the card's last word was the Worker's "open, not merged". ponytail: the card only: out/summary.md is the Worker's
     // file, not one for hortusd to append to, so `logs/<id>/summary.md` keeps it
-    const how = end && /^\S+ \S+ by .*?(?=: )/.exec(end.summary)?.[0];
-    if (how)
+    const how = over ? ended.flatMap((e) => /^\S+ \S+ by .*?(?=: )/.exec(e.summary)?.[0] ?? []) : [];
+    if (how.length)
       pctx()
         .db.prepare("UPDATE tasks SET summary = COALESCE(summary, '') || ? WHERE id = ?")
-        .run(`\n\n## Ended\n${how}\n`, task_id);
+        .run(`\n\n## Ended\n${how.join("\n")}\n`, task_id);
     await tasks.close(task_id, outcome);
     return { ok: true };
   },

@@ -375,6 +375,40 @@ Ceilings of this round, besides those above: GitLab keeps an MR open when its br
 
 Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.
 
+## Review round 21 — the end of a PR, per PR
+
+The installed unit as round 20 (fixture home `/home/hortus-r21`, removed after), Planner, Workers and judge on DeepSeek through the fixture vault by the real proxy, `credential:<forge>: auto`. Three walks, 26 runs: the first two on the tree before the last narrowing below (a request's freeing, which only the `moot` runs reach, and those were re-run), the third on this commit's production code.
+
+| Flow, runs per walk (GitHub, GitLab) | Outcome |
+| --- | --- |
+| merged mid-turn, 2+2, 0+2, 2+2 | 10 of 10 stayed open through the merge; 8 opened a follow-up PR/MR; in one the push had landed before the merge, so the line was on `main`, and it said so and closed; one Worker spent the harness's 6 minutes in `sleep` waiting for `main` to move, a fault of the fake's merge, and was run again |
+| the two-PR close: the follow-up's merge waiting, the owner on the first PR "you can close the task", 2+1, 0+1, 2+2 | 8 of 8 kept: the close refused or not tried, the entry pending, the task waiting. Approved: merged by the Worker, closed `done`, `## Ended` lists both PRs and who ended each, 8 of 8 |
+| the refused close: a push waiting when the owner merges, 2+2, 0, 2+2 | 8 of 8 `task_close` refused, the push kept. Approved: 8 of 8 went on to a follow-up PR/MR and `done`, the task waiting on it. None ended a turn without `done`, so the new row did not fire live; it has its test |
+| a merge request waiting when the owner merges, 0, 1+1, 1+1 | 4 of 4 closed, the entry expired, `## Ended` right |
+| the other endings once more for the prompt: owner's merge, owner's close, a stranger's, a bot's | 4 of 4 as round 20 |
+
+- **`prEnd` looked at any PR of the task** (major, data loss and a misleading screen; `tools.ts › task_close`): proved first on `e8e3130` on the real RPC, `{"ok":true}` for a task with `!1` merged and the merge of `!2` waiting, the request dropped, and `## Ended` on a card with an open PR. `planner.ts › prTurns` takes the last turn of each `!<n>` in the task's refs; a task has ended only with none open. A `!<n>` the task only commented on counts as its own: the safe side, no `## Ended` and no freeing. The close itself is not refused for an open PR: such a ref could hold the task for good, and the prompt says to leave it (9 of 9).
+- **The owner's end freed every request of the task** (major, data loss; `task_close`, from reading): a Slack post, a push, or the Worker's reply on the merged PR, waiting when the owner pressed merge, went with the close; a Worker's `done` with a reply waiting is 5 of 10 (round 18), so that close is what the rule exists for. Only the merge of an ended PR is moot (`forge.ts › mergeTarget`, the request's own path). My first version took any request on the PR, and a reply on it is exactly what must not go.
+- **A task could wait on an ended PR for good** (major, stuck, from reading; `renderBatch`, `hortusd.ts`): the Planner has no memory, so after a refused close nothing said the PR had ended. A Worker that never got the event reported "PR open", and the rule says leave it; a turn ending without `done` woke nobody at all. A card now lists `ended: <refs>`, the prompt says a `waiting` task with all of them there is finished whatever its report says, and a turn without `done` with no request and no timer left writes a `result` row. It cannot loop: one row per Worker turn, and a batch starts no turn. Live the Workers called `done` after all 8 refused closes: a path the walk did not reach.
+- **A merge queue's merge** (minor, from the docs; `task_close`): GitHub's changelog attributes queue merges to `github-merge-queue[bot]` in `push` events; the `pull_request` section of the webhook docs names neither `sender` nor `merged_by`, and warns that `sender` may be the placeholder `ghost`. Community reports say `github.actor` is the bot. Not confirmed, so either must work. The owner as sender: the owner's event. The bot: `ender`, no author, reaches the task. `ghost`: a stranger's. Under the last two a merge request waiting would have been refused, round 20's dead entry again, so a merge frees its own request whoever's hand; a close still needs the owner, since it can be undone. GitLab's `user` and Bitbucket's `actor` are who acted, a merge train's or auto-merge's by their documented shape; `ender` names them all right, as the summary's `by` is that actor. `ender` read a nullable `pull_request.user` without `?.` (nit).
+- **Asked, and held:** a refused `queued`/`running` close cannot loop: a batch exists only for new events and results, the refusal starts nothing, a retry inside a batch is bounded by its half hour and `daily_tokens`, and a running task ends by its own budget. None fired in the 26 runs: the Planner attached the end to a running task, as the prompt says, so the refusal's text is untested live; it says what the prompt says. The owner's close from the console is `task.close` → `tasks.close`, which kills a running session; `task_close`'s rules are not on that path, and nothing changed there.
+
+Ceilings of this round:
+
+- A merge by GraphQL (`gh pr merge`) or a GitLab numeric project id names no PR, so that entry stays until decided or expired, and the close waits for it. 0 such merges in the walks, all REST by name.
+- A bot closing a PR it opened itself (a superseded dependabot PR with a task on it) is still bot traffic and wakes nothing: GitHub's connector cannot tell that bot from our App. The event is stored, so the next batch of any kind lists the PR under `ended:`.
+- With a second PR open, a dead merge entry of the first stays until decided or expired.
+
+## Review round 21 — the runs and what is left
+
+`pnpm lint` clean. On the production code of this commit (only docs changed after the build): default, `KEEP` unset, 3 × (646 tests: 617 pass, 0 fail, 29 skipped); `--test-concurrency=64` beside `stress -c 32`, 2 × 617/0; `HORTUS_TEST_NET=1` 618 pass, 0 fail; `HORTUS_TEST_LLM=1` 625 pass, 0 fail; VM 23 pass, 0 fail, 3 skipped; VM with NET 14 pass, 0 fail, 12 skipped; the image rebuilt for the Planner prompt on this tree, before these VM runs. No test's bound was loosened, and no suite failed on this tree.
+
+The two-PR test and the turn-without-`done` test failed on `e8e3130`'s production code; the first was then seen failing at the refused close, the second as no batch. The reply case in the two-PR test was added with the narrowing, so it was not run against the wider first version. Round 20's `task_close` test now gives its requests a merge's path, since a request with no path no longer counts as moot.
+
+Which build each walk ran on: the first two walks (16 runs) on this round's code before `mergeTarget` replaced the wider match and with a comment fewer; the third (10 runs: the mid-turn, two-PR and refused flows, two each on GitHub and GitLab, and a merge request waiting on each) on this commit's production code. Bitbucket was not walked: GitLab was the second forge. Its path in `mergeTarget` and `prTurns` is covered by the tests.
+
+Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.
+
 ## Testing
 
 No messenger or forge credentials exist on this machine. Each connector ships a fake service under `test/fakes/` (Slack: Socket Mode and the Web API it uses; later Discord, Telegram, GitHub) and every done-when in `docs/build-order.md` is exercised against it through `dofs.<name>.api` and `dev.upstreams`. Verification against the real services is pending the owner's credentials; the checklist for that is in each design doc.

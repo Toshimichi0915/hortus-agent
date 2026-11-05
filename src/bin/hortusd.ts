@@ -12,7 +12,7 @@ import { webhooksModule } from "../gateway/webhooks.ts";
 import { logger } from "../log.ts";
 import { commit, mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
-import { plannerModule, wake as wakePlanner } from "../planner/planner.ts";
+import { plannerModule, prTurns, wake as wakePlanner } from "../planner/planner.ts";
 import { coreFetch, coreSocket, links, listen, listenOpts, proxyModule, unlisten } from "../proxy/index.ts";
 import { define, serveSocket } from "../rpc.ts";
 import { RpcError } from "../types.ts";
@@ -115,6 +115,21 @@ async function main(): Promise<void> {
   exitHooks.onResult = (t, m) => {
     if (t.kind !== "chat" && m.text) wakePlanner();
   };
+  // a turn that ended without `done` on a task with nothing left to wake it: a close refused while it ran or while a
+  // request waited, and the PR over. Nothing else reaches the Planner, and the task would wait on an ended PR for good
+  exitHooks.onExit.push((t, msgs) => {
+    if (t.kind === "chat" || t.status !== "waiting" || t.error || msgs.some((m) => m.type !== "reply")) return;
+    const prs = prTurns(ctx.db, t.id);
+    if (!prs.length || prs.some((p) => !p.end)) return;
+    const { n } = ctx.db
+      .prepare(
+        "SELECT (SELECT COUNT(*) FROM approvals WHERE status = 'pending' AND task_id = ?) + (SELECT COUNT(*) FROM schedules WHERE task_id = ?) AS n",
+      )
+      .get(t.id, t.id) as { n: number };
+    if (n) return;
+    tasks.failureRow(t.id, "result", "its turn ended without done, and every PR/MR of it has ended");
+    wakePlanner();
+  });
   // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
   sessionNet.init({
     db: ctx.db,

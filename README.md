@@ -98,7 +98,7 @@ messenger, one forge and the Planner's (and Workers') model:
   answer for a credential you trust a Worker with: `"policy": { "*": "human", "credential:github": "auto" }`. You grant
   it once, a judge model passes routine requests, and pushes, merges, deletes and whatever it doubts still come to you:
   the same PR took 4-11 decisions. A task with a PR ends with it, however it ends: merge or close it in the forge and
-  the task closes, a request still waiting on it dropped; if someone else closes it, you are told and it stays closed.
+  the task closes, a merge request still waiting on it dropped (a second open PR keeps the task, and any other request waits for you); if someone else closes it, you are told and it stays closed.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
   `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.
 

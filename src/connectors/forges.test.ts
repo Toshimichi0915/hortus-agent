@@ -37,7 +37,7 @@ import type { Forge, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { dirOf, gitOf } from "./forge.ts";
+import { dirOf, gitOf, mergeTarget } from "./forge.ts";
 import { patchOf } from "./gitlab.ts";
 import { connectors } from "./index.ts";
 
@@ -1498,6 +1498,22 @@ test("sandboxEnv: insteadOf entries for gitlab (oauth2, its host) and bitbucket 
     .map(([, v]) => v);
   assert.ok(vals.includes("url.https://oauth2:hortus-secret-gle@gitlab.example.com:4443/.insteadOf"));
   assert.ok(vals.includes("bitbucket.org:4443:127.0.0.9"));
+});
+
+test("mergeTarget: a merge by each forge's REST path; nothing else names one", () => {
+  assert.equal(mergeTarget("/repos/o/r/pulls/12/merge"), "o/r:!12");
+  assert.equal(mergeTarget("/api/v3/repos/o/r/pulls/12/merge?x=1"), "o/r:!12");
+  assert.equal(mergeTarget("/api/v4/projects/g%2fsub%2Fr/merge_requests/3/merge"), "g/sub/r:!3");
+  assert.equal(mergeTarget("/2.0/repositories/w/r/pullrequests/3/merge"), "w/r:!3");
+  for (const p of [
+    "/repos/o/r/issues/12/comments",
+    "/repos/o/r/pulls/12",
+    "/api/v4/projects/g%2Fr/merge_requests/3/notes",
+    "/api/v4/projects/g%2Fr/merge_requests/3/merge_ref",
+    "/graphql",
+    "/o/r.git/git-receive-pack",
+  ])
+    assert.equal(mergeTarget(p), undefined, p);
 });
 
 test("a text whose writer is not known to be the actor stays out: a null user, a delivery with no sender", async () => {
