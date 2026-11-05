@@ -154,6 +154,9 @@ export const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/m
 const HIDDEN = `/home /mnt /media /run/media /srv /tmp /var/tmp /var/log /var/mail /var/spool /var/lib/systemd/coredump
   /var/lib/libvirt /sys/firmware`.split(/\s+/);
 
+/** What every program of the owner's shares, sockets to their terminals and screen among them. */
+const SHARED = ["/tmp", "/var/tmp", "/run/screen"].map(resolve);
+
 const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "shm"].map((d) => `/dev/${d}`);
 
 /** The directive text for one task under `kind`. */
@@ -179,7 +182,10 @@ export function profile(
   const others = Object.values(config.projects ?? {})
     .map((p) => resolve(p.path))
     .filter((p) => kind === "unattended" && !(own && under(resolve(own), p)));
-  grant("/", base, base === "rw" ? denyRw : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"], out);
+  grant("/", base, base === "rw" ? [...denyRw, ...SHARED] : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"], out);
+  // a chat writes there but connects to nothing already listening: a tmux, screen or X server is the owner's own shell,
+  // outside the domain with vault.json in reach. ponytail: where a tool puts one elsewhere (TMUX_TMPDIR), `policy.deny`
+  if (kind === "chat") for (const p of SHARED) if (existsSync(p)) grant(p, "rn", denyRw, out);
   if (kind === "unattended") {
     for (const p of [own, process.execPath, ...HOME_READ.map((e) => join(home, e)), ...(config.policy.read ?? [])])
       if (p && existsSync(p)) grant(resolve(p), "ro", [...deny, ...others], out);
