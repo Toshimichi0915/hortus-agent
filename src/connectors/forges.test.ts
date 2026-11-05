@@ -1566,5 +1566,8 @@ test("github: a PR's two ends read apart; the owner's merge says merged", async 
 
 test("a forge's failed GET carries the body: Sources shows why, not only the status", async () => {
   const fetch = async () => new Response("hortus: installation token: minting failed: HTTP 401\n", { status: 502 });
-  await assert.rejects(rest({ name: "gl", fetch }, "http://x", {}).get("/y"), /gl GET \/y: HTTP 502 hortus: installation token/);
+  await assert.rejects(
+    rest({ name: "gl", fetch }, "http://x", {}).get("/y"),
+    /gl GET \/y: HTTP 502 hortus: installation token/,
+  );
 });

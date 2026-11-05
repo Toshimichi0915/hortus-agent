@@ -281,6 +281,9 @@ const commands: Record<string, Command> = {
           if (sum.rendered) console.log(`\t${s(sum.rendered)}`);
           if (taint.length) console.log(`\ttainted: ${taint.join("; ")}`);
           if (a.grantable) console.log(`\tapprove --grant ${s(a.id)} also allows ${s(a.category)} for this task`);
+          const missing = ((sum.missing ?? []) as Row[]).map((m) => m.name);
+          if (missing.length)
+            console.log(`\tno value yet for ${missing.join(", ")}: the Approvals page takes them with the approval`);
         }
         if (cut) console.log(cutLine("approvals"));
         return;

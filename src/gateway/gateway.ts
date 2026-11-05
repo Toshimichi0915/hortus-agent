@@ -300,17 +300,16 @@ export function createGateway(deps: GatewayDeps): Gateway {
         cursor: string | null;
         last_sync: string | null;
       }[];
-      return Object.entries(deps.config().dofs)
-        .filter(([, cfg]) => deps.connectors[cfg.type])
-        .map(([dof, cfg]) => {
-          const r = runners.get(dof);
-          const s = r?.conn?.status() ?? { connected: false, error: r?.error ?? "not started" };
-          const scopes = rows
-            .filter((x) => x.dof === dof)
-            .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
-          const error = s.error ?? r?.error;
-          return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
-        });
+      return Object.entries(deps.config().dofs).map(([dof, cfg]) => {
+        const r = runners.get(dof);
+        const unknown = !deps.connectors[cfg.type] && `no connector type ${cfg.type}`;
+        const s = r?.conn?.status() ?? { connected: false, error: r?.error ?? (unknown || "not started") };
+        const scopes = rows
+          .filter((x) => x.dof === dof)
+          .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
+        const error = s.error ?? r?.error;
+        return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
+      });
     },
     async resync(dof, scope) {
       if (!runners.get(dof)?.conn) throw new RpcError("not_found", `no running source ${dof}`);

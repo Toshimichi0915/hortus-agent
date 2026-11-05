@@ -234,14 +234,20 @@ const pendingId = (r: R): number => {
 const approve = (id: number) => call("approval.decide", { id, decision: "approve" }, owner);
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const rejectedLogins: number[] = [];
-define("login.reject", { roles: ["owner"], input: z.object({ id: z.number() }), run: ({ id }) => void rejectedLogins.push(id) });
+define("login.reject", {
+  roles: ["owner"],
+  input: z.object({ id: z.number() }),
+  run: ({ id }) => void rejectedLogins.push(id),
+});
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 test("a login entry cannot be approved outside its view; reject closes the view", async () => {
   const id = Number(
     ctx.db
-      .prepare("INSERT INTO approvals(kind, category, summary, status, requested_at) VALUES ('login', 'login', '{}', 'pending', ?)")
+      .prepare(
+        "INSERT INTO approvals(kind, category, summary, status, requested_at) VALUES ('login', 'login', '{}', 'pending', ?)",
+      )
       .run(new Date().toISOString()).lastInsertRowid,
   );
   await assert.rejects(approve(id), new RegExp(`sign in at /approvals/${id}/login`));

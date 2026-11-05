@@ -37,10 +37,11 @@ them onto `PATH` (`for b in hortus hortusd hortus-agent dof; do ln -s "$PWD/dist
 addresses), `Delegate=yes` (a cgroup per task), and `RestartPreventExitStatus=78`: a start-up error a restart cannot
 fix (an invalid `hortusd.json`, a corrupt database) is one log line (`journalctl -u hortusd`) and no restart loop.
 `hortus install --force` overwrites a unit that differs; `hortus install --ca` also adds the hortus CA (made at the first
-start, `~/.hortus/ca/ca.crt`) to the system trust store.
+start, `~/.hortus/ca/ca.crt`) to the system trust store. That step is written for Arch (`update-ca-trust`, its anchors
+directory); Workers do not need it, they get the CA through their environment.
 
-Worker VMs need an image: `hortus image build` (runs `scripts/build-image.sh` under sudo; `--no-browser` leaves
-Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Until it exists, VM tasks run as sandboxed
+Worker VMs need an image: `hortus image build` (runs `scripts/build-image.sh` under sudo, and that needs Arch's `pacstrap`
+and `mkinitcpio`; `--no-browser` leaves Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Until it exists, VM tasks run as sandboxed
 host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy.
 
 A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
@@ -69,7 +70,13 @@ each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0
 without your mirrors and servers there.
 
 The console is `http://127.0.0.1:7700`. `hortus help` lists the CLI commands (`tasks`, `chat`, `approvals`, `search`,
-`schedules`, `pause`, …).
+`schedules`, `pause`, …). A login is finished in the console (`hortus approvals approve` refuses it: only the login view
+signs in), and a transform's missing credentials are entered there.
+
+For a phone or another machine: set `console.listen` (`"0.0.0.0:7443"`) and `console.host` (the name it is reached by), give
+`console.tls` a certificate for that name, and restart hortusd. Without `console.tls` the certificate comes from the hortus
+CA, so each device must first trust `~/.hortus/ca/ca.crt` (a passkey does not work past a certificate warning). Settings,
+on this machine, then makes a one-time enrolment code and its QR.
 
 ## Configuration: `~/.hortus/hortusd.json`
 

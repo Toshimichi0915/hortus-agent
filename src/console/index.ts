@@ -108,7 +108,9 @@ define("settings.set", {
     await c.reload();
     // kept (Config is loose, for a newer version's keys), but a typo (`polcy`) would otherwise read as saved and in force
     const unknown = Object.keys(r.data).filter((k) => !(k in Config.shape));
-    return unknown.length ? { ok: true, message: `saved; not settings hortusd knows: ${unknown.join(", ")}` } : { ok: true };
+    return unknown.length
+      ? { ok: true, message: `saved; not settings hortusd knows: ${unknown.join(", ")}` }
+      : { ok: true };
   },
 });
 

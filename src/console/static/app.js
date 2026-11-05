@@ -67,6 +67,29 @@ async function navBadge() {
   if (n) a.insertAdjacentHTML("beforeend", ` <span class="badge">${n}</span>`);
 }
 
+/**
+ * What the owner is in the middle of inside a [data-refresh] container: a credential typed into a transform's entry (a
+ * swap cleared it, and Approve then read as "left empty") and folds they opened (a running task's card re-renders on
+ * every event). Returns what puts them back. ponytail: a fold is keyed by its place under its nearest id; a row added
+ * above it in the same container shifts which one reopens.
+ */
+function held() {
+  const typed = [...document.querySelectorAll("[data-refresh] form [name]")]
+    .filter((e) => e.value)
+    .map((e) => [e.form.dataset.input, e.name, e.value]);
+  const fold = (d) => {
+    const box = d.parentElement.closest("[id]");
+    return `${box?.id} ${[...box.querySelectorAll("details")].indexOf(d)}`;
+  };
+  const open = new Set([...document.querySelectorAll("[data-refresh] details[open]")].map(fold));
+  return () => {
+    for (const d of document.querySelectorAll("[data-refresh] details")) if (open.has(fold(d))) d.open = true;
+    for (const [form, name, value] of typed)
+      for (const e of document.querySelectorAll(`[data-refresh] form [name="${name}"]`))
+        if (e.form.dataset.input === form) e.value = value;
+  };
+}
+
 /** Re-fetch this page and swap every [data-refresh] container (and the nav badge); textareas outside stay. */
 async function rerender() {
   const doc = new DOMParser().parseFromString(await (await fetch(location.href)).text(), "text/html");
@@ -77,10 +100,12 @@ async function rerender() {
     : null;
   const asks = () => document.querySelectorAll("#approvals .approval").length;
   const before = asks();
+  const restore = held();
   for (const el of document.querySelectorAll("[data-refresh]")) {
     const n = doc.getElementById(el.id);
     if (n) el.innerHTML = n.innerHTML;
   }
+  restore();
   if (asks() > before) toEnd(); // chat: the Worker waits on it, and it lands below the stream, off a phone's screen
   const nav = doc.querySelector("nav");
   if (nav) $("nav").innerHTML = nav.innerHTML;

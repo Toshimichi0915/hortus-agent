@@ -264,11 +264,15 @@ test("every route renders on an empty DB, missing RPCs become an error line", as
 test("Schedules shows the last run's summary; Credentials suggests the shipped transforms", async () => {
   const now = new Date().toISOString();
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('sum1', 'chat', 'watch', 'waiting', ?, ?)")
+    .prepare(
+      "INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('sum1', 'chat', 'watch', 'waiting', ?, ?)",
+    )
     .run(now, now);
   const id = Number(
     ctx.db
-      .prepare("INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sum1', '2030-01-01T00:00:00Z', 3600, 'w')")
+      .prepare(
+        "INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sum1', '2030-01-01T00:00:00Z', 3600, 'w')",
+      )
       .run().lastInsertRowid,
   );
   mkdirSync(paths.schedule(id), { recursive: true });

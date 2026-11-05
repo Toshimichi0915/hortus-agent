@@ -66,7 +66,7 @@ define("approval.list", {
       status: "pending",
       category: "credential:gl",
       task_id: "t1",
-      summary: { method: "POST", host: "h", path: "/n", rendered: "comment on g/p#1" },
+      summary: { method: "POST", host: "h", path: "/n", rendered: "comment on g/p#1", missing: [{ name: "notion" }] },
       payload: { untrusted: ["read a web page: evil.example"] },
       grantable: true,
     },
@@ -229,7 +229,9 @@ test("hortus chat says, once, that an approval waits; a merge that did not land 
   await sleep(100);
   assert.equal(err.match(/approval #9/g)?.length, 1);
   p.stdin.end();
-  assert.match((await run(["approvals"])).out, /#1\tapproved\tmerge[^\n]*\n\tnot landed: checkout is not clean/);
+  const list = (await run(["approvals"])).out;
+  assert.match(list, /#1\tapproved\tmerge[^\n]*\n\tnot landed: checkout is not clean/);
+  assert.match(list, /\tno value yet for notion: the Approvals page takes them/);
   calls.length = 0;
   const typo = await run(["close", "t1", "faild"]);
   assert.equal(typo.code, 64);

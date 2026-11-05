@@ -332,6 +332,13 @@ test("reconcile: a scope that throws keeps its cursor; the other scopes proceed"
   await H.gw.stop();
 });
 
+test("a dofs entry of no known type says so on Sources", async () => {
+  const H = harness(() => Config.parse({ dofs: { x: { type: "slak" } } }), {});
+  H.gw.start();
+  assert.equal(H.gw.list()[0]?.error, "no connector type slak");
+  await H.gw.stop();
+});
+
 test("scopes that fail (a forge started before its credential) are retried soon, not after the 10-min wait", async () => {
   const cfg = Config.parse({ dofs: { sc: { type: "stub" } } });
   let tries = 0;
