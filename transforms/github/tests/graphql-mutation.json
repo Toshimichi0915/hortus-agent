@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.github.com/graphql",
+    "headers": {
+      "authorization": "token hortus-secret-github",
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"query\":\"mutation{mergePullRequest(input:{}){clientMutationId}}\",\"variables\":{\"o\":\"o\"}}",
+    "stream": false
+  },
+  "template": {
+    "method": "POST",
+    "url": "https://api.github.com/graphql",
+    "headers": {
+      "authorization": "Bearer {sign:installation-token({\"name\":\"github\"})}",
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body": "{\"query\":\"mutation{mergePullRequest(input:{}){clientMutationId}}\",\"variables\":{\"o\":\"o\"}}",
+    "stream": false
+  }
+}

@@ -117,6 +117,10 @@ export class FakeGitHub {
   gitAuths: string[] = [];
   /** every REST request: method, path (without /api/v3), the URL as sent, token */
   calls: { method: string; path: string; url: string; token?: string }[] = [];
+  /** every GraphQL document as it arrived, with its variables */
+  graphqls: { query: string; variables: Record<string, unknown> }[] = [];
+  /** release assets by release id: name → bytes received */
+  assets = new Map<number, Map<string, number>>();
   root = tempDir("hortus-fake-github-");
   private ids = 100;
   private tick = 0;
@@ -533,7 +537,8 @@ export class FakeGitHub {
     if (git) return this.gitHttp(req, res, git[1] ?? "", git[2] ?? "", u.search.slice(1));
     for await (const c of req) chunks.push(c as Buffer);
     const raw = Buffer.concat(chunks).toString();
-    const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const upload = path.match(/^\/repos\/[^/]+\/[^/]+\/releases\/(\d+)\/assets$/);
+    const body = raw && !upload ? (JSON.parse(raw) as Record<string, unknown>) : {};
     const json = (status: number, v: unknown, extra: Record<string, string> = {}) => {
       res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...extra });
       res.end(JSON.stringify(v));
@@ -593,6 +598,7 @@ export class FakeGitHub {
       await this.repo(full);
       return ok(this.repoJson(this.get(full)), 201);
     }
+    if (path === "/graphql" && M === "POST") return ok(this.graphql(tok, body));
     const m = path.match(/^\/repos\/([^/]+\/[^/]+)(\/.*)?$/);
     const r = m && this.repos.get(m[1] ?? "");
     if (!m || !r || !this.visible(tok, r.full_name)) return json(404, { message: "Not Found" });
@@ -680,12 +686,194 @@ export class FakeGitHub {
       const n = Number(x[1]);
       return ok(r.reviewComments.filter((c) => c.n === n).map((c) => this.commentJson(r, c, true)));
     }
+    // releases: what `gh release upload` walks (by tag, then the upload host)
+    x = at(/^\/releases\/tags\/(.+)$/);
+    if (x)
+      return ok({
+        id: 1,
+        tag_name: x[1],
+        upload_url: `https://uploads.github.com/repos/${r.full_name}/releases/1/assets{?name,label}`,
+        assets: [],
+      });
+    x = at(/^\/releases\/(\d+)\/assets$/);
+    if (x && M === "POST") {
+      const id = Number(x[1]);
+      const a = this.assets.get(id) ?? new Map<string, number>();
+      a.set(
+        u.searchParams.get("name") ?? "",
+        chunks.reduce((n, c) => n + c.length, 0),
+      );
+      this.assets.set(id, a);
+      return ok({ id: this.ids++, name: u.searchParams.get("name") }, 201);
+    }
     x = at(/^\/commits\/([0-9a-f]+)\/check-suites$/);
     if (x) {
       const suites = r.suites.filter((s) => s.head_sha === x?.[1]);
       return ok({ total_count: suites.length, check_suites: suites });
     }
     return json(404, { message: "Not Found" });
+  }
+
+  /** The GraphQL `gh` sends, by the fields it names: no parser, a canned object per document. A repository outside the
+   * token's list reads as null, as on GitHub. */
+  private graphql(tok: Token, body: Record<string, unknown>) {
+    const query = String(body.query ?? "");
+    const v = (body.variables ?? {}) as Record<string, unknown>;
+    this.graphqls.push({ query, variables: v });
+    const input = (v.input ?? {}) as Record<string, unknown>;
+    const full = `${v.owner}/${v.name ?? v.repo}`;
+    const r = this.repos.get(full);
+    const thing = r?.things.get(Number(v.pr_number ?? v.number));
+    const repoNode = {
+      id: `R_${full}`,
+      databaseId: 1,
+      name: full.split("/")[1],
+      owner: { login: full.split("/")[0] },
+      sshUrl: `git@github.com:${full}.git`,
+      url: `https://github.com/${full}`,
+      hasIssuesEnabled: true,
+      hasWikiEnabled: false,
+      viewerPermission: "WRITE",
+      description: r?.description ?? "",
+      defaultBranchRef: { name: "main" },
+      parent: null,
+      mergeCommitAllowed: true,
+      rebaseMergeAllowed: true,
+      squashMergeAllowed: true,
+      isFork: false,
+      visibility: "PRIVATE",
+    };
+    const prNode = (repo: FakeRepo, t: Thing) => ({
+      id: `PR_${repo.full_name}#${t.number}`,
+      number: t.number,
+      title: t.title,
+      body: t.body,
+      state: t.pr?.merged ? "MERGED" : t.state.toUpperCase(),
+      url: `https://github.com/${repo.full_name}/pull/${t.number}`,
+      headRefName: t.pr?.head.ref,
+      headRefOid: t.pr?.head.sha,
+      baseRefName: t.pr?.base.ref,
+      isDraft: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "CLEAN",
+      author: { login: t.user.login },
+      headRepository: { id: `R_${repo.full_name}`, name: repo.full_name.split("/")[1] },
+      headRepositoryOwner: { login: repo.full_name.split("/")[0] },
+      isCrossRepository: false,
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+      comments: { nodes: [], totalCount: 0 },
+      reviews: { nodes: [], totalCount: 0 },
+      assignees: { nodes: [], totalCount: 0 },
+      labels: { nodes: [], totalCount: 0 },
+      projectCards: { nodes: [], totalCount: 0 },
+      projectItems: { nodes: [], totalCount: 0 },
+      reviewRequests: { nodes: [], totalCount: 0 },
+      statusCheckRollup: { nodes: [] },
+      latestReviews: { nodes: [] },
+      commits: { nodes: [], totalCount: 0 },
+      milestone: null,
+    });
+    const issueNode = (repo: FakeRepo, t: Thing) => ({
+      ...prNode(repo, t),
+      id: `I_${repo.full_name}#${t.number}`,
+      __typename: t.pr ? "PullRequest" : "Issue",
+      url: `https://github.com/${repo.full_name}/issues/${t.number}`,
+    });
+    const nodeOf = (id: unknown) => {
+      const [, name, n] = String(id).match(/^[A-Z]+_(.+)#(\d+)$/) ?? [];
+      const repo = this.repos.get(name ?? "");
+      return { repo, t: repo?.things.get(Number(n)) };
+    };
+    if (/\bmutation\b/.test(query)) {
+      if (query.includes("mergePullRequest")) {
+        const { t } = nodeOf(input.pullRequestId);
+        if (t?.pr) {
+          t.state = "closed";
+          t.pr.merged = true;
+        }
+        return { data: { mergePullRequest: { clientMutationId: "" } } };
+      }
+      if (query.includes("deleteRepository")) return { data: { deleteRepository: { clientMutationId: "" } } };
+      if (query.includes("addComment")) {
+        const { repo, t } = nodeOf(input.subjectId);
+        if (repo && t) {
+          const now = this.ts();
+          const c = { id: this.ids++, n: t.number, body: String(input.body), user: this.who("hortus[bot]") };
+          repo.comments.push({ ...c, author_association: "NONE", created_at: now, updated_at: now });
+          const url = `https://github.com/${repo.full_name}/issues/${t.number}#issuecomment-${c.id}`;
+          return { data: { addComment: { commentEdge: { node: { url } } } } };
+        }
+      }
+      if (query.includes("createPullRequest")) {
+        const repo = [...this.repos.values()].find((x) => `R_${x.full_name}` === input.repositoryId);
+        if (repo) {
+          const now = this.ts();
+          const t: Thing = {
+            number: repo.next++,
+            title: String(input.title),
+            body: String(input.body ?? ""),
+            state: "open",
+            labels: [],
+            assignees: [],
+            user: this.who("hortus[bot]"),
+            author_association: "NONE",
+            created_at: now,
+            updated_at: now,
+            pr: {
+              head: { ref: String(input.headRefName), sha: "0".repeat(40) },
+              base: { ref: String(input.baseRefName) },
+              merged: false,
+              diff: "",
+              shas: [],
+            },
+          };
+          repo.things.set(t.number, t);
+          return { data: { createPullRequest: { pullRequest: prNode(repo, t) } } };
+        }
+      }
+      return { errors: [{ message: "fake: unknown mutation" }] };
+    }
+    if (query.includes("__type("))
+      return {
+        data: query.includes("WorkflowRun")
+          ? { WorkflowRun: { fields: [] } }
+          : {
+              PullRequest: { fields: [{ name: "isInMergeQueue" }, { name: "isMergeQueueEnabled" }] },
+              StatusCheckRollupContextConnection: { fields: [] },
+            },
+      };
+    if (/\bviewer\s*\{/.test(query)) return { data: { viewer: { login: "hortus[bot]" } } };
+    if (!r || !this.visible(tok, r.full_name))
+      return { data: { repository: null }, errors: [{ type: "NOT_FOUND", message: `no repository ${full}` }] };
+    if (query.includes("query PullRequestProjectItems"))
+      return { data: { repository: { pullRequest: { projectItems: { totalCount: 0, nodes: [], pageInfo: {} } } } } };
+    if (query.includes("pullRequest(number") && !thing?.pr)
+      return { data: { repository: { pullRequest: null } }, errors: [{ type: "NOT_FOUND", message: "no PR" }] };
+    if (query.includes("pullRequest(number"))
+      return { data: { repository: { ...repoNode, pullRequest: prNode(r, thing as Thing) } } };
+    if (query.includes("issueOrPullRequest") || query.includes("issue(number"))
+      return {
+        data: {
+          repository: {
+            ...repoNode,
+            ...(thing ? { issueOrPullRequest: issueNode(r, thing), issue: issueNode(r, thing) } : {}),
+          },
+        },
+      };
+    if (query.includes("pullRequests(")) {
+      const nodes = [...r.things.values()].filter((t) => t.pr && t.state === "open").map((t) => prNode(r, t));
+      return {
+        data: {
+          repository: {
+            ...repoNode,
+            pullRequests: { nodes, totalCount: nodes.length, pageInfo: { hasNextPage: false } },
+          },
+        },
+      };
+    }
+    return { data: { repository: repoNode } };
   }
 
   /** Smart HTTP through `git http-backend` (CGI); Basic auth with a minted token, `contents: write` to push. */

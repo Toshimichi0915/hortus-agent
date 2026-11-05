@@ -129,6 +129,8 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
     return taintGranted(input.category, task)
       ? "pass"
       : check({ ...input, judged: { reason: `tainted: ${tainted.join("; ")}` } });
+  // the judge reads the preview: padding must not push what the request does past it (the owner sees the cut)
+  if (input.summary.cut) return check({ ...input, judged: { reason: "a body too long for the judge to read whole" } });
   const v = await judge(input.category, input.summary, task);
   if (v.verdict === "escalate") return check({ ...input, judged: v });
   const t = new Date().toISOString();

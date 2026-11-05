@@ -318,8 +318,9 @@ export interface Req {
   stream: boolean;
 }
 
-/** A Req whose values may hold handles: {secret:name}, {basic:user:name}, {sign:op(json-args)} */
-export type Template = Req;
+/** A Req whose values may hold handles: {secret:name}, {basic:user:name}, {sign:op(json-args)}. `read`: the transform
+ * vouches for a request a consequential pattern matches (one URL for reads and writes: GraphQL) */
+export type Template = Req & { read?: boolean };
 
 export interface Res {
   status: number;

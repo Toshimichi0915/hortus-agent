@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.github.com/graphql",
+    "headers": {},
+    "body": "{\"query\":\"mutation{}\"}",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "body": "{\"data\":{\"createPullRequest\":{\"pullRequest\":{\"url\":\"https://github.com/o/r/pull/3\"}}}}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": {},
+      "body": "{\"data\":{\"createPullRequest\":{\"pullRequest\":{\"url\":\"https://github.com/o/r/pull/3\"}}}}"
+    },
+    "refs": ["github:o/r:!3"]
+  }
+}
