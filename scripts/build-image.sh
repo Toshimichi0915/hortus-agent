@@ -42,7 +42,7 @@ step "user agent, CA, network, mounts, unit"
 arch-chroot "$root" useradd -m -u 1000 -U -s /bin/bash agent
 install -m 644 "$ca" "$root/etc/ca-certificates/trust-source/anchors/hortus.crt"
 arch-chroot "$root" update-ca-trust
-cp "$ca" "$root/etc/ssl/certs/hortus.pem"
+install -m 644 "$ca" "$root/etc/ssl/certs/hortus.pem" # hortusd writes ca.crt 0600; the guest's agent reads this
 echo "NODE_EXTRA_CA_CERTS=/etc/ssl/certs/hortus.pem" >>"$root/etc/environment"
 arch-chroot "$root" runuser -u agent -- sh -c \
   'mkdir -p ~/.pki/nssdb && certutil -d sql:$HOME/.pki/nssdb -N --empty-password &&

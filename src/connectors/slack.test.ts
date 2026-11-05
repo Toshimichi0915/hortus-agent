@@ -80,6 +80,9 @@ test("message: event fields, v6 frontmatter, wake, ack", async () => {
   assert.deepEqual(r.event.refs, [`slack:C1:${m.ts}`]);
   assert.match(r.event.summary, /message in C1 by alice: hello world/);
   assert.equal(r.wake, true);
+  // the Planner, the brief and the inbox see only the summary: an instruction past the old 80 characters was lost
+  fake.post("C1", { user: "U_ALICE", text: `${"x".repeat(200)} and do not touch main` });
+  assert.match((await mirrored()).event.summary, /do not touch main$/);
   assert.deepEqual(r.changes, [
     {
       op: "put",

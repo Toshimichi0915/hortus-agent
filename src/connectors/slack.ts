@@ -203,7 +203,9 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     const ch = chanOf(ev);
     const thread = ev.item ? ev.item.ts : msg ? (msg.thread_ts ?? msg.ts) : (ev.thread_ts ?? ev.ts);
     const threaded = ev.type === "message" || ev.type.startsWith("reaction_");
-    const text = (ev.text ?? ev.message?.text ?? ev.reaction ?? "").replace(/\s+/g, " ").slice(0, 80);
+    // the whole of what an owner says, within reason: the Planner, a brief and a Worker's inbox see only this, and a task
+    // gets no DOF by default (2000 × batch_max stays well inside a context; a longer paste is cut, the mirror keeps it)
+    const text = (ev.text ?? ev.message?.text ?? ev.reaction ?? "").replace(/\s+/g, " ").slice(0, 2000);
     return {
       dof: name,
       key: p.event_id,

@@ -133,8 +133,9 @@ export function createGateway(deps: GatewayDeps): Gateway {
           if (!inserted) continue;
           try {
             const m = await conn.mirror(event);
-            if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${event.summary}`);
-            log.info(`sync(${name}): ${event.summary} +${m.changes.length}`);
+            const head = event.summary.slice(0, 120);
+            if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${head}`);
+            log.info(`sync(${name}): ${head} +${m.changes.length}`);
             const wake = m.wake && !event.bot;
             release.run(wake ? 0 : -1, name, event.key); // reactions, deletes, joins: mirrored, not Planner input
             r.error = undefined;

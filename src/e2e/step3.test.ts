@@ -180,6 +180,8 @@ before(async () => {
     JSON.stringify({
       fake: { type: "token", value: "x", transform: "fake" },
       broken: { type: "token", value: "x", transform: "nope" },
+      "slack-app": { type: "token", value: "x", transform: "slack" },
+      hook: { type: "webhook-secret", value: "x" },
     }),
     { mode: 0o600 },
   );
@@ -212,6 +214,7 @@ test("chat: open → Worker → replies + SSE → waiting; resume keeps the cont
   assert.match(texts(c), /echo: hello zebracorn/);
   const task = JSON.parse(readFileSync(join(paths.ctl(id), "task.json"), "utf8"));
   assert.equal(task.cwd, join(project, "sub"));
+  assert.deepEqual(task.scope.credentials, ["fake", "broken"]); // no Socket Mode token, no webhook secret
   assert.equal(task.projects.foo.path, join(fake, "foolink"));
   const secrets = JSON.parse(readFileSync(join(paths.ctl(id), "home", ".hortus", "secrets.json"), "utf8"));
   assert.deepEqual(secrets, { fake: { type: "fake", apiKey: "hortus-secret-fake" } });

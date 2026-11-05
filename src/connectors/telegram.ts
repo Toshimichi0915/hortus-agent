@@ -228,7 +228,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     const kind = fresh ? "message" : m ? "edited" : r ? "reaction" : cm ? "member" : "update";
     const text = (m?.text ?? m?.caption ?? r?.new_reaction.map(rname).join(" ") ?? "")
       .replace(/\s+/g, " ")
-      .slice(0, 80);
+      .slice(0, 2000);
     return {
       dof: name,
       key: String(u.update_id),

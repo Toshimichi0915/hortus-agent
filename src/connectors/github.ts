@@ -98,7 +98,7 @@ interface Delivery {
   event: string;
 }
 
-const line = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").slice(0, 80);
+const line = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").slice(0, 2000);
 
 export async function create(deps: ConnectorDeps): Promise<Forge> {
   const { name, config: cfg } = deps;

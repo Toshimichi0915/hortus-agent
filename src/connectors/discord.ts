@@ -255,7 +255,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     }
     const text = String(d.content ?? (d.emoji as { name?: string } | undefined)?.name ?? d.name ?? "")
       .replace(/\s+/g, " ")
-      .slice(0, 80);
+      .slice(0, 2000);
     const who = user?.username ?? (uid && names.get(uid)) ?? uid ?? "?";
     return {
       dof: name,

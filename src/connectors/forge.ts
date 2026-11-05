@@ -134,4 +134,4 @@ export function iso(s: string | null | undefined): string {
 }
 
 /** One summary line of a text. */
-export const oneLine = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").slice(0, 80);
+export const oneLine = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").slice(0, 2000);

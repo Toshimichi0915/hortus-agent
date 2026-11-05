@@ -118,13 +118,19 @@ export function setStatus(id: string, status: TaskStatus, extra: Record<string, 
   bus.emit("tasks", { id, status });
 }
 
+/** The vault minus what only hortusd uses: offered Slack's `slack-app`, a live Worker replied with it, and Slack refuses it there. */
+const sessionCredentials = (): string[] =>
+  Object.entries(readVault())
+    .filter(([n, e]) => e.type !== "webhook-secret" && !(e.transform === "slack" && n.endsWith("-app")))
+    .map(([n]) => n);
+
 export function create(i: CreateInput): TaskRow {
   const c = ctx();
   const id = taskId();
   const t = now();
   const w = c.config.worker.credentials;
   const scope: TaskScope = {
-    credentials: i.scope?.credentials ?? (w.length ? w : Object.keys(readVault())),
+    credentials: i.scope?.credentials ?? (w.length ? w : sessionCredentials()),
     repos: i.scope?.repos ?? [],
     ...(i.project ? { project: i.project } : {}),
     ...(i.scope?.dofs ? { dofs: i.scope.dofs } : {}),
@@ -440,7 +446,7 @@ define("task.open", {
       title: text.replace(/\s+/g, " ").trim().slice(0, 80),
       // the owner's words arrive as [inbox 1]; repeating them as the brief would say everything twice
       brief: "A chat with the owner. Their messages arrive in your inbox.",
-      scope: { credentials: Object.keys(readVault()), repos: mirrored(c) },
+      scope: { credentials: sessionCredentials(), repos: mirrored(c) },
       ...(project ? { project } : {}),
       ...(cwd ? { cwd } : {}),
     });

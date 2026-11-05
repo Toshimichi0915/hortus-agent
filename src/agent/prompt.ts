@@ -77,7 +77,7 @@ New messages arrive as user messages starting with \`[inbox <n>] from=<origin> .
 ${
   chat
     ? "- `done(summary)`: ends this turn; the summary is your answer to the owner. The chat stays open: their next message continues it."
-    : `- \`done(summary)\`: the task is finished; the summary is the result the Planner and the owner read (what you found, even "nothing to do"), and the task may then be closed.
+    : `- \`done(summary)\`: the task is finished; the summary is the result the Planner and the owner read (what you found, even "nothing to do"), and the task may then be closed. A closed task's waiting requests are dropped: while one still waits for the owner, end your turn without \`done\`, and call it once the request went through.
 ${
   task.kind === "run"
     ? '- `done("")` when this run found nothing to report: it ends the run quietly.'
