@@ -318,6 +318,10 @@ test("a decide that throws inside a caller's transaction: its savepoint is gone,
 test("consequential: chat.delete asks per request and never reaches the judge, even one that would allow", async () => {
   mode = "allow";
   const before = llmSeen.length;
+  for (const path of ["/api/auth.revoke", "/api/apps.uninstall"]) {
+    const r = row(pendingId(await send({ path })));
+    assert.equal(JSON.parse(r.payload ?? "{}").consequential, true, path);
+  }
   const id = pendingId(await send({ path: "/api/chat.delete" }));
   const r = row(id);
   assert.deepEqual([r.kind, r.status], ["request", "pending"]);
@@ -809,4 +813,44 @@ test("an entry expiring after 72 h tells its task; closing a task expires its re
   await tasks.close("T3", "done");
   assert.deepEqual([row(open).status, row(open).reason], ["expired", "the task closed"]);
   assert.equal(row(merge).status, "pending", "a merge outlives its task");
+});
+
+test("a run is its parent's: a tainted parent's run is the owner's to decide, what a run reads taints the next, grants carry", async () => {
+  setConfig({});
+  mode = "allow";
+  const insert = ctx.db.prepare(
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, origins, parent) VALUES (?, ?, 't', 'b', 'running', ?, '"*"', ?)`,
+  );
+  const scope = JSON.stringify({ credentials: ["slack"], repos: [] });
+  insert.run("P22", "unattended", scope, null);
+  insert.run("R22", "run", scope, "P22");
+  links.register("127.0.0.22", "worker", "R22", "session");
+  const judged = llmSeen.length;
+  taint(ctx.db, "P22", "read a web page: evil.test");
+  const asked = await send({ from: "127.0.0.22" });
+  assert.equal(asked.status, 403, "a schedule is no way from a tainted task back to the judge");
+  assert.equal(llmSeen.length, judged);
+  assert.match(JSON.parse(row(pendingId(asked)).payload ?? "{}").judge ?? "", /tainted: read a web page: evil\.test/);
+
+  insert.run("P23", "unattended", scope, null);
+  insert.run("R23", "run", scope, "P23");
+  insert.run("S23", "run", scope, "P23");
+  taint(ctx.db, "R23", "read a web page: other.test");
+  assert.deepEqual(taintOf(ctx.db, "S23", ctx.config).slice(0, 1), ["read a web page: other.test"]);
+
+  // the parent's task grant (v6 › Runs: "the parent's grants cover it"), and not a sibling's
+  const g = gate.check({
+    caller: { role: "worker", task: "P22" },
+    kind: "grant",
+    category: "origin:site.test",
+    hash: "grant:origin:site.test",
+    consequential: false,
+    summary: {},
+  });
+  assert.notEqual(g, "pass");
+  gate.decide((g as { pending: number }).pending, "approve", "owner");
+  const run = { caller: { role: "worker" as const, task: "R22" }, kind: "grant" as const };
+  const same = { category: "origin:site.test", hash: "grant:origin:site.test", consequential: false, summary: {} };
+  assert.equal(gate.check({ ...run, ...same }), "pass");
+  assert.notEqual(gate.check({ ...run, caller: { role: "worker", task: "S23" }, ...same }), "pass");
 });

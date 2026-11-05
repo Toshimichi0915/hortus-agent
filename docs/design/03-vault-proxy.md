@@ -139,3 +139,5 @@ Step 2 end-to-end (dev-run): the fake Slack (through `dev.upstreams`) syncs with
 - A new credential type with a new signing operation is one entry in `ops.ts` and the manifest type union (v6: human-reviewed runtime changes).
 - A new location kind (e.g. `json:/token`) is one case in the location finder.
 - A new client kind (VM tap, login view) is one `links.register` call; the pipeline does not change.
+
+**Round 22.** `hortusd.internal` refuses a browser: a request with `Origin`, or a `Sec-Fetch-Site` other than `none`, is a `403` before any route (`internal.ts`). A page in a session's Chromium has the session's address, and Chromium sends a no-cors POST there with neither preflight nor Private Network block (every name resolves to the proxy, so page and target are in one address space). An `Upgrade` handshake the upstream does not upgrade is an ordinary response (`respond`: captures, taint, scrub), and a `101`'s `Set-Cookie` is captured (`takeCookies`).

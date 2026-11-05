@@ -208,9 +208,16 @@ function suite(): void {
       await new Promise((r) => server.once("listening", r));
       const js = `require("net").connect(${JSON.stringify(sock)}).on("error",(e)=>{console.error(e.code);process.exit(1)}).on("connect",()=>process.exit(0))`;
       const r = await shimRun(prof(), "", ["--", process.execPath, "-e", js]);
+      // a chat too: `tmux -S /tmp/tmux-1000/default run-shell` is a shell outside the domain, vault.json and all
+      const c = await shimRun(profile("chat", task, config), "", ["--", process.execPath, "-e", js]);
       server.close();
       assert.equal(r.code, 1, r.err);
       assert.match(r.err, /EACCES|EPERM/);
+      assert.equal(c.code, 1, c.err);
+      assert.match(c.err, /EACCES|EPERM/);
+      // what a chat itself listens on there still answers it, and it still writes there
+      const own = `const n=require("net"),p=${JSON.stringify(`${sock}-own`)};const s=n.createServer().listen(p,()=>n.connect(p).on("error",(e)=>{console.error(e.code);process.exit(1)}).on("connect",()=>{s.close();process.exit(0)}))`;
+      ok(await shimRun(profile("chat", task, config), "", ["--", process.execPath, "-e", own]));
     });
     test("nothing under the owner's home is writable, ~/.cache included (the owner runs what lies there)", async () => {
       const h = homedir();

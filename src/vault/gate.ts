@@ -61,10 +61,13 @@ export interface ApprovalRow {
   payload: string | null;
 }
 
+/** The parent of task `?2`: the parent's grants cover a run (v6 › Schedules › Runs). */
+const PARENT = "(SELECT parent FROM tasks WHERE id = ?2)";
+
 /** An approved grant on the category, durable or for this task. */
 export function granted(category: string, task: string | null): boolean {
   const q = ctx().db.prepare(
-    "SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ? AND status = 'approved' AND (task_id IS NULL OR task_id = ?)",
+    `SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ?1 AND status = 'approved' AND (task_id IS NULL OR task_id IN (?2, ${PARENT}))`,
   );
   return q.get(category, task) !== undefined;
 }
@@ -79,7 +82,7 @@ function taintGranted(category: string, task: string | null): boolean {
   return (
     ctx()
       .db.prepare(
-        "SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ? AND task_id = ? AND status = 'approved' AND json_extract(payload, '$.untrusted') IS NOT NULL",
+        `SELECT 1 FROM approvals WHERE kind = 'grant' AND category = ?1 AND task_id IN (?2, ${PARENT}) AND status = 'approved' AND json_extract(payload, '$.untrusted') IS NOT NULL`,
       )
       .get(category, task) !== undefined
   );
@@ -159,9 +162,10 @@ export function check(input: CheckInput): "pass" | { pending: number } {
     return "pass";
   const rows = db
     .prepare(
-      "SELECT id, status, task_id, payload FROM approvals WHERE kind = ? AND hash = ? AND task_id IS ? AND status IN ('pending', 'approved') ORDER BY id",
+      `SELECT id, status, task_id, payload FROM approvals WHERE kind = ?1 AND hash = ?3 AND status IN ('pending', 'approved')
+        AND (task_id IS ?2 OR (kind = 'grant' AND status = 'approved' AND task_id = ${PARENT})) ORDER BY id`,
     )
-    .all(kind, input.hash, task) as unknown as Pick<ApprovalRow, "id" | "status" | "task_id" | "payload">[];
+    .all(kind, task, input.hash) as unknown as Pick<ApprovalRow, "id" | "status" | "task_id" | "payload">[];
   const approved = rows.find((r) => r.status === "approved");
   if (approved) {
     // a grant stays approved; a request is single use (the conditional update wins one race)

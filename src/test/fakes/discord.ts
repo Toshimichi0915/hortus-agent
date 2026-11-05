@@ -490,6 +490,8 @@ export class FakeDiscord {
         return this.users.get(this.botUser);
       case "GET /users/@me/guilds":
         return [{ id: this.guild, name: "guild" }];
+      case "GET /guilds/:id/members/:id":
+        return this.members.has(seg[3] ?? "") ? { user: this.users.get(seg[3] ?? ""), roles: [] } : undefined;
       case "GET /guilds/:id/channels":
         return [...this.channels.values()]
           .filter((x) => x.guild_id === seg[1] && !isThread(x))

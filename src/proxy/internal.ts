@@ -69,6 +69,14 @@ async function rpc(client: Client, req: IncomingRequest, method: string): Promis
 export const routes: Route[] = [{ method: "POST", prefix: "/rpc/", run: rpc }];
 
 export async function internal(client: Client, req: IncomingRequest): Promise<Out> {
+  // a page in a session's Chromium shares its address, so its `fetch(…, { mode: "no-cors" })` is the Worker to everything
+  // below: a schedule's script with no model in the loop. A browser says so (`Origin` on every POST, over http too, where
+  // it sends no Sec-Fetch-*); nothing of ours sends either. The console's guard, in the same words (server.ts)
+  const site = req.headers["sec-fetch-site"];
+  if (req.headers.origin !== undefined || (site !== undefined && site !== "none")) {
+    req.body?.resume();
+    return refuse(403, "hortusd.internal is not for pages");
+  }
   for (const k of Object.keys(req.headers)) if (k.startsWith("x-hortus-")) delete req.headers[k];
   req.headers["x-hortus-role"] = client.role;
   if (client.task) req.headers["x-hortus-task"] = client.task;

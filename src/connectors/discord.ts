@@ -7,7 +7,7 @@ import type { Change, Connector, ConnectorDeps, ConnectorStatus, Event, Incoming
 import { backoff, sleep } from "./retry.ts";
 
 /** Tunables tests shorten. */
-export const timing = { helloMs: 10_000, fatalMs: 3_600_000 };
+export const timing = { helloMs: 10_000, fatalMs: 3_600_000, memberMs: 3_600_000 };
 const MAX_FILE = 20 * 1024 * 1024;
 // GUILDS | GUILD_MEMBERS | GUILD_MESSAGES | GUILD_MESSAGE_REACTIONS | DIRECT_MESSAGES | DIRECT_MESSAGE_REACTIONS |
 // MESSAGE_CONTENT
@@ -117,6 +117,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
   const st: ConnectorStatus = { connected: false };
   const chans = new Map<string, DChannel>();
   const names = new Map<string, string>();
+  const guilds = new Map<string, { yes: boolean; at: number }>();
   let gatewayUrl: string | undefined;
   let session: { id: string; seq: number; url: string } | undefined;
   let lastAck: number | undefined;
@@ -239,6 +240,26 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     return { op: "put", path: `${c.id}/channel.md`, frontmatter: fm, body: "" };
   }
 
+  /** A guild counts only with the owner in it: anyone can add a public bot to theirs, and be a member there. Cached an
+   * hour; a failed lookup is no, and asked again. */
+  async function ownerIn(guild: string | undefined): Promise<boolean> {
+    const c = guild ? guilds.get(guild) : undefined;
+    if (c && Date.now() - c.at < timing.memberMs) return c.yes;
+    if (!guild) return false;
+    let yes = true;
+    try {
+      await api("GET", `/guilds/${guild}/members/${cfg.owner}`);
+    } catch (e) {
+      yes = false;
+      if (!/HTTP 404/.test(String(e))) {
+        log.error(`${name}: owner's membership of ${guild} failed`, e);
+        return false;
+      }
+    }
+    guilds.set(guild, { yes, at: Date.now() });
+    return yes;
+  }
+
   async function toEvent(p: Payload): Promise<Event> {
     const d = p.d;
     const user = (d.author ?? d.user ?? (d.member as { user?: DUser } | undefined)?.user) as DUser | undefined;
@@ -260,7 +281,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       key: `${p.session_id}:${p.s}`,
       ts: iso((d.edited_timestamp ?? d.timestamp) as string | undefined),
       payload: p,
-      author: uid ? { user: uid, member: d.member !== undefined && d.member !== null } : null,
+      author: uid ? { user: uid, member: !!d.member && (await ownerIn(d.guild_id as string | undefined)) } : null,
       bot: !!user?.bot || uid === botUser,
       summary: `${p.t.toLowerCase()} in ${channel ?? d.guild_id ?? "?"} by ${who}: ${text}`,
       refs,

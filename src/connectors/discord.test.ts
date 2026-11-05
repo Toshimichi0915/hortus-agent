@@ -63,6 +63,19 @@ after(async () => {
   await fake.close();
 });
 
+test("a guild the owner is not in makes nobody a member: anyone can add a public bot to theirs", async () => {
+  fake.post("300", { user: "201", text: "in the owner's guild" });
+  assert.deepEqual((await mirrored()).event.author, { user: "201", member: true });
+  timing.memberMs = 0;
+  fake.members.delete("200");
+  fake.post("300", { user: "201", text: "the owner's gone" });
+  assert.deepEqual((await mirrored()).event.author, { user: "201", member: false });
+  fake.members.add("200");
+  fake.post("300", { user: "201", text: "and back" });
+  assert.deepEqual((await mirrored()).event.author, { user: "201", member: true });
+  timing.memberMs = 3_600_000;
+});
+
 test("start: @me and the owner's DM opened; IDENTIFY carries the real token (swapped), with the intents", async () => {
   const calls = fake.calls.map((c) => `${c.method} ${c.path}`);
   assert.ok(calls.includes("GET /users/@me"));

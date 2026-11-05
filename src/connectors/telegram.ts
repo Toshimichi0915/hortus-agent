@@ -232,7 +232,16 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       key: String(u.update_id),
       ts: iso(m?.edit_date ?? m?.date ?? r?.date ?? cm?.date ?? Date.now() / 1000),
       payload: u,
-      author: from ? { user: String(from.id), member: chat ? await isMember(chat.id, from.id) : false } : null,
+      // only a chat the owner is in counts: anyone can add a bot to their own group or DM it, and be its `creator` there
+      author: from
+        ? {
+            user: String(from.id),
+            member:
+              !!chat &&
+              (await isMember(chat.id, from.id)) &&
+              (String(from.id) === cfg.owner || (await isMember(chat.id, Number(cfg.owner)))),
+          }
+        : null,
       bot: !!from?.is_bot || from?.id === botUser,
       summary: `${kind} in ${chat?.id ?? "?"} by ${from ? uname(from) : "?"}: ${text}`,
       refs: chat && thread !== undefined ? [`${name}:${chat.id}:${thread}`] : [],

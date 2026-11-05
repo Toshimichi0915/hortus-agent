@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
-import type { Duplex } from "node:stream";
+import { type Duplex, Readable } from "node:stream";
 import * as wsLib from "ws";
 import { logger } from "../log.ts";
 import type { Template } from "../types.ts";
@@ -18,13 +18,17 @@ import * as transforms from "../vault/transforms.ts";
 import { effectiveHosts, hostIn, manifestEntry, PREFIX, read as readVault, scrubber, touch } from "../vault/vault.ts";
 import type { Client } from "./links.ts";
 import {
+  BUFFER_MS,
   bound,
   hashTemplate,
   type IncomingRequest,
   type Out,
   type Prepared,
   prepare,
+  readUpTo,
   refuse,
+  respond,
+  takeCookies,
   upstream,
 } from "./pipeline.ts";
 
@@ -243,9 +247,17 @@ export async function relay(client: Client, req: IncomingRequest, socket: Duplex
   up.req.on("upgrade", (res, upSock, upHead) => {
     // a quiet WebSocket is fine: the idle bound is for the handshake only
     upSock.setTimeout(0);
+    let scrub: ReturnType<typeof takeCookies>;
+    try {
+      scrub = takeCookies(prepared, res);
+    } catch (e) {
+      log.error("transform failed", e, { transform: "cookie", host: prepared.host });
+      upSock.destroy();
+      return writeOut(socket, refuse(502, "transform failed"));
+    }
     const lines = [`HTTP/1.1 101 ${res.statusMessage ?? "Switching Protocols"}`];
     for (let i = 0; i + 1 < res.rawHeaders.length; i += 2)
-      lines.push(`${res.rawHeaders[i]}: ${prepared.scrub.text(res.rawHeaders[i + 1] ?? "")}`);
+      lines.push(`${res.rawHeaders[i]}: ${scrub.text(res.rawHeaders[i + 1] ?? "")}`);
     socket.write(`${lines.join("\r\n")}\r\n\r\n`);
     const close = () => {
       socket.destroy();
@@ -261,24 +273,24 @@ export async function relay(client: Client, req: IncomingRequest, socket: Duplex
     upSock.pipe(socket);
     socket.pipe(upSock);
   });
+  // not upgraded: a request like any other (captured, tainted, scrubbed; `Upgrade: websocket` on a plain GET handed a
+  // rolling session's real Set-Cookie to the Worker), held to a bound and closed
   up.req.on("response", (res) => {
-    // not upgraded: answer like a normal request (bounded, scrubbed) and close
-    const chunks: Buffer[] = [];
-    let n = 0;
-    res.on("data", (c: Buffer) => {
-      if (res.destroyed) return;
-      n += c.length;
-      if (n <= MAX_REFUSAL) return void chunks.push(c);
-      // an upstream answering the handshake with an endless body must not grow hortusd's memory
-      res.destroy();
-      writeOut(socket, refuse(502, "upstream: upgrade answered with a body over 1 MB"));
-    });
-    res.on("end", () => {
-      const headers: Record<string, string | string[]> = {};
-      for (const [k, v] of Object.entries(prepared.scrub.headers(res.headers)))
-        if (v !== undefined && !["content-length", "transfer-encoding", "connection"].includes(k)) headers[k] = v;
-      writeOut(socket, { status: res.statusCode ?? 502, headers, body: prepared.scrub.bytes(Buffer.concat(chunks)) });
-    });
+    respond(prepared, res)
+      .then(async ({ status, headers: all, body }) => {
+        const r = body instanceof Readable ? await readUpTo(body, MAX_REFUSAL, BUFFER_MS) : { buf: Buffer.from(body) };
+        if ("rest" in r) {
+          // an upstream answering the handshake with an endless body must not grow hortusd's memory
+          r.rest.destroy();
+          res.destroy();
+          return writeOut(socket, refuse(502, "upstream: upgrade answered with a body over 1 MB"));
+        }
+        const headers = Object.fromEntries(
+          Object.entries(all).filter(([k]) => !["content-length", "transfer-encoding", "connection"].includes(k)),
+        );
+        writeOut(socket, { status, headers, body: r.buf });
+      })
+      .catch((e) => writeOut(socket, refuse(502, `upstream: ${(e as Error).message}`)));
   });
   up.req.on("error", (e) => writeOut(socket, refuse(502, `upstream: ${e.message}`)));
   up.req.end();

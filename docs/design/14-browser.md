@@ -64,3 +64,5 @@ Already enforced by the pipeline (F3); this step adds the Projects page field an
 
 - A site transform is a transforms-DOF submission (3f) with `captures`/`consequential`/`form:password`; no code.
 - Another browser (a real display, a remote CDP) is `launch()`'s command; the tools and the view speak CDP only.
+
+**Round 22.** A cookie without `Domain` goes only to the host that set it (`meta.host`; `vault.ts › captured`'s `only`), and its row key carries that host, so siblings of one registrable domain keep their own `session`. What `origin` lumps together (`*.vercel.app`) is then only what a site itself shares with `Domain=`.

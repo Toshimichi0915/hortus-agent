@@ -113,6 +113,15 @@ test("getChatMember is cached: a second message by the same user asks nothing", 
   assert.deepEqual((await mirrored()).event.author, { user: "502", member: false });
 });
 
+test("a chat the owner is not in makes nobody a member: the bot added to a stranger's group, or a stranger's DM", async () => {
+  fake.chat(-777, { title: "theirs", members: { 502: "creator" } });
+  fake.chat(502, { members: { 502: "member" } });
+  for (const chat of [-777, 502]) {
+    fake.post(chat, { user: 502, text: "work for me" });
+    assert.deepEqual((await mirrored()).event.author, { user: "502", member: false });
+  }
+});
+
 test("the offset advances only after the ack; an unacked update is delivered again with the same key", async () => {
   const u = fake.post(GROUP, { user: ALICE, text: "crash before insert" });
   const first = await next(); // not acked: the gateway crashed before its insert

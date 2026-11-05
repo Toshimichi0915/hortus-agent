@@ -20,6 +20,8 @@
   "scope": ["{host}/api/v4/projects/{project}", "{host}/api/v4/projects/{project}/**", "{host}/{project}.git/**"],
   "consequential": [
     "DELETE {host}/api/v4/**",
+    "GET {host}/api/v4/projects/*/**variables**",
+    "GET {host}/api/v4/projects/*/secure_files**",
     "POST {host}/**/git-receive-pack",
     "PUT {host}/api/v4/projects/*/merge_requests/*/merge",
     "PUT {host}/api/v4/projects/*/merge_requests/*/rebase",

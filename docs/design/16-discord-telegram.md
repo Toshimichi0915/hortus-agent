@@ -46,3 +46,5 @@ For a host whose matching manifest declares `ws:text`, after the handshake the r
 
 - `ws:text` is a location in the manifest and a relay mode in the proxy; a future `ws:binary`-with-token service is one more mode.
 - The three messengers share no code but the interface and the fake shape; a fourth (Matrix) is the same two files.
+
+**Round 22.** `author.member` needs the owner in the same chat or guild (`getChatMember` for the owner, `GET /guilds/{g}/members/{owner}`, cached an hour): anyone can add a public bot to their own, or DM it, and be `creator` there.
