@@ -66,6 +66,8 @@ before(async () => {
   writeFileSync(
     join(home, "hortusd.json"),
     JSON.stringify({
+      // the fake provider records its requests here, from inside the sandbox
+      policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC" },
       worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
       proxy: { https: await freePort(), http: await freePort(), dns: 0 },

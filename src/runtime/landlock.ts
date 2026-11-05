@@ -122,6 +122,8 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
     // there, `/tmp/x → ~/.bashrc`, would hand the next session rw on the target); its target's own path is walked from
     // `/` anyway. A read-only one only when the whole target is clear of the deny set.
     if (mode !== "ro") continue;
+    // /dev/stdout and the like are the shim's own fds there, a pipe no rule can name (add_rule fails, nothing runs)
+    if (dir === "/dev") continue;
     const real = resolve(p);
     if (existsSync(real) && !deny.some((d) => under(real, d) || under(d, real)) && !p.includes("\n"))
       out.push(`${mode} ${p}`);

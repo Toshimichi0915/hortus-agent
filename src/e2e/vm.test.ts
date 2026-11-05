@@ -289,6 +289,7 @@ before(async () => {
   port = await freePort();
   const config: Record<string, unknown> = {
     owner: { tz: "UTC", notify: "slack" },
+    policy: { "*": "human", cache: [fake] }, // the fake provider records its requests here, on a host Planner too
     worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
     // boot to the guest's hortus-agent takes a few seconds; 30 s keeps the hung-kernel test short
     vm: { cpus: 1, mem_mb: 1024, max_concurrent: 1, boot_timeout_s: 30 },

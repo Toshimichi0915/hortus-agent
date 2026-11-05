@@ -207,6 +207,8 @@ before(async () => {
   writeFileSync(
     join(home, "hortusd.json"),
     JSON.stringify({
+      // the fake provider records its requests here, from inside the sandbox
+      policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC" },
       console: { listen: `127.0.0.1:${rport}`, host: HOST },
       dev: { upstreams: { "slack.com": slack.url } },

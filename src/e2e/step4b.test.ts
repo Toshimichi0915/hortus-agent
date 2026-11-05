@@ -315,6 +315,8 @@ before(async () => {
   writeFileSync(
     join(home, "hortusd.json"),
     JSON.stringify({
+      // the fake provider records its requests here, from inside the sandbox
+      policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC", notify: "discord" },
       dofs: { discord: { type: "discord", owner: "200" }, tg: { type: "telegram", owner: "500" } },
       dev: {

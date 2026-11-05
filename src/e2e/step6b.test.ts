@@ -332,6 +332,8 @@ before(async () => {
   writeFileSync(
     join(home, "hortusd.json"),
     JSON.stringify({
+      // the fake provider records its requests here, from inside the sandbox
+      policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC" },
       dofs: {
         gle: { type: "gitlab", host: "gitlab.example.com", owner: "toshi", repos: ["g/sub/p"] },

@@ -190,7 +190,7 @@ before(async () => {
       },
       planner: { provider: "judge", model: "m" },
       worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
-      policy: { "credential:day": "auto", "*": "human" },
+      policy: { "credential:day": "auto", "*": "human", cache: [fake] },
       proxy: { https: await freePort(), http: proxyHttp, dns: 0 },
     }),
   );
