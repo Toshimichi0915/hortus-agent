@@ -47,12 +47,31 @@ function auth(v, p, method) {
   return n ? `Basic ${sign("installation-token", { name: n[1], basic: dec.slice(0, i) })}` : v;
 }
 
+const GRAPHQL = /^\/(api\/)?graphql$/;
+
+/** The one thing every GraphQL write holds: `mutation` is a keyword, spelled literally in the document (which has no
+ * escapes outside strings) and reachable in JSON only as itself or `\\u` escapes. So the word nowhere in the body, with
+ * those decoded, means a read, whichever JSON or GraphQL parser runs it; a variable or a search that says "mutation"
+ * asks the owner, the safe side. A query string, or an encoded or non-JSON body, could carry a document this cannot see. */
+function reads(req) {
+  if (req.method !== "POST" || req.url.includes("?") || !GRAPHQL.test(path(req.url)) || req.body === null) return false;
+  const h = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
+  if (h["content-encoding"] || !/^application\/json/i.test(h["content-type"] ?? "")) return false;
+  const text = req.body.replace(/\\u([0-9a-f]{4})/gi, (_, x) => String.fromCharCode(Number.parseInt(x, 16)));
+  if (/mutation/i.test(text)) return false;
+  try {
+    return typeof JSON.parse(req.body).query === "string";
+  } catch {
+    return false;
+  }
+}
+
 export function request(req) {
   const p = path(req.url);
   const headers = {};
   for (const [k, v] of Object.entries(req.headers))
     headers[k] = k.toLowerCase() === "authorization" ? auth(v, p, req.method) : v;
-  return { ...req, headers };
+  return reads(req) ? { ...req, headers, read: true } : { ...req, headers };
 }
 
 // Created issues, PRs, comments and reviews → refs `github:<o/r>:#n|!n` (from `html_url`); a created repository →
@@ -69,9 +88,11 @@ export function response(res, req) {
   if (!b || typeof b !== "object") return out;
   const p = path(req.url);
   if (CREATE.test(p) && typeof b.full_name === "string") out.repos = [`github:${b.full_name}`];
-  const m =
-    typeof b.html_url === "string" && b.html_url.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/(issues|pull)\/(\d+)/);
-  if (m && p.startsWith("/repos/")) out.refs = [`github:${m[1]}:${m[2] === "pull" ? "!" : "#"}${m[3]}`];
+  // `gh pr create` and `gh issue create` are mutations
+  const gql = GRAPHQL.test(p);
+  const made = gql ? (b.data?.createPullRequest?.pullRequest?.url ?? b.data?.createIssue?.issue?.url) : b.html_url;
+  const m = typeof made === "string" && made.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/(issues|pull)\/(\d+)/);
+  if (m && (gql || p.startsWith("/repos/"))) out.refs = [`github:${m[1]}:${m[2] === "pull" ? "!" : "#"}${m[3]}`];
   return out;
 }
 
@@ -115,5 +136,17 @@ export function render(t) {
     return sha ? `${what} at ${String(sha).slice(0, 7)}` : `${what}: NO sha, lands whatever the head is by then`;
   }
   if (t.method === "DELETE") return `DELETE ${p}`;
+  // a mutation's document from its keyword on, and its variables: what merges or deletes, even past the body's preview
+  if (GRAPHQL.test(p) && t.body) {
+    try {
+      const b = JSON.parse(t.body);
+      if (typeof b.query !== "string") return undefined;
+      const q = b.query.replace(/\s+/g, " ");
+      const line = `${q.slice(Math.max(q.search(/mutation/i), 0))} ${JSON.stringify(b.variables ?? {})}`;
+      return `GraphQL: ${line.slice(0, 4096)}${line.length > 4096 ? "…" : ""}`;
+    } catch {
+      return undefined;
+    }
+  }
   return undefined;
 }

@@ -29,7 +29,7 @@ interface Manifest {
   name: string;
   credentials: Record<string, { type: Credential["type"]; hosts: string[]; locations: Location[] }>;
   scope?: string[];            // "{api}/repos/{project}/**"
-  consequential?: string[];    // "METHOD host/path" with * and **
+  consequential?: string[];    // "METHOD host/path" with * and ** (`*` as the method: any); a transform's `read: true` on a template lifts them (GraphQL)
   captures?: unknown[];        // 3h
 }
 type Location = `header:${string}` | "basic:password" | `form:${string}` | `query:${string}` | `path:${string}` | "ws:text";

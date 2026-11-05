@@ -723,13 +723,16 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // writes and nothing to show the owner (it asked twice more per push, each entry blank)
   const probe =
     git === "receive" && RECEIVE_PACK.test(ct) && template.body === "0000" && req.headers["content-length"] === "4";
+  // a vouched read (GraphQL) still needs repos to narrow its token to: `repositories: []` is not known to mean none
+  const read = template.read === true && projects.length > 0;
   const consequential =
     !probe &&
     (blind ||
       // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
-      [...manifests].some((m) =>
-        (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
-      ) ||
+      (!read &&
+        [...manifests].some((m) =>
+          (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
+        )) ||
       (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase())));
   if (found.length && client.task) {
     for (const m of manifests) {
@@ -796,17 +799,32 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   };
 }
 
+// `message`: all gh prints of an error body (a bare `403 Forbidden` without it)
 const pendingOut = (id: number, category: string): Out =>
-  json(403, { approval: id, category, url: gate.approvalUrl(id) });
+  json(403, {
+    approval: id,
+    category,
+    url: gate.approvalUrl(id),
+    message: `hortus: approval ${id} is waiting for the owner`,
+  });
+
+/** What an approval shows of a body. Past it the tail is hidden from the judge, so the owner decides (gate.ts). */
+const PREVIEW = 8192;
 
 function summarize(t: Template, host: string, path: string, scrub: Scrubber, tf?: string): gate.Summary {
+  const body = t.body === null ? null : scrub.text(t.body);
   const s: gate.Summary = {
     method: t.method,
     host,
-    path,
+    // the query too: `sendMessage?chat_id=…&text=…` says all it does there
+    path: path + (t.url.match(URL_PARTS)?.[3] ?? ""),
     headers: scrub.headers(t.headers),
-    bodyPreview: t.body === null ? (t.stream ? "(streamed)" : null) : scrub.text(t.body).slice(0, 2048),
+    bodyPreview: body === null ? (t.stream ? "(streamed)" : null) : body.slice(0, PREVIEW),
   };
+  if (body && body.length > PREVIEW) {
+    s.bodyPreview += `\n… ${body.length - PREVIEW} more chars not shown`;
+    s.cut = true;
+  }
   if (tf) {
     try {
       const r = transforms.render(tf, t);

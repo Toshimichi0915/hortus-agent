@@ -22,6 +22,7 @@ if policy auto:
     judge call (v7 › rounds 5 and 6):
       a task grant on the category approved on an entry that showed the taint (payload.untrusted)? → pass (round 7)
       else → pending request entry; "Approve, and allow <name> for this task" also records that task grant
+  yes, and the body is past the 8 KB preview (`summary.cut`)? → no judge call, pending request entry (round 14: padding must not hide what the request does)
   yes → judge(summary) → allow: pass (a `request` row with status "allowed", decided_by "judge", prompt_hash) | escalate: pending request entry (403)
 ```
 

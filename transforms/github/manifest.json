@@ -10,6 +10,8 @@
     "github-webhook": { "type": "webhook-secret", "hosts": [], "locations": [] }
   },
   "scope": [
+    "{api}/graphql",
+    "{host}/api/graphql",
     "{api}/repos/{project}",
     "{api}/repos/{project}/**",
     "{host}/{project}.git/**",
@@ -36,6 +38,9 @@
     "POST {api}/repos/*/*/transfer",
     "PATCH {api}/repos/*/*",
     "POST {api}/repos/*/*/branches/**/rename",
-    "POST {api}/repos/*/*/releases"
+    "POST {api}/repos/*/*/releases",
+    "PATCH {api}/repos/*/*/releases/*",
+    "* {api}/graphql",
+    "* {host}/api/graphql"
   ]
 }

@@ -176,6 +176,7 @@ const ReqShape = z.object({
   headers: Headers,
   body: z.string().nullable(),
   stream: z.boolean(),
+  read: z.boolean().optional(),
 });
 const ResShape = z.object({ status: z.number().int(), headers: Headers, body: z.string().nullable() });
 const ResultShape = z.object({

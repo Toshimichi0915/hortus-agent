@@ -198,8 +198,11 @@ const H: Harness[] = [
       ["POST", "/repos/o/r/security-advisories/GHSA-1/forks"],
       ["PUT", "/repos/o/r/import"],
       ["PATCH", "/repos/o/r/import"],
+      // round 14: anything on GraphQL but a read the transform vouches for (src/proxy/gh.test.ts); publishing a draft
+      ["POST", "/graphql"],
+      ["PATCH", "/repos/o/r/releases/1"],
     ],
-    reachless: ["/graphql", "/repositories/1/pulls/1/merge", "/user/codespaces/c/publish"],
+    reachless: ["/repositories/1/pulls/1/merge", "/user/codespaces/c/publish"],
     closed: "closed",
     token: () => gh.mints.find((m) => m.repositories?.join() === "r")?.token,
     openIssue: (user, title, body, drop) => gh.openIssue("o/r", { user, title, body: body ?? "" }, { drop: !!drop }),
