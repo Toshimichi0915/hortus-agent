@@ -155,16 +155,19 @@ export function prTurns(db: DatabaseSync, id: string): { ref: string; end?: PrEn
 
 export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): string {
   const refStmt = c.db.prepare(
-    "SELECT r.task_id, t.status, t.project FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
+    "SELECT r.task_id, t.status, t.project, t.kind FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
   );
   const ev = events.map((e) => {
     const m = new Set<string>();
     for (const ref of refsOf(e))
-      for (const r of refStmt.all(ref) as { task_id: string; status: string; project: string | null }[])
+      for (const r of refStmt.all(ref) as { task_id: string; status: string; project: string | null; kind: string }[])
         m.add(
           tasks.isClosed(r.status)
             ? `${r.task_id} (${r.status}${r.project ? `, project ${r.project}` : ""})`
-            : r.task_id,
+            : // open, but no card below says so: the Planner took it for closed and made a stranger of the reply, 2 of 2
+              r.kind === "chat"
+              ? `${r.task_id} (open chat)`
+              : r.task_id,
         );
     return renderEvent(c.config, e, [...m]);
   });
