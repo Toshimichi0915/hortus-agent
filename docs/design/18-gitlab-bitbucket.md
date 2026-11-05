@@ -4,6 +4,8 @@ Spec: v6 › Connectors › Forges (GitLab and Bitbucket columns). Depends on st
 
 ## Implementation
 
+LFS: the `gitlab` transform drops `authenticated` and the `Authorization` of each action from `…/info/lfs/objects/batch`, so git-lfs sends its own credential (the placeholder) to `gitlab-lfs/objects`; v7 › Review round 14.
+
 ### `src/connectors/gitlab.ts`
 
 - `api = https://<host ?? gitlab.com>/api/v4`; credential `gitlab` (`token`, `header:PRIVATE-TOKEN`); webhook secret `gitlab-webhook` verified with `equals` (`X-Gitlab-Token`, constant-time); key `X-Gitlab-Event-UUID`.

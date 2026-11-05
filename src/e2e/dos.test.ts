@@ -49,13 +49,16 @@ before(async () => {
   const { ports } = await new Promise<{ ports: { http: number; tls: number } }>((r) => child.once("message", r));
   const up = `http://127.0.0.1:${ports.http}`;
   const hosts = ["slow.test", "never.test", "endless.test", "huge.test", "headers.test", "bomb.test", "ws.test"];
+  // a transform on the bodies' hosts: only those are buffered (a host with none streams from the first byte)
   const fixtures = join(paths.home(), "fixtures");
   mkdirSync(join(fixtures, "dosws"), { recursive: true });
   writeFileSync(
     join(fixtures, "dosws", "manifest.json"),
     JSON.stringify({
       name: "dosws",
-      credentials: { dosws: { type: "token", hosts: ["ws.test"], locations: ["ws:text"] } },
+      credentials: {
+        dosws: { type: "token", hosts: ["ws.test", "endless.test", "huge.test", "bomb.test"], locations: ["ws:text"] },
+      },
     }),
   );
   writeFileSync(join(fixtures, "dosws", "transform.js"), "export function request(req) { return req; }");

@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://gitlab.com/g/p.git/info/lfs/objects/batch",
+    "headers": {
+      "authorization": "Basic b2F1dGgyOmhvcnR1cy1zZWNyZXQtZ2l0bGFi",
+      "content-type": "application/vnd.git-lfs+json"
+    },
+    "body": "{\"operation\":\"upload\",\"objects\":[{\"oid\":\"aa\",\"size\":1}]}",
+    "stream": false
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/vnd.git-lfs+json"
+    },
+    "body": "{\"objects\":[{\"oid\":\"aa\",\"size\":1,\"authenticated\":true,\"actions\":{\"upload\":{\"href\":\"https://gitlab.com/g/p.git/gitlab-lfs/objects/aa/1\",\"header\":{\"Authorization\":\"Basic b3duZXI6bGZzLXRva2Vu\",\"Content-Type\":\"application/octet-stream\"}}}}]}"
+  },
+  "expected": {
+    "res": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/vnd.git-lfs+json"
+      },
+      "body": "{\"objects\":[{\"oid\":\"aa\",\"size\":1,\"actions\":{\"upload\":{\"href\":\"https://gitlab.com/g/p.git/gitlab-lfs/objects/aa/1\",\"header\":{\"Content-Type\":\"application/octet-stream\"}}}}]}"
+    }
+  }
+}

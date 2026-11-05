@@ -1313,7 +1313,7 @@ test("gitlab host: gitlab.example.com expands hosts and scope patterns; the conn
 test("the shipped gitlab and bitbucket transforms pass their tests and render pushes, MRs/PRs and DELETEs", () => {
   for (const name of ["gitlab", "bitbucket"]) {
     const r = transforms.runTests(name);
-    assert.equal(r.length, 4, name);
+    assert.ok(r.length >= 4, name);
     for (const x of r) assert.ok(x.ok, `${name}/${x.file}: ${x.diff}`);
   }
   const cmd = `${"0".repeat(40)} 3f2a1c9${"0".repeat(33)} refs/heads/hortus/t1\0 report-status`;

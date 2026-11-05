@@ -68,10 +68,10 @@ export function denySet(config: Pick<Config, "policy">): string[] {
       (p) => join(h, p),
     ),
     // tools' credentials in plain files (the session's gh and npm get their own config, host.ts › sandboxEnv)
-    ...[".npmrc", ".config/gh", ".git-credentials", ".config/git/credentials", ".pypirc", ".cargo/credentials"].map(
+    ...[".npmrc", ".config/gh", ".config/glab-cli", ".git-credentials", ".config/git/credentials", ".pypirc"].map(
       (p) => join(h, p),
     ),
-    ...[".cargo/credentials.toml", ".gradle/gradle.properties"].map((p) => join(h, p)),
+    ...[".cargo/credentials", ".cargo/credentials.toml", ".gradle/gradle.properties"].map((p) => join(h, p)),
     ...[".local/share/keyrings", ".mozilla", ".config/chromium", ".config/google-chrome", ".config/BraveSoftware"].map(
       (p) => join(h, p),
     ),
