@@ -681,7 +681,8 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     if (name.startsWith("c-")) {
       const row = captured(name);
       if (!row) return refuse(403, `unknown credential ${name}`, { host });
-      if (host !== row.origin && !host.endsWith(`.${row.origin}`))
+      // `origin` is the registrable domain as this code reckons it, so tenants of a shared suffix have one (v7 › Browser)
+      if (row.only ? host !== row.only : host !== row.origin && !host.endsWith(`.${row.origin}`))
         return refuse(403, `destination: ${name} does not go to ${host}`, { host });
       // a cookie rides in Cookie, a bearer token in Authorization, or where the site manifest says
       const own = row.kind === "bearer" ? "header:authorization" : "header:cookie";
@@ -1171,7 +1172,9 @@ function store(p: Prepared, list: Capture[]): void {
       log.error("capture for another origin dropped", undefined, { host: p.host, origin: c.origin });
       continue;
     }
-    const key = String(c.meta?.cookieName ?? c.meta?.key ?? c.name);
+    // a host-only cookie is its host's, as in a browser: a sibling's `session` must not replace it under one placeholder
+    const hostOnly = c.kind === "cookie" && c.meta?.domain === undefined;
+    const key = `${String(c.meta?.cookieName ?? c.meta?.key ?? c.name)}${hostOnly ? `@${p.host}` : ""}`;
     const meta = JSON.stringify({ ...c.meta, key, host: p.host, task, via: p.client.role });
     const old = db
       .prepare(

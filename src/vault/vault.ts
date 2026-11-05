@@ -79,12 +79,17 @@ export interface CapturedRow {
   value: string;
   origin: string;
   kind: string | null;
+  /** a cookie set without `Domain`: the one host it goes to (RFC 6265), whatever `origin` says */
+  only: string | null;
 }
 
 export function captured(name: string): CapturedRow | undefined {
-  return ctx().db.prepare("SELECT id, name, value, origin, kind FROM captured WHERE name = ?").get(name) as
-    | CapturedRow
-    | undefined;
+  return ctx()
+    .db.prepare(
+      `SELECT id, name, value, origin, kind, CASE WHEN kind = 'cookie' AND json_extract(meta, '$.domain') IS NULL
+        THEN json_extract(meta, '$.host') END AS only FROM captured WHERE name = ?`,
+    )
+    .get(name) as CapturedRow | undefined;
 }
 
 /**

@@ -45,7 +45,7 @@ const fixtures = tempDir("hortus-browser-tf-");
 
 before(async () => {
   site = await fakeSite();
-  const hosts = ["fake.test", "app.fake.test", "other.test", "site.test", "idle.test"];
+  const hosts = ["fake.test", "app.fake.test", "tenant.fake.test", "other.test", "site.test", "idle.test"];
   ctx = {
     config: Config.parse({
       dev: { upstreams: Object.fromEntries(hosts.map((h) => [h, site.url])) },
@@ -255,6 +255,27 @@ test("an Upgrade header is no way round the cookie layer: a session's Set-Cookie
   assert.match(String(set.headers["set-cookie"]), new RegExp(`session=hortus-secret-${row.name}`));
   assert.doesNotMatch(JSON.stringify(set), /sess-app/);
   assert.ok(ctx.db.prepare("SELECT 1 FROM tasks WHERE id = 'T' AND taint IS NOT NULL").get(), "tainted");
+});
+
+test("a host-only cookie goes to the host that set it: a sibling on a shared suffix (x.vercel.app) is not the origin", async () => {
+  await raw({ host: "tenant.fake.test", path: "/set" });
+  await raw({ host: "app.fake.test", path: "/set" });
+  const rows = ctx.db
+    .prepare("SELECT name, value, json_extract(meta, '$.host') AS host FROM captured WHERE value LIKE 'sess-%'")
+    .all() as { name: string; value: string; host: string }[];
+  const tenant = rows.find((r) => r.host === "tenant.fake.test");
+  const app = rows.find((r) => r.host === "app.fake.test");
+  assert.equal(tenant?.value, "sess-tenant.fake.test");
+  assert.equal(app?.value, "sess-app.fake.test", "one site's cookie does not replace its sibling's");
+  const sent = (host: string, row: typeof tenant) =>
+    raw({ host, path: "/echo", headers: { cookie: `session=hortus-secret-${row?.name}` } });
+  const own = await sent("tenant.fake.test", tenant);
+  assert.equal(own.status, 200, own.body);
+  assert.equal(site.seen.at(-1)?.cookie, "session=sess-tenant.fake.test");
+  const sibling = await sent("app.fake.test", tenant);
+  assert.equal(sibling.status, 403);
+  assert.match(sibling.body, /destination/);
+  ctx.db.exec("DELETE FROM captured WHERE value LIKE 'sess-%'"); // the next test takes fake.test's newest `session`
 });
 
 test("captured requests: GET passes, POST asks per request; another task needs a grant first", {
