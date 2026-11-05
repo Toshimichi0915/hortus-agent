@@ -215,6 +215,10 @@ export async function prepareClone(
     await git(["clone", "-q", "--no-local", ...ref, paths.project(name), dir]);
     await git(["-C", dir, "checkout", "-q", "-b", `hortus/${task.id}`]);
     await git(["-C", dir, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);
+  } else if (existsSync(join(dir, ".git/objects/info/alternates"))) {
+    // the checkout may have moved (project.set): every git command in the clone died on the old path
+    // ponytail: a move to where --reference would not be used (a linked worktree) leaves the clone broken; close the task
+    writeFileSync(join(dir, ".git/objects/info/alternates"), `${resolve(p.path)}/.git/objects\n`);
   }
   if (loopback) {
     // the dispatcher's loopbackLink opened it already (listen returns the existing ports)
@@ -349,6 +353,21 @@ define("project.delete", {
     await writeConfig((c) => {
       delete c.projects[name];
     });
+    // an open merge names a branch in the origin moved aside below: approved, it died on `not our ref`, and its `approved`
+    // status answered the task's next request after a re-add
+    const open = ctx()
+      .db.prepare(
+        `UPDATE approvals SET status = 'replaced', reason = 'the project was removed' WHERE category = 'merge'
+          AND status IN ('pending', 'approved') AND json_extract(summary, '$.project') = ? RETURNING task_id`,
+      )
+      .all(name) as { task_id: string | null }[];
+    if (open.length) bus.emit("approvals", {});
+    for (const { task_id } of open)
+      try {
+        if (task_id) deps.inboxWrite(task_id, { from: "merge", trusted: true, text: `project ${name} was removed` });
+      } catch (e) {
+        log.error("inbox write failed", e, { task: task_id });
+      }
     // the origin and shadow stay on disk, out of the way
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     for (const dir of [paths.project(name), paths.shadow(name)])
