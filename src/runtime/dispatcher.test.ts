@@ -19,7 +19,7 @@ import { plannerModule, renderBatch } from "../planner/planner.ts";
 import "../planner/tools.ts";
 import { proxyModule } from "../proxy/index.ts";
 import { call } from "../rpc.ts";
-import { dispatcherModule, readOutbox, runPlanner } from "./dispatcher.ts";
+import { dispatcherModule, HOST_GRACE, readOutbox, runPlanner } from "./dispatcher.ts";
 import { shim } from "./landlock.ts";
 import * as tasks from "./tasks.ts";
 
@@ -176,6 +176,38 @@ test("a stop while a host session is starting ends it: a shim not yet in its cgr
   assert.notEqual(spawnSync("pgrep", ["-f", tag]).status, 0, "no session left");
 });
 
+test("a host session past its hours is killed: a tool that never returns reaches no check of the agent's own", {
+  skip: !hasScope && "no systemd --user scope",
+}, async () => {
+  if (process.env.INNER !== "1")
+    return assert.match(inScope(fileURLToPath(import.meta.url), "a host session past its hours"), /# pass 1/);
+  shim.path = join(paths.home(), "fake-shim");
+  writeFileSync(shim.path, `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\nexec sleep 600\n`, { mode: 0o755 });
+  writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
+  const ctx: Ctx = {
+    config: Config.parse({ worker: { provider: "fake", model: "m" }, proxy: { https: 0, http: 0, dns: 0 } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  HOST_GRACE.ms = 0;
+  await mirrorModule.start(ctx);
+  await proxyModule.start(ctx);
+  await dispatcherModule.start(ctx);
+  const { id } = tasks.create({
+    kind: "chat",
+    title: "t",
+    brief: "b",
+    scope: { credentials: [] },
+    budget: { tokens: 1000, hours: 0.0002 },
+  });
+  await until(() => tasks.get(id).status === "waiting", 10_000);
+  assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
+  await dispatcherModule.stop();
+  await proxyModule.stop();
+});
+
 test("VM failures: a boot timeout, the hours deadline, a Worker dead in the guest; a clean exit is none", {
   skip: !hasScope && "no systemd --user scope",
 }, async () => {
@@ -216,7 +248,7 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
 
     told.length = 0;
     id = await run(`${OUT}; exec sleep 600`, { tokens: 1000, hours: 0.0005 });
-    assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the VM was stopped/);
+    assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
     assert.deepEqual(told, [`task ${id} is over budget`]);
     assert.deepEqual(
       outbox(id).map((m) => [m.seq, m.type]),

@@ -23,7 +23,7 @@ import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
 import * as tasks from "./tasks.ts";
-import { missingImage, startVm } from "./vm.ts";
+import { deadline, missingImage, startVm } from "./vm.ts";
 
 /** Per kind: the Landlock profile and whether every stdout line is a chat reply. `planner` runs through runPlanner. */
 const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
@@ -254,9 +254,17 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       });
       entry.child = child;
       if (stopping || tasks.closing.has(row.id)) await child.kill(); // while it started: no child to kill yet
+      // the agent checks its `hours` after a tool result, and a bash `timeout` is the model's to set: a foreground server,
+      // or a loop of model calls no budget counts, ran for good. As QEMU's deadline, with a moment for its own report
+      let over = false;
+      const cancel = deadline(Math.max(0, task.budget.hours - row.hours) * 3.6e6 + HOST_GRACE.ms, () => {
+        over = true;
+        void child.kill();
+      });
       const exit = await child.wait();
+      cancel();
       flushThinking();
-      await finish(row, exit, startedAt, lastError);
+      await finish(row, exit, startedAt, lastError, over);
     } catch (e) {
       // could not start (no Landlock, no session address, no provider): waiting with the reason, no retry loop
       const message = e instanceof Error ? e.message : String(e);
@@ -344,7 +352,7 @@ async function finish(
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
-        ? `budget_exceeded: the VM was stopped after ${hours.toFixed(2)} h (budget hours)`
+        ? `budget_exceeded: the session was stopped after ${hours.toFixed(2)} h (budget hours)`
         : failed
           ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
           : spent !== undefined
@@ -402,6 +410,8 @@ async function finish(
 }
 
 /** Where a Planner batch runs (`planner.runtime`, 15-planner.md); a Worker VM (3g) is the same `vm` row. */
+export const HOST_GRACE = { ms: 60_000 };
+
 const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => void) => Promise<Child>> = {
   host: async (task, onStdout) => {
     const { env } = await loopbackLink(task.id, "planner");
