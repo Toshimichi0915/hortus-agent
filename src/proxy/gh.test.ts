@@ -274,14 +274,26 @@ describe("gh through the proxy", { skip: !existsSync(GH) }, () => {
     const p = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/W"], "git", cwd);
     assert.match(JSON.parse(p.summary).rendered, /push o\/r: .* refs\/heads\/hortus\/W/);
     gate.decide(p.id, "reject", "owner");
-    // a new commit each, as a refused hash stays refused: an escalating judge, then a tainted task
+    // an escalating judge and a tainted task ask for the ref advertisement first; a new commit each, as a refused hash
+    // stays refused
+    const pushes = async (addr: string, ref: string) => {
+      await as(addr, "git", ["commit", "--allow-empty", "-qm", ref], cwd);
+      for (let i = 0; i < 5; i++) {
+        await as(addr, "git", ["push", "-q", "origin", `HEAD:refs/heads/hortus/${ref}`], cwd);
+        const e = pending().at(-1) as Row;
+        if (JSON.parse(e.summary).method !== "GET") {
+          assert.equal(JSON.parse(e.payload ?? "{}").consequential, true);
+          assert.match(JSON.parse(e.summary).rendered, /push o\/r: /);
+          return e;
+        }
+        gate.decide(e.id, "approve", "owner");
+      }
+      assert.fail("no push entry");
+    };
     mode = "escalate";
-    await as("127.0.0.2", "git", ["commit", "--allow-empty", "-qm", "d"], cwd);
-    const e = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/W"], "git", cwd);
-    gate.decide(e.id, "reject", "owner");
+    gate.decide((await pushes("127.0.0.2", "W")).id, "reject", "owner");
     mode = "allow";
-    await as("127.0.0.3", "git", ["commit", "--allow-empty", "-qm", "t"], cwd);
-    const t = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/T"], "git", cwd, "127.0.0.3");
+    const t = await pushes("127.0.0.3", "T");
     assert.match(t.payload ?? "", /read a web page/);
     assert.equal(gate.grantable({ ...t, kind: "request", task_id: "T" }), false);
     gate.decide(t.id, "reject", "owner");

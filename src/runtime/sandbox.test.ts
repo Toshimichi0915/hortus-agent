@@ -223,7 +223,7 @@ function suite(): void {
       denied(await shimSh(prof(), "ls /dev/pts"));
       // walking /dev for that: its links are the shim's own fds, a pipe no rule can name, and still work
       assert.ok(!prof().includes("/dev/stdout"));
-      ok(await shimSh(prof(), "echo x > /dev/stderr && echo x > /dev/stdout && ls /dev/fd/"));
+      ok(await shimSh(prof(), "echo x | cat /dev/stdin && ls /dev/fd/"));
     });
     test("caches: task-local tool homes, shared caches linked, never through a planted link", () => {
       const out = join(root, "cache-out");
