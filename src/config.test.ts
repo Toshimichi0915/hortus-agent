@@ -17,7 +17,7 @@ test("missing file → defaults", () => {
   assert.equal(c.planner.batch_max, 50);
   assert.equal(c.planner.daily_tokens, 5e6);
   assert.equal(c.planner.effort, "low");
-  assert.equal(c.planner.runtime, "host");
+  assert.equal(c.planner.runtime, undefined);
   assert.deepEqual(c.worker.budget, { tokens: 2e6, hours: 4 });
   assert.deepEqual(c.worker.credentials, []);
   assert.equal(c.worker.context_window, 131072);

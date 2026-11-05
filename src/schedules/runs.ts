@@ -5,6 +5,7 @@
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { quote } from "../agent/inbox.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
 import { remove as unindex } from "../mirror/fts.ts";
@@ -51,6 +52,10 @@ export function overBudget(t: tasks.TaskRow): boolean {
   return tokensOf(t) >= b.tokens || (t.hours ?? 0) >= b.hours;
 }
 
+/** What a firing tells the Worker (v6 › Schedules › Expiry), so it can ask for more in time. */
+export const expiry = (at: string): string =>
+  `This task's timers expire at ${at} unless a message reaches it; to go on past that, ask the owner.`;
+
 /** The row's id a run belongs to, from its `schedule:<id>` event key. */
 export function scheduleOf(run: tasks.TaskRow): number | undefined {
   const k = parse<string[]>(run.event_keys, []).find((e) => e.startsWith("schedule:"));
@@ -66,7 +71,10 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     kind: "run",
     parent: p.id,
     title: `${p.title} @ ${local(fired, row.tz ?? ctx?.config.owner.tz ?? "UTC")}`,
-    brief: row.text,
+    // wrapped like any non-owner text: a Worker that read a stranger may have written it (v6 › Schedules › Runs)
+    brief: `A timer of this task fired. What it was set to do, as the task wrote it then:\n${quote(row.text)}${
+      row.expires_at ? `\n\n${expiry(row.expires_at)}` : ""
+    }`,
     event_keys: [`schedule:${row.id}`],
     scope: parse(p.scope, {}),
     ...(p.project ? { project: p.project } : {}),

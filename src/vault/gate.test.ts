@@ -12,7 +12,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
-import { Config } from "../config.ts";
+import { Config, today } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { approvals as approvalsPage } from "../console/pages/approvals.ts";
 import { task as taskPage } from "../console/pages/task.ts";
@@ -435,7 +435,7 @@ test("judge_notes come after the fixed prompt and before the summary; prompt_has
 });
 
 test("planner.daily_tokens exhausted → escalate without a call", async () => {
-  const day = new Date().toISOString().slice(0, 10);
+  const day = today(ctx.config); // the owner's day, the Planner's key: at UTC+9 a UTC date split one day's cap in two
   const used = (ctx.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(day) as { tokens: number }).tokens;
   assert.ok(used >= 100, "the judge's tokens are counted");
   setConfig({ planner: { provider: "llm", model: "judge-1", daily_tokens: used } });

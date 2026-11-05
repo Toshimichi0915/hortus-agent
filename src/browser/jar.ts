@@ -2,7 +2,7 @@
  * The placeholder cookie jar (14-browser.md › captures): which `captured` rows a task's browser may hold. hortusd only
  * (task.json at start, inbox `cookies` after a login or an origin grant); the browser never sees a real value.
  */
-import type { DatabaseSync } from "../db.ts";
+import { type DatabaseSync, family } from "../db.ts";
 import type { Cookie } from "../types.ts";
 
 // ponytail: no public suffix list; the last two labels, three when the second-to-last is a common second-level label
@@ -43,9 +43,9 @@ interface Meta {
 export function grantedOrigins(db: DatabaseSync, task: string): string[] {
   const rows = db
     .prepare(
-      "SELECT DISTINCT substr(category, 8) AS origin FROM approvals WHERE kind = 'grant' AND task_id = ? AND status = 'approved' AND category LIKE 'origin:%'",
+      "SELECT DISTINCT substr(category, 8) AS origin FROM approvals WHERE kind = 'grant' AND task_id IN (SELECT value FROM json_each(?)) AND status = 'approved' AND category LIKE 'origin:%'",
     )
-    .all(task) as { origin: string }[];
+    .all(JSON.stringify(family(db, task))) as { origin: string }[];
   return rows.map((r) => r.origin);
 }
 
@@ -66,6 +66,7 @@ export function loginCookies(db: DatabaseSync, origin: string): number {
  */
 export function jar(db: DatabaseSync, task: string, origin?: string): Cookie[] {
   const granted = new Set(grantedOrigins(db, task));
+  const own = new Set<string | null | undefined>(family(db, task));
   const rows = db
     .prepare("SELECT id, name, origin, kind, created, meta FROM captured WHERE kind = 'cookie' ORDER BY id")
     .all() as unknown as Row[];
@@ -73,7 +74,7 @@ export function jar(db: DatabaseSync, task: string, origin?: string): Cookie[] {
   for (const r of rows) {
     const m = (r.meta ? JSON.parse(r.meta) : {}) as Meta;
     if (origin && r.origin !== origin) continue;
-    if (m.task !== task && !(granted.has(r.origin) && m.via === "login")) continue;
+    if (!own.has(m.task) && !(granted.has(r.origin) && m.via === "login")) continue;
     const c: Cookie = {
       name: m.cookieName ?? r.name,
       value: `hortus-secret-${r.name}`,

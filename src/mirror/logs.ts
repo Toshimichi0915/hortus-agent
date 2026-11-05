@@ -172,7 +172,11 @@ export async function publishLog(
 ): Promise<void> {
   const out = paths.out(taskId);
   const summary = readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? "No summary.\n";
-  const header = { title, status, ...(events ? { events } : {}), updated: now() };
+  const t = db.prepare("SELECT created, event_keys FROM tasks WHERE id = ?").get(taskId) as
+    | { created: string | null; event_keys: string | null }
+    | undefined;
+  const keys = events ?? (t?.event_keys ? (JSON.parse(t.event_keys) as string[]) : undefined);
+  const header = { title, status, ...(keys ? { events: keys } : {}), ...(t?.created ? { opened: t.created } : {}), updated: now() };
   writeLog(
     db,
     taskId,

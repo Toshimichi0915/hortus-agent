@@ -8,7 +8,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { quote } from "../agent/inbox.ts";
-import type { Config } from "../config.ts";
+import { type Config, today } from "../config.ts";
 import { PR_TURN } from "../connectors/forge.ts";
 import { bus } from "../console/events.ts";
 import { errorLine, parse, tokens } from "../console/html.ts";
@@ -22,10 +22,13 @@ import type { OutboxMsg, TaskJson } from "../types.ts";
 import { read as readVault } from "../vault/vault.ts";
 
 export const DEBOUNCE_MS = 2000;
+/** What a guard skipped has no wake of its own: the day's cap over at midnight, a provider's credential added */
+const RETRY_MS = 10 * 60_000;
 const CAP_LOG_MS = 3600_000;
 
 let ctx: Ctx | undefined;
 let timer: NodeJS.Timeout | undefined;
+let retry: NodeJS.Timeout | undefined;
 let running = false;
 let again = false;
 let capLogged = 0;
@@ -38,9 +41,6 @@ export function pctx(): Ctx {
   return ctx;
 }
 const log = () => ctx?.log("planner") ?? { info() {}, error() {} };
-
-/** The owner's calendar day: the `planner_usage` key. */
-export const today = (c: Config): string => new Intl.DateTimeFormat("en-CA", { timeZone: c.owner.tz }).format();
 
 export const usedToday = (c: Ctx): number =>
   (
@@ -80,6 +80,20 @@ function pending(): number {
   if (!ctx) return 0;
   return (ctx.db.prepare("SELECT COUNT(*) AS n FROM events WHERE consumed = 0").get() as { n: number }).n;
 }
+
+/** Results too: a task's report waits for a batch like an event. */
+const anything = (): boolean =>
+  pending() > 0 ||
+  ctx?.db
+    .prepare(
+      `SELECT 1 FROM outbox o JOIN tasks t ON t.id = o.task_id WHERE o.consumed = 0 AND t.kind NOT IN ('chat', 'planner')
+       AND json_extract(o.body, '$.type') IN ('result', 'budget_exceeded') AND json_extract(o.body, '$.text') != '' LIMIT 1`,
+    )
+    .get() !== undefined;
+
+/** v6: a fresh VM per batch; the host until the image is there, or when the owner says so (v7 › Config). */
+export const plannerRuntime = (c: Config, missing: string | null = missingImage()): "host" | "vm" =>
+  c.planner.runtime ?? (missing ? "host" : "vm");
 
 export interface EventRow {
   id: number;
@@ -228,6 +242,7 @@ async function batch(): Promise<boolean> {
   }
   // checked before anything is consumed: a batch that cannot start must not lose its events
   const noImage = cfg.runtime === "vm" ? missingImage() : null;
+  const runtime = plannerRuntime(c.config);
   if (noImage) {
     log().error(`planner.runtime is vm: ${noImage}; batch skipped`);
     return false;
@@ -288,7 +303,7 @@ async function batch(): Promise<boolean> {
       renderBatch(c, events, results),
       JSON.stringify({ credentials: [], repos: [] }),
       JSON.stringify(budget),
-      cfg.runtime,
+      runtime,
       t,
       t,
       t,
@@ -300,7 +315,7 @@ async function batch(): Promise<boolean> {
     const row = tasks.get(id);
     const asPlanner = { ...c.config, worker: { ...c.config.worker, provider: cfg.provider, model: cfg.model } };
     const task: TaskJson = { ...tasks.taskJson(asPlanner, row), effort: cfg.effort, features: [] };
-    const used = await runPlanner(row, task, cfg.runtime);
+    const used = await runPlanner(row, task, runtime);
     c.db
       .prepare(
         "INSERT INTO planner_usage(day, tokens) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens",
@@ -356,10 +371,16 @@ export const plannerModule: Module = {
     for (const d of dirs) rmSync(paths.task(d), { recursive: true, force: true });
     bus.on("tasks", onTasks);
     wake();
+    retry = setInterval(() => anything() && wake(), RETRY_MS);
+    retry.unref();
+  },
+  async reload() {
+    if (anything()) wake(); // a Settings save may be what a skipped batch waited for
   },
   async stop() {
     bus.off("tasks", onTasks);
     clearTimeout(timer);
+    clearInterval(retry);
     timer = undefined;
     ctx = undefined;
   },

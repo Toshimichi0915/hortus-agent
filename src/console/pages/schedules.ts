@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { readCapped } from "../../hostile.ts";
+import * as paths from "../../paths.ts";
 import { button, h, layout, type Page, time } from "../html.ts";
 
 export interface ScheduleListRow {
@@ -37,13 +40,17 @@ export function relative(iso: string, now = Date.now()): string {
 const inTz = (iso: string, tz: string) =>
   `${new Intl.DateTimeFormat("sv-SE", { timeZone: tz, dateStyle: "short", timeStyle: "short" }).format(new Date(iso))} ${tz}`;
 
+/** The start of what the last run wrote: the row's `last-summary.md`, a run's file (runs.ts › onExit). */
+const lastSummary = (id: number): string =>
+  readCapped(join(paths.schedule(id), "last-summary.md"), 300)?.text.replace(/\s+/g, " ").trim() ?? "";
+
 /** Rows by task; also used on a task's card for its own rows. */
 export function scheduleTable(rows: ScheduleListRow[], tz: string, withTask = true) {
   const next = (iso: string | null) =>
     iso ? h`<time datetime="${iso}" data-rel title="${inTz(iso, tz)}">${relative(iso)}</time>` : time(null);
   return h`<table><thead><tr>${withTask ? h`<th>Task</th>` : ""}<th>Text</th><th>Kind</th><th>Next fire</th><th>Last run</th><th>Expires</th><th></th></tr></thead><tbody>${rows.map(
     (r) =>
-      h`<tr>${withTask ? h`<td><a href="/tasks/${r.task_id}">${r.title || r.task_id}</a></td>` : ""}<td class="pre">${r.text ?? ""}</td><td>${kindOf(r)}</td><td>${next(r.fire_at)}</td><td>${time(r.last_run)}</td><td>${r.expires_at ? time(r.expires_at) : "never"}</td><td>${button(
+      h`<tr>${withTask ? h`<td><a href="/tasks/${r.task_id}">${r.title || r.task_id}</a></td>` : ""}<td class="pre">${r.text ?? ""}</td><td>${kindOf(r)}</td><td>${next(r.fire_at)}</td><td>${time(r.last_run)}<br><span class="hint">${lastSummary(r.id)}</span></td><td>${r.expires_at ? time(r.expires_at) : "never"}</td><td>${button(
         "Unschedule",
         "schedule.unset",
         { id: r.id },

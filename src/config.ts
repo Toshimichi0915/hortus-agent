@@ -71,7 +71,8 @@ export const Config = z.looseObject({
       effort: Effort.default("low"),
       batch_max: z.number().int().positive().default(50),
       daily_tokens: z.number().int().nonnegative().default(5e6),
-      runtime: z.enum(["host", "vm"]).default("host"),
+      /** unset: a VM once the image is there, the host until then (v7 › Config) */
+      runtime: z.enum(["host", "vm"]).optional(),
     })
     .prefault({}),
   worker: z
@@ -168,6 +169,9 @@ export function save(c: Config, path = paths.config()): void {
   writeFileSync(tmp, `${JSON.stringify(c, null, 2)}\n`, { mode: 0o600 });
   renameSync(tmp, path);
 }
+
+/** The owner's calendar day: the `planner_usage` key, the Planner's and the judge's alike. */
+export const today = (c: Config): string => new Intl.DateTimeFormat("en-CA", { timeZone: c.owner.tz }).format();
 
 const FORCED_HUMAN = new Set(["transforms", "merge", "login"]);
 

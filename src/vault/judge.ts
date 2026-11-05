@@ -4,7 +4,7 @@
  * non-consequential request or escalate it; every failure escalates.
  */
 import { createHash } from "node:crypto";
-import { now } from "../db.ts";
+import { today } from "../config.ts";
 import { logger } from "../log.ts";
 import { coreFetch } from "../proxy/index.ts";
 import { providerSecret } from "./providers.ts";
@@ -43,7 +43,7 @@ export function prompt(category: string, summary: unknown, task: { title?: strin
   return { system, user, hash: createHash("sha256").update(`${system}\n\n${user}`).digest("hex") } satisfies Prompt;
 }
 
-const day = (): string => now().slice(0, 10);
+const day = (): string => today(ctx().config);
 
 function addTokens(n: number): void {
   ctx()

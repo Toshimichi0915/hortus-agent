@@ -255,6 +255,11 @@ async function handle(
     if (!r.ok) return send(res, 404, "text/plain", r.error);
     return send(res, 200, "text/plain", typeof r.value === "string" ? r.value : (r.value?.text ?? ""));
   }
+  const diffm = /^\/approvals\/(\d+)\/diff$/.exec(path);
+  if (diffm) {
+    const r = await tryCall<string>("merge.diff", { id: Number(diffm[1]) });
+    return r.ok ? send(res, 200, "text/plain", r.value) : send(res, 404, "text/plain", r.error);
+  }
   for (const [re, page] of routes) {
     const m = re.exec(path);
     if (m) return send(res, 200, "text/html", await page(ctx, { m: [...m], q: url.searchParams, caller }));

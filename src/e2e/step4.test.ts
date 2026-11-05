@@ -976,6 +976,32 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
   }
 });
 
+test("a batch a guard skipped runs on the Settings save that lifts it: nothing else would wake it", { skip }, async () => {
+  planner(`export default ({ n, events }) => n === 0
+    ? { usage: { input: 1500, output: 0 }, calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
+    : { text: "ok" };`);
+  await configure((c) => {
+    c.planner = { ...c.planner, daily_tokens: 1000 };
+  });
+  try {
+    db((d) => d.prepare("INSERT INTO planner_usage(day, tokens) VALUES (?, 5000) ON CONFLICT(day) DO UPDATE SET tokens = 5000").run(new Date().toISOString().slice(0, 10)));
+    let count = batches().length;
+    slack.post("C1", { user: "U1", text: "held back" });
+    await waitEvent("held back");
+    await sleep(3000);
+    assert.equal(batches().length, count, "skipped");
+    await configure((c) => {
+      c.planner = { ...c.planner, daily_tokens: 5e6 };
+    });
+    await nextBatch(count++);
+  } finally {
+    db((d) => d.prepare("DELETE FROM planner_usage").run());
+    await configure((c) => {
+      c.planner = { ...c.planner, daily_tokens: 5e6 };
+    });
+  }
+});
+
 test("recovery: a batch killed with hortusd is not re-run; the next event's batch lists the open cards", {
   skip,
 }, async () => {

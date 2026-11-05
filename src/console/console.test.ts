@@ -245,6 +245,25 @@ function clean(path: string, html: string): void {
   assert.match(html, /<script src="\/static\/app\.js" defer><\/script>/);
 }
 
+test("Schedules: a row shows its last run's summary (v6 › Console); a merge cut at 64 KB links the whole diff", async () => {
+  ctx.db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES ('sw', 'unattended', 'watch', 'waiting')").run();
+  const { lastInsertRowid: id } = ctx.db
+    .prepare("INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sw', '2030-01-01T00:00:00Z', 3600, 'x')")
+    .run();
+  mkdirSync(paths.schedule(Number(id)), { recursive: true });
+  writeFileSync(join(paths.schedule(Number(id)), "last-summary.md"), "## Goal\nnothing moved today\n");
+  assert.match((await get("/schedules")).body, /## Goal nothing moved today/);
+  const { lastInsertRowid: a } = ctx.db
+    .prepare(
+      "INSERT INTO approvals(kind, category, hash, status, requested_at, summary) VALUES ('request', 'merge', 'h', 'pending', 't', ?)",
+    )
+    .run(JSON.stringify({ project: "p", branch: "b", main_sha: "m", sha: "s", patch: "x", truncated: true, files: 1 }));
+  assert.match((await get(`/approvals/${a}`)).body, new RegExp(`href="/approvals/${a}/diff"`));
+  ctx.db.prepare("DELETE FROM approvals WHERE id = ?").run(a);
+  ctx.db.prepare("DELETE FROM tasks WHERE id = 'sw'").run();
+  assert.equal((await get(`/approvals/${a}/diff`)).status, 404);
+});
+
 test("every route renders on an empty DB, missing RPCs become an error line", async () => {
   for (const path of ROUTES) {
     const r = await get(path);

@@ -76,9 +76,19 @@ export interface CreateInput {
  * `planner.runtime`, everything else in a VM (the dispatcher falls back to the host while the image is missing). */
 export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project">): "host" | "vm" {
   if (i.kind === "chat") return "host";
-  if (i.kind === "planner") return c.planner.runtime;
+  if (i.kind === "planner") return c.planner.runtime ?? "host";
   if (i.project) return c.projects[i.project]?.runtime ?? "host";
   return "vm";
+}
+
+/**
+ * v6 › Config: a task reaches the global list plus the lists of its projects, whatever the global setting. A chat includes
+ * every project, so one strict project makes every chat strict, and a chat's runs with it. null: no project has a list.
+ */
+function projectOrigins(c: Config, kind: string, project: string | null | undefined, parent?: string): string[] | null {
+  const own = project ? c.projects[project] : undefined;
+  const ps = kind === "chat" || parent === "chat" ? Object.values(c.projects) : own ? [own] : [];
+  return ps.some((p) => p.origins) ? [...new Set(ps.flatMap((p) => p.origins ?? []))] : null;
 }
 
 /**
@@ -136,7 +146,7 @@ export function create(i: CreateInput): TaskRow {
     ...(i.project ? { project: i.project } : {}),
     ...(i.scope?.dofs ? { dofs: i.scope.dofs } : {}),
   };
-  const origins = i.project ? (c.config.projects[i.project]?.origins ?? null) : null;
+  const origins = projectOrigins(c.config, i.kind, i.project, i.parent ? get(i.parent).kind : undefined);
   const { tokens, hours } = i.budget ?? c.config.worker.budget;
   const keys = [...(i.event_keys ?? []), ...(i.kind === "chat" ? [`chat:${id}`] : [])];
   c.db
@@ -291,6 +301,25 @@ export function budget(id: string, b: { tokens?: number; hours?: number }): void
 
 // ---------------------------------------------------------------------------------------------------------------------
 // task.json and ctl/home
+
+/**
+ * A task's row after a config change: the owner extends a project's list because a task was refused, and the proxy reads
+ * the row. Called on every reload; a running Worker's prompt keeps the old list until its next start.
+ */
+export function refreshOrigins(c: Ctx): void {
+  const rows = c.db
+    .prepare(
+      `SELECT t.id, t.kind, t.project, t.origins, p.kind AS parent FROM tasks t LEFT JOIN tasks p ON p.id = t.parent
+        WHERE t.status NOT IN ('done', 'failed')`,
+    )
+    .all() as { id: string; kind: string; project: string | null; origins: string | null; parent: string | null }[];
+  const set = c.db.prepare("UPDATE tasks SET origins = ? WHERE id = ?");
+  for (const r of rows) {
+    const list = projectOrigins(c.config, r.kind, r.project, r.parent ?? undefined);
+    const next = list ? json(list) : null;
+    if (next !== r.origins) set.run(next, r.id);
+  }
+}
 
 function mergeOrigins(g: Config["origins"], t: string[] | null): TaskJson["origins"] {
   if (!t) return g;

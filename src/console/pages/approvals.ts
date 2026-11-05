@@ -60,7 +60,7 @@ ${
   full || id === undefined
     ? details(`full diff${s.truncated ? " (first 64 KB)" : ""}`, patch)
     : h`<p><a href="/approvals/${id}">full diff (${String(lines.length)} lines)</a></p>`
-}${details("stat", str(s.stat))}`;
+}${s.truncated && id !== undefined ? h`<p><a href="/approvals/${id}/diff">the whole diff, as text</a></p>` : ""}${details("stat", str(s.stat))}`;
 }
 
 /** One case per kind; merge (3b), transforms (3f) and login (3h) fall back to the JSON until their steps add a view. */
