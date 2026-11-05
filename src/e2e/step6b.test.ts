@@ -461,7 +461,7 @@ for (const f of forges) {
     const created = toolResults(b)[0];
     assert.ok(!created?.isError, String(created?.output));
     ({ id: task } = JSON.parse(created?.output ?? "{}") as { id: string });
-    assert.equal(taskRow(task)?.runtime, "host", "no VM image: vm.fallback_host");
+    assert.equal(taskRow(task)?.runtime, "vm", "fixed at creation: vm.fallback_host applies per start");
 
     // the answer on the issue: only the real token passes the fake, and no placeholder reached it
     await until(() => f.calls().some((c) => c.path === f.commentPath), 20_000, "the Worker's comment");
