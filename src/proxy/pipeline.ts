@@ -316,7 +316,8 @@ function peekCommands(r: Readable): Promise<{ body: Readable; commands: string |
 
 const utf8 = (b: Buffer): string | undefined => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(b);
+    // ignoreBOM keeps it: a body goes on as decoded, and a CSV from Windows arrived three bytes short
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(b);
   } catch {
     return undefined;
   }
@@ -324,7 +325,7 @@ const utf8 = (b: Buffer): string | undefined => {
 
 const STREAM_REQUEST = /^application\/(x-git-|octet-stream)/i;
 const HTML = /^\s*(text\/html|application\/xhtml\+xml)/i;
-const STREAM_RESPONSE = /^(text\/event-stream|application\/x-git-)/i;
+const STREAM_RESPONSE = /^(text\/event-stream|application\/(x-git-|octet-stream))/i;
 const HOP = new Set([
   "connection",
   "keep-alive",
@@ -458,13 +459,16 @@ const overrideHeader = (t: Template): boolean =>
 const hasKey = (s: string): boolean =>
   s.split(/[&;]/).some((p) => decoded(p.split("=", 1)[0] ?? "").trim() === "_method");
 
+const boundaryOf = (ct: string): string | undefined =>
+  /^multipart\//i.test(ct) ? ct.match(/boundary="?([^";]+)/i)?.[1] : undefined;
+
 /** A real `_method` field: in the query, a urlencoded body (Rack takes a POST with no type as one) or a multipart part's
  * own headers. Any other body is not a form, so nothing in it is a key. */
 function overrideField(t: Template, ct: string, llmCall: boolean): boolean {
   if (hasKey((t.url.match(URL_PARTS)?.[3] ?? "").slice(1))) return true;
   if (llmCall || !t.body) return false;
   if (ct === "" || /^application\/x-www-form-urlencoded/i.test(ct)) return hasKey(t.body);
-  const boundary = /^multipart\//i.test(ct) && ct.match(/boundary="?([^";]+)/i)?.[1];
+  const boundary = boundaryOf(ct);
   if (!boundary) return false;
   return t.body
     .split(`--${boundary}`)
@@ -478,13 +482,19 @@ const sorted = (h: Record<string, string>) =>
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );
 
-/** SHA-256 of the canonical template: handles as handles, headers sorted, body verbatim. */
+/** SHA-256 of the canonical template: handles as handles, headers sorted, body verbatim. A multipart boundary is framing
+ * a client draws anew per run (curl, requests), so it is cut from both: else no retry of an approved upload ever matched.
+ * The body stays in pieces, so where each boundary stood still counts. */
 export function hashTemplate(t: Template): string {
+  const headers = sorted(t.headers);
+  const ct = headers["content-type"] ?? "";
+  const boundary = boundaryOf(ct);
   const canon = JSON.stringify({
     method: t.method.toUpperCase(),
     url: t.url,
-    headers: sorted(t.headers),
-    body: t.body,
+    headers: boundary ? { ...headers, "content-type": ct.replace(/boundary=\S+/i, "boundary=") } : headers,
+    // delimiter lines only: cut anywhere, approving a body with "XX" in it, boundary=XX, approved "evil" for "XX" as well
+    body: boundary ? (t.body === null ? null : `\r\n${t.body}`.split(`\r\n--${boundary}`)) : t.body,
   });
   return createHash("sha256").update(canon).digest("hex");
 }
@@ -1063,7 +1073,9 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
     pipeline(r, s, () => {});
     return { status, headers: h, body: s };
   };
-  if (STREAM_RESPONSE.test(ct)) return streamed(src);
+  // a host with no transform has nothing to read in a body (its Set-Cookie is captured above): held until whole, a wheel
+  // at 500 KB/s sent no byte past pip's 15 s read timeout, and four such downloads held every slot of a client
+  if (STREAM_RESPONSE.test(ct) || !p.tf) return streamed(src);
   const release = await slot(p.client);
   let r: Awaited<ReturnType<typeof readUpTo>>;
   try {
@@ -1075,8 +1087,8 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   // ponytail: over 16 MB (or still arriving after 30 s) skips response() and is scrubbed as a stream, not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
-  if (text === undefined || (!p.tf && !p.cookie)) {
-    const body = text === undefined ? scrub.bytes(r.buf) : Buffer.from(scrub.text(text));
+  if (text === undefined) {
+    const body = scrub.bytes(r.buf);
     return { status, headers: { ...headers, "content-length": String(body.length) }, body };
   }
   let result: ReturnType<typeof transforms.response> = {

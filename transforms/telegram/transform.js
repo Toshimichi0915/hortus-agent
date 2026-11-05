@@ -7,12 +7,12 @@ export function request(req) {
   return { ...req, url };
 }
 
-// sendMessage → refs `telegram:<chat>:<thread>`: the forum topic, else the replied-to message, else the message; and
-// the sent message itself. The bot's messages are never updates and a reply carries no chain, so someone answering
-// this message is on thread <this message> to the connector.
+// sendMessage, sendDocument and the rest (each answers a Message) → refs `telegram:<chat>:<thread>`: the forum topic,
+// else the replied-to message, else the message; and the sent message itself. The bot's messages are never updates and
+// a reply carries no chain, so someone answering this message is on thread <this message> to the connector.
 export function response(res, req) {
   const out = { res };
-  if (!/\/sendMessage(\?|$)/.test(req.url) || !res.body) return out;
+  if (!/\/send\w+(\?|$)/i.test(req.url) || !res.body) return out;
   let b;
   try {
     b = JSON.parse(res.body);

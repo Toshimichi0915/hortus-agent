@@ -266,7 +266,7 @@ describe("gh through the proxy", { skip: !existsSync(GH) }, () => {
       }
     });
 
-  test("a push under a judge that would allow reaches the owner with its ref line", async () => {
+  test("a push reaches the owner with its ref line: a judge that would allow, one that escalates, a tainted task", async () => {
     mode = "allow";
     const cwd = join(home, "push");
     assert.equal((await gh("repo", "clone", "o/r", cwd)).code, 0);
@@ -274,6 +274,17 @@ describe("gh through the proxy", { skip: !existsSync(GH) }, () => {
     const p = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/W"], "git", cwd);
     assert.match(JSON.parse(p.summary).rendered, /push o\/r: .* refs\/heads\/hortus\/W/);
     gate.decide(p.id, "reject", "owner");
+    // a new commit each, as a refused hash stays refused: an escalating judge, then a tainted task
+    mode = "escalate";
+    await as("127.0.0.2", "git", ["commit", "--allow-empty", "-qm", "d"], cwd);
+    const e = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/W"], "git", cwd);
+    gate.decide(e.id, "reject", "owner");
+    mode = "allow";
+    await as("127.0.0.3", "git", ["commit", "--allow-empty", "-qm", "t"], cwd);
+    const t = await asks(["push", "-q", "origin", "HEAD:refs/heads/hortus/T"], "git", cwd, "127.0.0.3");
+    assert.match(t.payload ?? "", /read a web page/);
+    assert.equal(gate.grantable({ ...t, kind: "request", task_id: "T" }), false);
+    gate.decide(t.id, "reject", "owner");
   });
 
   test("a read under an escalating judge, from a tainted task and from a task with no repos asks", async () => {

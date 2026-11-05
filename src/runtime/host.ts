@@ -73,9 +73,10 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     // core's bash saves a long output in tmpdir() with the default mode: under /tmp that was a world-readable copy of
     // what this task read (past scope.dofs, untainted) that no close removed. Goes with tasks/<id>.
     TMPDIR: join(paths.out(task.id), "tmp"),
-    // ~/.config/gh (its hosts.yml holds the owner's token) and ~/.npmrc are denied: gh refuses to run without a
+    // ~/.config/gh and glab-cli (they hold the owner's tokens) and ~/.npmrc are denied: gh refuses to run without a
     // config dir, pnpm warns on every run (yarn 1 reads ~/.npmrc regardless and fails)
     GH_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "gh"),
+    GLAB_CONFIG_DIR: join(paths.out(task.id), "work", ".cache", "glab"),
     npm_config_userconfig: join(paths.out(task.id), "work", ".cache", "npmrc"),
   };
   const ca = join(ctl, "ca.crt");
@@ -89,6 +90,8 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     ["safe.directory", "*"],
     // the owner's ~/.gitconfig may sign commits; the sandbox has no gpg agent (3b)
     ["commit.gpgsign", "false"],
+    // git-lfs asks the forge for locks before every push: a credentialed POST, so a second approval per try
+    ["lfs.locksverify", "false"],
   ];
   // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
   // under the user each forge expects (18-gitlab-bitbucket.md)

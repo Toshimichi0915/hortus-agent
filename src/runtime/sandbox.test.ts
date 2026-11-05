@@ -236,7 +236,7 @@ function suite(): void {
       assert.equal(env.XDG_CACHE_HOME, join(H, "cache/xdg"));
       assert.equal(realpathSync(join(out, "work/.cache/cargo/registry")), realpathSync(join(H, "cache/cargo/registry")));
       // the tools' plain-file tokens stay out of reach
-      for (const p of [".npmrc", ".config/gh"]) assert.ok(denySet(config).includes(join(homedir(), p)), p);
+      for (const p of [".npmrc", ".config/gh", ".config/glab-cli"]) assert.ok(denySet(config).includes(join(homedir(), p)), p);
       const evil = join(root, "cache-evil");
       mkdirSync(evil);
       rmSync(out, { recursive: true });
@@ -338,6 +338,9 @@ function suite(): void {
       const env = sandboxEnv(t);
       assert.equal(env.GH_TOKEN, "hortus-secret-github");
       assert.equal(env.TERM, "dumb");
+      assert.match(env.GLAB_CONFIG_DIR ?? "", /\/work\/.cache\/glab$/);
+      const at = Object.values(env).indexOf("lfs.locksverify");
+      assert.equal(Object.values(env)[at + 1], "false", "git-lfs asks for no locks before a push");
       const c = await spawnSandboxed({
         task: t,
         kind: "unattended",

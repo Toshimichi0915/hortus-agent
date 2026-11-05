@@ -62,6 +62,15 @@ export function response(res, req) {
   } catch {
     return out;
   }
+  // LFS's batch hands out a fresh token of the owner's (`lfs_api_controller.rb`, `LfsToken`) for the transfer, which the
+  // Worker must not hold and the proxy would refuse. Without it git-lfs sends its own credential: the placeholder.
+  if (/\/info\/lfs\/objects\/batch$/.test(path(req.url)) && Array.isArray(b?.objects)) {
+    for (const o of b.objects) {
+      delete o.authenticated;
+      for (const a of Object.values(o.actions ?? {})) delete a?.header?.Authorization;
+    }
+    return { res: { ...res, body: JSON.stringify(b) } };
+  }
   const m = path(req.url).match(API);
   if (!m || !b || typeof b !== "object") return out;
   if (!m[1]) {
