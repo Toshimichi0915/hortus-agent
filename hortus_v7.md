@@ -824,6 +824,7 @@ What outlives a session or crosses sessions, after this round:
 
 - **`load.test` bounds the median round** (`pct(p95, 0.5)`, three rounds): one saturated round still passes (595, then 210, 156, 170 ms), and a regression in two rounds of three fails. `Math.min` passed it.
 - **`step4blive`'s failure message keeps the session's stdout.** Round 13's new prompt line cannot be the cause of "a thread channel": it is inside `# Forge repositories`, rendered only with `repo_urls`, and this task has none, so the prompt the model saw was unchanged by round 13.
+- **"A thread channel" was a defect, not the model** (major: a wrong result in normal use; `planner.ts › renderEvent`). Eight runs with the session kept: 6 passed, 2 failed, and both failures posted `{"content":…,"message_reference":{"message_id":"3100"}}` to `/channels/3000/messages`: HTTP 200, done, in the parent channel. A brief showed only an event's first ref, and `discord:<parent>:<thread>` has the shape of a plain message's `discord:<channel>:<message>`; the transform's comment said so too. Round 13 graded this "model" and moved on. A brief now shows every ref, so a thread's `discord:<thread>:<thread>` is there, and the transform's comment says how each reads. The connector's second ref is keyed on the message's channel, so a forum post's first message (thread id = message id) has it too. After the fix: 8 of 8 runs, all three tests.
 
 
 ## Review round 14 — gh, GraphQL and auto
