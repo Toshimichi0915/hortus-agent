@@ -12,6 +12,7 @@ import type { Ctx } from "../ctx.ts";
 import * as paths from "../paths.ts";
 import { links } from "../proxy/index.ts";
 import * as cgroup from "./cgroup.ts";
+import { reply } from "./dispatcher.ts";
 import * as tasks from "./tasks.ts";
 
 const read = (p: string): string => {
@@ -98,7 +99,14 @@ export async function recover(c: Ctx): Promise<void> {
     // would wake it, and their line stayed unanswered on the page
     if (kind === "chat") {
       const { cursor } = scan(join(paths.out(id), "sessions"));
-      tasks.setStatus(id, pending(paths.task(id), cursor).length ? "queued" : "waiting");
+      const unread = pending(paths.task(id), cursor).length > 0;
+      tasks.setStatus(id, unread ? "queued" : "waiting");
+      // the turn it was in is over with nothing said: the owner's last line just sat there (round 19)
+      if (!unread)
+        reply(id, {
+          type: "status",
+          text: "hortusd restarted during this turn: it did not finish. Send a message to go on.",
+        });
     }
     // a firing runs at most once: a run that never reached the model is over
     else if (kind === "run" && scan(join(paths.out(id), "sessions")).tokens === 0) await tasks.close(id, "failed");

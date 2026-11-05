@@ -6,10 +6,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
+import dnsPromises from "node:dns/promises";
 import { EventEmitter, once } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import { syncBuiltinESMExports } from "node:module";
 import { type AddressInfo, connect } from "node:net";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
@@ -884,6 +886,19 @@ test("a credential without a transform follows only a manifest naming it, never 
       slack: { type: "token", value: "xoxb-real", transform: "slack" },
       gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
     });
+  }
+});
+
+test("a lookup answered by a session's own DNS is asked again, not refused", async (t) => {
+  const answers = [[{ address: "10.77.1.7", family: 4 }], [{ address: "93.184.216.34", family: 4 }]];
+  t.mock.method(dnsPromises, "lookup", async () => answers.shift());
+  syncBuiltinESMExports();
+  try {
+    const r = await egress({ role: "worker", task: "T" }, "model.example", true, undefined);
+    assert.equal((r as { address: string }).address, "93.184.216.34");
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
   }
 });
 

@@ -22,6 +22,7 @@ import { logger } from "../log.ts";
 import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { links, listen, proxyModule } from "../proxy/index.ts";
+import { HISTORY } from "../proxy/pipeline.ts";
 import { call } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { tempDir } from "../test/until.ts";
@@ -595,6 +596,35 @@ test("round 18: a messenger's thread read through its API taints; a post does no
   assert.deepEqual(taintOf(ctx.db, "T18", ctx.config), []);
   assert.equal((await send({ path: "/api/conversations.replies", from: "127.0.0.12" })).status, 200);
   assert.deepEqual(taintOf(ctx.db, "T18", ctx.config), ["read a messenger's history: slack.com"]);
+  // another spelling of the same call, and the pins
+  for (const [i, path] of ["/api//conversations.history", "/api/conversations%2Ehistory", "/api/pins.list"].entries()) {
+    ctx.db
+      .prepare(
+        `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, 'unattended', 't', 'b', 'running', ?, '"*"')`,
+      )
+      .run(`T19${i}`, JSON.stringify({ credentials: ["slack"], repos: [] }));
+    links.register(`127.0.0.1${3 + i}`, "worker", `T19${i}`, "session");
+    assert.equal((await send({ path, from: `127.0.0.1${3 + i}` })).status, 200);
+    assert.equal(taintOf(ctx.db, `T19${i}`, ctx.config).length, 1, path);
+  }
+  for (const a of ["GET discord.com/api/channels/1/messages", "GET discord.com/api/v10/channels/1/pins"])
+    assert.match(a, HISTORY);
+  assert.doesNotMatch("POST discord.com/api/v10/channels/1/messages", HISTORY);
+});
+
+test("round 19: a CI result attached to a task does not taint it; a stranger's event, and a messenger's author-less one, do", () => {
+  const c = { dofs: { gh: { type: "github" }, slack: { type: "slack" } } } as unknown as typeof ctx.config;
+  ctx.db
+    .prepare("INSERT INTO tasks(id, kind, title, brief, status) VALUES ('TCI', 'unattended', 't', 'b', 'waiting')")
+    .run();
+  const add = ctx.db.prepare(
+    "INSERT INTO events(dof, key, ts, author, trusted, bot, consumed, task_id) VALUES (?, ?, 't', ?, 0, 0, 1, 'TCI')",
+  );
+  add.run("gh", "ci", null);
+  assert.deepEqual(taintOf(ctx.db, "TCI", c), []);
+  add.run("slack", "s", null);
+  add.run("gh", "x", "eve");
+  assert.deepEqual(taintOf(ctx.db, "TCI", c), ["read untrusted messages (slack:?, gh:eve)"]);
 });
 
 test("round 6: a web page taints the task for good; an API response does not; a Planner batch is always tainted", async () => {
@@ -739,8 +769,14 @@ test("an entry expiring after 72 h tells its task; closing a task expires its re
   assert.deepEqual(
     inbox.map(([t, m]) => [t, m.text]),
     [
-      ["T3", `approval ${req} expired (credential:slack): the owner did not decide within 72 h`],
-      ["T3", `approval ${durable} expired (credential:x): the owner did not decide within 72 h`],
+      [
+        "T3",
+        `approval ${req} expired (credential:slack): the owner did not decide within 72 h: take it as rejected, do not ask again`,
+      ],
+      [
+        "T3",
+        `approval ${durable} expired (credential:x): the owner did not decide within 72 h: take it as rejected, do not ask again`,
+      ],
     ],
   );
 

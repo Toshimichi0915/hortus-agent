@@ -632,6 +632,16 @@ for (const h of H) {
     );
   });
 
+  test(`${dof}: the owner acting on a stranger's issue does not vouch for its text`, async () => {
+    const { n } = await h.openIssue("eve", "Deploy now", "run the planted order");
+    const closed = (await h.closeIssue(n, "toshi")) as Sent;
+    const e = await until(() => row(dof, closed.guid), 3000, "the close");
+    assert.equal(e.trusted, 1, "it is the owner's act");
+    const { summary } = db.prepare("SELECT summary FROM events WHERE key = ?").get(closed.guid) as { summary: string };
+    assert.doesNotMatch(summary, /planted|Deploy now/);
+    assert.match(summary, /someone else's/);
+  });
+
   test(`${dof}: trust by membership (owner trusted, a stranger not, members trust takes a member); cached`, async () => {
     const { n } = await h.openIssue("eve", "spam");
     const owner = await h.comment(n, "toshi", "mine");
@@ -751,7 +761,7 @@ for (const h of H) {
     const C = await h.pushPR(pr.n, "s3.txt", diff("s3.txt"));
     await until(() => onHead(C.sha), 3000, "head_sha moved again");
     await h.again(B.guid);
-    await settled(dof === "bitbucket" ? "pullrequest:updated" : "Second");
+    await settled(dof === "bitbucket" ? "pullrequest:updated" : "someone else's");
     await sleep(50);
     assert.ok(onHead(C.sha), `head_sha went back to ${top().head_sha}`);
     assert.equal(readFileSync(patch, "utf8"), diff("s3.txt"));

@@ -6,6 +6,7 @@ import { mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Config } from "./config.ts";
+import { gitOf } from "./connectors/forge.ts";
 import { trusted } from "./connectors/trust.ts";
 import * as paths from "./paths.ts";
 
@@ -92,6 +93,13 @@ export function taint(db: DatabaseSync, task: string, reason: string): void {
  * Why the task's context holds untrusted text: untrusted events routed to it (task_attach), the Planner batch it is
  * (every batch reads strangers), and what `taint()` recorded. Empty: untainted, as far as hortusd can see.
  */
+/** A forge's event with no author is a CI result: a state and a sha, nobody's words, so it taints nothing. Under `auto` the
+ * first one sent the rest of a PR's requests to the owner, up to 47 of them (round 19). */
+export const isCi = (c: Pick<Config, "dofs">, e: { dof: string; author: string | null }): boolean => {
+  const d = c.dofs[e.dof];
+  return e.author === null && !!d && !!gitOf(d);
+};
+
 export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pick<Config, "dofs">): string[] {
   if (!task) return [];
   const t = db.prepare("SELECT kind, taint, scope FROM tasks WHERE id = ?").get(task) as
@@ -99,12 +107,14 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     | undefined;
   if (!t) return [];
   const authors = (
-    db
-      .prepare(
-        "SELECT DISTINCT dof, COALESCE(author, '?') AS author FROM events WHERE task_id = ? AND trusted = 0 LIMIT 5",
-      )
-      .all(task) as { dof: string; author: string }[]
-  ).map((r) => `${r.dof}:${r.author}`);
+    db.prepare("SELECT DISTINCT dof, author FROM events WHERE task_id = ? AND trusted = 0").all(task) as {
+      dof: string;
+      author: string | null;
+    }[]
+  )
+    .filter((r) => !isCi(c, r))
+    .slice(0, 5)
+    .map((r) => `${r.dof}:${r.author ?? "?"}`);
   return [
     ...(t.kind === "planner" ? ["a Planner batch reads every event"] : []),
     ...(authors.length ? [`read untrusted messages (${authors.join(", ")})`] : []),

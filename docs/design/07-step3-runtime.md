@@ -55,7 +55,7 @@ End-to-end with `scripts/dev-run.sh`, the fake Slack, DeepSeek through `dev.upst
 - `hortus tasks` shows the card with the Worker's `send` notes and the summary after `done`.
 - A second chat task: "what did task <title> conclude?" → the Worker finds it with `dof search --in logs` and reads `summary.md`.
 - A chat session running `cat ~/.hortus/vault.json` gets `Permission denied` (F4) and the stream shows it.
-- Recovery: `systemctl kill -s KILL hortusd-test` mid-run → restart → the unattended task is `queued` and resumes (its next assistant message references the earlier tool result), the chat task is `waiting`.
+- Recovery: `systemctl kill -s KILL hortusd-test` mid-run → restart → the unattended task is `queued` and resumes (its next assistant message references the earlier tool result), the chat task is `waiting`, and its stream says the turn did not finish (v7 › Review round 19).
 - `STOP` on a running chat: the Worker stops after its current tool; status `waiting`; `hortus chat -r <id>` resumes it.
 - Budget: `task.budget` raise on a `waiting` task with `budget_exceeded` → the next message runs.
 - `close`: `tasks/<id>` and `clones/<id>` are gone, `dof/logs/<id>/` exists, `dof search --in logs` finds the title; the row stays with `summary`.

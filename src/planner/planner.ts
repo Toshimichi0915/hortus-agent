@@ -122,13 +122,17 @@ const oneLine = (s: string, n: number) => s.replace(/\s+/g, " ").trim().slice(0,
 /** The batch's one user message (15-planner.md › Input). The fixed system prompt is the planner plugin's. */
 export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): string {
   const refStmt = c.db.prepare(
-    "SELECT r.task_id, t.status FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
+    "SELECT r.task_id, t.status, t.project FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ?",
   );
   const ev = events.map((e) => {
     const m = new Set<string>();
     for (const ref of refsOf(e))
-      for (const r of refStmt.all(ref) as { task_id: string; status: string }[])
-        m.add(tasks.isClosed(r.status) ? `${r.task_id} (${r.status})` : r.task_id);
+      for (const r of refStmt.all(ref) as { task_id: string; status: string; project: string | null }[])
+        m.add(
+          tasks.isClosed(r.status)
+            ? `${r.task_id} (${r.status}${r.project ? `, project ${r.project}` : ""})`
+            : r.task_id,
+        );
     return renderEvent(c.config, e, [...m]);
   });
   const res = results.map((r) => {
@@ -173,7 +177,12 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
     return `- ${t.id} ${JSON.stringify(t.title)} (${what.filter(Boolean).join(", ")})${summary}${failed}`;
   });
   const section = (title: string, lines: string[]) => `## ${title}\n${lines.length ? lines.join("\n") : "none"}`;
-  return [section("Events", ev), section("Results", res), section("Open tasks", open)].join("\n\n");
+  // what no open task's line counts: a merge or transform that outlived its task, a chat's request
+  const { n: all } = c.db.prepare("SELECT COUNT(*) AS n FROM approvals WHERE status = 'pending'").get() as {
+    n: number;
+  };
+  const total = all ? [`${all} approval${all > 1 ? "s" : ""} waiting for the owner in all`] : [];
+  return [section("Events", ev), section("Results", res), section("Open tasks", open), ...total].join("\n\n");
 }
 
 /** false when a guard skipped it or there was nothing to do */

@@ -237,6 +237,80 @@ The flow on the real path: merge approved, the reply held 75 s after it. 16 runs
 
 Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.
 
+## Review round 19 — the live walk on the final build
+
+The installed unit (`hortus install`, a drop-in with `HORTUS_HOME`, ports and `Restart=no`, fixture home `/home/hortus-r19`, removed after), real `hortus0` and nftables, Planner, Workers and the judge on DeepSeek through the fixture vault by the real proxy, fake Slack, Telegram, Discord, GitHub and GitLab behind `dev.upstreams`. Seven walks, 110 runs, the harness in the session's scratchpad; the first two forge walks and one half of a third were spoilt by faults of the harness, each named below only where it hid something. The fake GitHub and Bitbucket now keep a PR's body. A real push does not move a fake's PR, so the harness moved it as the service would.
+
+The whole forge flow: an issue routed to a task, a PR, the owner's review comment, CI failing then passing on the head, then "please merge" or "do not merge". Decisions by the owner, by the judge, tokens of the Worker:
+
+| Flow, 2 runs each | Before the fixes, `human` | After, `human` | After, the credential `auto` |
+| --- | --- | --- | --- |
+| GitHub, merged | 43, 75; 1.6M, 2.5M (one never merged: budget gone on refusals) | 39, 55; 1.8M, 1.9M | 11+131, 6+145; 1.4M, 0.9M |
+| GitHub, held | 61, 103; 1.3M, 1.6M | 41, 26; 2.0M, 0.9M | 7+116, 5+126; 1.4M, 1.2M |
+| GitLab, merged | 59, 75; 2.4M (the other not counted) | 34, 41; 1.5M, 2.1M | 11+120, 11+130; 1.5M, 1.7M |
+| GitLab, held | (harness fault) | 33, 25; 1.5M, 1.0M | 6+68, 4+50; 1.1M, 0.7M |
+
+After: merged 4 of 4 under each policy, one or two asks for it; held 4 of 4 under each, no merge request made; every PR kept its body; CI and the review reached the same task on the same clone. `auto` to an open PR: 1 owner decision (the grant) in 7 of 8, 5 in the other, and 10-42 judged; up to the review comment 2-7 (`human` 13-26). What still reaches the owner under `auto`: the pushes, the merge, and what the judge doubted (a reply on the PR when the brief named the issue, a read of pipeline variables). One flow in eight under `human` reached the 2M budget.
+
+Other scenarios, the build named in the last section:
+
+| Scenario | Runs | Outcome |
+| --- | --- | --- |
+| Discord: a channel message | 2 | 2 right |
+| Discord: a thread follow-up | 2 | 2 right, both functions on `main`, replies in the channel or thread |
+| Discord: a stranger in the thread | 2 | 2 ignored, the Worker's reply unaffected, the task tainted by its batch, as designed |
+| Discord: pasted code | 2 | 2 byte-right |
+| Discord: 3,800-character order, the order last | 2 | 2 right (`Owner: billing` first); one Worker read the channel by API and was tainted for it, as round 18 wants |
+| pasted code, Slack, Telegram | 4 + 4 | 8 byte-right |
+| a 5,900-character order, Slack | 2 + 2 | 4 right |
+| "is anything waiting on me?" with requests waiting | 2 + 2 | 4 right, counts and tasks named |
+| a follow-up on a closed task | 2 + 2 + 2 | 6 right; the batch 13.7-15.7k tokens, 3 model calls (was up to 183k, 33-55 s) |
+| the owner asks to close a task whose request waits | 2 + 2 | `task_close` refused in all 4 (and twice more elsewhere); closed after the decision in 3, in the fourth the Worker honoured the "never mind" and the card waited at the end of the walk (nit) |
+| a request nobody decides | 2, 2, 2 | see below |
+| the owner closes a task with a request waiting | 2 | closed, the entry `expired`, reason "the task closed" |
+
+- **A label on a stranger's issue was the owner's order** (major, security boundary; `github.ts`, `gitlab.ts`, `bitbucket.ts › toEvent`; found reading `summaryOf`, the second reader's first question): an event's author is whoever acted and `trusted()` passes the owner by name, whoever wrote the text, so the owner labelling, assigning, closing or editing mallory's issue put its title and (since round 18) body in the batch unquoted, as the owner's own, up to 16,000 characters over many lines, with `scope.project` open and nothing tainted. `issues` wakes on every action. The event now carries the text only when its author wrote it (`forge.ts › NOT_THEIRS`): the type and ref say what happened, the mirror holds the rest.
+- **A task closed at its PR, so nothing reached it** (major, a v6 done-when unmet; Planner prompt): v6 and `17-github.md` keep the task while the PR is open, and the rule "work complete → close" closed it at `done`: 8 of 8. Each review then started a task with a new clone, and CI failures were ignored as "its task is closed", 5 of 8. A task with a `!<n>` ref stays open until the PR is merged or closed. After: 23 of 24 flows stayed on one task, CI and review in its inbox; the other went over budget and the merge took a second task.
+- **A follow-up on a closed PR had no repo, and its Worker burnt the budget** (major, wrong result; `tools.ts › task_create`, prompt): the Planner left `scope.repos` out (1 of 8), every call was refused, and the Worker took 2M tokens to read hortus's own `dist/`, the owner's review unanswered. A task made from a forge's event has that repo by default, and the prompt says a `403` with no `approval` is final, as round 17 did for a hidden read.
+- **The Planner could not open what `dof search` found** (major, wrong result; `planner-plugin.ts`): hits are paths under a root its prompt never named, `read` gave ENOENT, and it hunted for it. This was the 183k: no re-reading, a search for a path. The prompt ends with the root, the tag says `matches task <id> (done, project <p>)`, and only `summary.md` is to be read.
+- **The owner's follow-up on a forge read as anyone's** (major, wrong result; `task_attach`, prompt): `author=toshi trusted=true` says nothing of who that is, and 1 of 4 Workers answered "please merge" with "merging is the owner's call". `author=<id> (the owner)`, and the prompt says what that means. After: 16 of 16 merged or held as told.
+- **The first CI result turned `auto` into `human`** (major, wrong result; `db.ts › taintOf`, `tools.ts › batchTaint`): a CI event has no author, so it is untrusted, and attached it tainted the task: `tainted: read untrusted messages (github:?)`, every later request to the owner, 5-47 of them. It carries a state and a sha, nobody's words: a forge's author-less event taints nothing (`isCi`). A messenger's still does. 11-59 owner decisions became 4-11. Ceiling: a forge event with no sender would pass as CI; every signed delivery but CI has one.
+- **An approval with no text reached the task as nothing** (minor, wrong result; `github.ts`): the summary was `submitted … by toshi: `. A review's text starts with its state. GitLab's and Bitbucket's event names say it already.
+- **Spellings of a history read** (minor, security boundary; `HISTORY`): unversioned `GET /api/channels/…/messages` is served by Discord and was not matched, nor pins, nor `%2E`, nor `//`. `routed()`, as the consequential patterns. From the code; Discord's unversioned route from its documentation.
+- **A merge outliving its task was not in "anything waiting?"** (minor, wrong result; `renderBatch`): a closed task and a chat are in no open line. The batch ends with the total. Seen right live, 9 and 10 at once.
+- **A name resolved to a session's address** (minor; `pipeline.ts › egress`): `host resolves to a private address: ollama.com` with `10.77.1.7`, twice in the first walk, a model call refused each time. The cause is inferred, not traced: hortusd's own lookup reusing the source port of a session's recent DNS query rides that conntrack entry, DNATed to the session's DNS, which answers with the session's own address. The failure is what that predicts, and for role `core` the same answer would have been connected to. Such an answer is asked once more; none in the 6 walks after.
+- **`hortusd.internal` in replies** (minor; `prompt.ts`): one line. Round 18: 9 of 86 replies linked it. A first wording made Workers explain it instead (6 of 16 said there was no PR link); the second: 2 of 62 replies mention it.
+
+## Review round 19 — a second reader for round 18
+
+- **`summaryOf`.** The trust the cut uses is the row's `trusted`, the same the taint rule reads: held, the defect was what that value means (above). A non-trusted line break by another path: every `summary` goes through this one call (one `INSERT INTO events`), title, edit and display name included; attachment names are not in a summary; `\s` misses U+0085, which no model reads as a line (nit). `refs`, `author` and `ts` come from ids and signed payloads. A trusted non-owner's lines stay in the fence, and `quote` cannot be closed from inside; under `trust: anyone` a planted line reads as round 18 feared, the owner's choice (nit). The owner's own paste can imitate a batch entry, `- [e7] …`: it was already the owner's text, and the Planner obeys that anyway (nit).
+- **A stranger's issue body:** one line, 2,000, quoted, 500 in a batch; `task_create` refuses it; attached, it taints through `events.task_id`. Held.
+- **`HISTORY`:** `conversations.replies` and paged reads hold; posting never matches (`POST` on Discord, `chat.postMessage` on Slack); `HEAD` and `304` return first. A read of a channel of only trusted authors taints too: acceptable, the prompt sends nobody there, the owner decides what follows, and a task grant is one click.
+- **`renderBatch`, `event_ignore`, the 500 cap:** an unknown id refuses the whole call before any row changes; the cut is on UTF-16 units and inside the quote. Held, but for the total above.
+- **`task_close`:** the Planner sees `invalid: task <id> has a request waiting for the owner; leave it open`, and left it, 6 of 6 live. Never decided: the entry expires at 72 h, the task wakes; **it asked again each time** (2 of 2, three expiries running: minor, stuck; v6 says "expires as rejected"). The notice now says to take it as rejected: 2 of 2 ended, and the Planner closed them. The owner's close: above, as designed.
+- **`prepareClone`:** the realpath check holds for a link at `.git`, `objects` or `info`; a `.git` file gives no `alternates`; `dir`'s parent is not the Worker's. The `git -C dir` calls after it run under `HORTUS_NO_NET` only. A directory at `alternates` fails that start, by the Worker's own hand. Held.
+
+## Review round 19 — the loose ends
+
+**A message drained into a turn that died**, regraded: above nit by the definitions (a misleading screen in normal use: any restart during a chat's turn left the owner's line unanswered with nothing said, and v6's "chat waits" is kept). The stream now says the turn did not finish and to send a message. A Worker's failure DM says `task <id> failed; what you last sent it may be unanswered`; it was already resumable by the owner's next message, with the drained one in its session.
+
+Ceilings of this round:
+
+- **`human` can spend a task's budget on decisions alone.** A token count takes the cached input, and each decision wakes the Worker with its whole context of 20-50k: 60 wakes are 2M. One flow in eight here, the owner told by the budget DM. Counting cached input apart would change what `budget` means. README says so where it explains `policy`.
+- `NOT_THEIRS` means a label on a stranger's issue no longer says what the issue is; the Planner reads the mirror if it must.
+- A task with an open PR waits for good if the owner never merges or closes it, as `17-github.md` says.
+- The closing rule, the owner tag and the refusal line are prompt lines: 23 of 24, 16 of 16, and no scope refusal or burnt budget in the 24 flows after, not guarantees.
+
+## Review round 19 — the runs and what is left
+
+`pnpm lint` clean. On the tree of this commit (only this paragraph changed after): default, `KEEP` unset, 3 × (635 tests: 606 pass, 0 fail, 29 skipped); `--test-concurrency=64` beside `stress -c 32`, 2 × 606/0; `HORTUS_TEST_NET=1` 607 pass, 0 fail; `HORTUS_TEST_LLM=1` 614 pass, 0 fail; VM 23 pass, 0 fail, 3 skipped; VM with NET 14 pass, 0 fail, 12 skipped; the image rebuilt for the prompts, one string in `dispatcher.ts` before these runs (hortusd's, not the guest's). No test's bound was loosened.
+
+Two failures on the tree before, both looked into. `dispatcher.test`'s "VM failures" failed 1 of 5: a QEMU gone at once ends by either of two paths, and I had given them different DM texts; one text now. `step4blive`'s Discord thread test failed once, the Worker replying in the parent channel with a `message_reference`: 2 of 17 here against 1 of 10 on round 18's tree, so a model's rate, not this round's; the owner still gets the reply (nit).
+
+Which build each walk ran on: `human` forge flows, Discord and the round 18 fixes on the tree before only the expiry notice, the CI taint and the failure text (none of which a `human` flow or a messenger scenario reaches); the expiry and `task_close` runs on the tree before the CI taint; the `auto` forge flows on the tree before the status line of a chat restart and the failure text. The closing rule and the follow-up numbers come from the last two forge walks of each policy. Bitbucket was not walked: GitLab was the second forge.
+
+Still pending, all on the owner's credentials or hardware: real-service verification of all six connectors; a real phone passkey. Open with no owner action: round 15's `vm.max_concurrent` stall, unexplained, none since.
+
 ## Testing
 
 No messenger or forge credentials exist on this machine. Each connector ships a fake service under `test/fakes/` (Slack: Socket Mode and the Web API it uses; later Discord, Telegram, GitHub) and every done-when in `docs/build-order.md` is exercised against it through `dofs.<name>.api` and `dev.upstreams`. Verification against the real services is pending the owner's credentials; the checklist for that is in each design doc.

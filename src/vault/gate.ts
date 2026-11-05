@@ -380,7 +380,7 @@ function tellExpired(rows: Pick<ApprovalRow, "id" | "category" | "task_id" | "pa
         deps.inboxWrite(taskId, {
           from: "approval",
           trusted: true,
-          text: `approval ${a.id} expired (${a.category}): the owner did not decide within 72 h`,
+          text: `approval ${a.id} expired (${a.category}): the owner did not decide within 72 h: take it as rejected, do not ask again`,
           data: { approval: a.id, decision: "expired", category: a.category },
         });
       } catch (e) {

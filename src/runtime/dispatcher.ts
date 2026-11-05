@@ -265,7 +265,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         tasks.setStatus(row.id, "waiting", { error: message, hours: row.hours + (Date.now() - startedAt) / 3.6e6 });
         if (row.kind !== "chat" && !tasks.closing.has(row.id)) {
           tasks.failureRow(row.id, "result", `failed: ${message}`);
-          tasks.hooks.failed(`task ${row.id} failed`);
+          tasks.hooks.failed(`task ${row.id} failed; what you last sent it may be unanswered`);
         }
       }
       reply(row.id, { type: "error", message });
@@ -384,7 +384,10 @@ async function finish(
     const budget = error.startsWith("budget_exceeded");
     if (!msgs.some((m) => m.type !== "reply"))
       tasks.failureRow(id, budget ? "budget_exceeded" : "result", budget ? error : `failed: ${error}`);
-    tasks.hooks.failed(`task ${id} ${budget ? "is over budget" : "failed"}`);
+    // what it drained into this turn is in its session, unanswered, and the next owner message resumes it
+    tasks.hooks.failed(
+      budget ? `task ${id} is over budget` : `task ${id} failed; what you last sent it may be unanswered`,
+    );
   }
   log().info("session ended", { task: id, code: exit.code, signal: exit.signal, outbox: msgs.length });
   await publishLog(id, row.title, tasks.get(id).status).catch((e) => log().error("publishLog failed", e, { task: id }));

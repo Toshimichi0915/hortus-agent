@@ -293,6 +293,13 @@ test("mirror: a PR with its diff, a review, a review comment, check suites; CI w
   await fake.review("o/r", pr.n, { user: "carol", state: "APPROVED", body: "lgtm" });
   const rv = await until(() => fm(`o__r/${t}/review-${fake.reviewsOf("o/r").at(-1)?.id}.md`));
   assert.equal(rv.frontmatter.review, "approved");
+  // an approval with no text still says what it is: the task's inbox gets only this
+  await fake.review("o/r", pr.n, { user: "carol", state: "APPROVED" });
+  await until(() =>
+    (db.prepare("SELECT summary FROM events ORDER BY id DESC LIMIT 1").get() as { summary: string }).summary.endsWith(
+      "by carol: approved",
+    ),
+  );
   await fake.reviewComment("o/r", pr.n, { user: "carol", body: "nit", path: "a.txt", line: 1 });
   const rc = await until(() => fm(`o__r/${t}/rc-${fake.reviewCommentsOf("o/r").at(-1)?.id}.md`));
   assert.equal(rc.frontmatter.path, "a.txt");

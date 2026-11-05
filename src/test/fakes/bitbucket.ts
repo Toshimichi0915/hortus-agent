@@ -444,6 +444,7 @@ export class FakeBitbucket {
       const pr = await this.openPR(full, {
         user: this.self,
         title: String(body.title ?? ""),
+        body: String(body.description ?? ""),
         head: String(src?.branch?.name),
         base: dst?.branch?.name ?? "main",
       });

@@ -6,7 +6,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
 import { equals } from "../vault/ops.ts";
-import { cached, dirOf, eventQueue, HttpError, iso, matches, rest } from "./forge.ts";
+import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const HOUR = 3600_000;
@@ -207,7 +207,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const bot = !pipeline && !!u && (own || u.bot === true || BOT_NAME.test(u.username));
     const result = pipeline && a?.sha ? `${a.status} on ${a.sha.slice(0, 7)}` : a?.status;
     const opened = [a?.title, a?.description].filter(Boolean).join("\n\n");
-    const text = a?.note ?? (opened || (result ?? b.ref ?? ""));
+    const written = a?.note ?? (opened || (result ?? b.ref ?? ""));
+    const text = u && a?.author_id !== undefined && a.author_id !== u.id ? NOT_THEIRS : written;
     return {
       dof: name,
       key,

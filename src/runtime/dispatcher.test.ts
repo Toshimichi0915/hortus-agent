@@ -207,7 +207,7 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
   try {
     let id = await run("exec sleep 600");
     assert.match(tasks.get(id).error ?? "", /^boot timeout: /);
-    assert.deepEqual(told, [`task ${id} failed`]);
+    assert.deepEqual(told, [`task ${id} failed; what you last sent it may be unanswered`]);
     assert.deepEqual(
       outbox(id).map((m) => [m.seq, m.type]),
       [[-1, "result"]],
@@ -226,13 +226,13 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
     // a QEMU gone before startVm listens: ESRCH or a dead guest, not a task `running` for good
     told.length = 0;
     id = await run("exit 0");
-    assert.deepEqual(told, [`task ${id} failed`]);
+    assert.deepEqual(told, [`task ${id} failed; what you last sent it may be unanswered`]);
 
     // QEMU exits 0 however the guest's Worker ended
     told.length = 0;
     id = await run(`${OUT}; sleep 0.3`);
     assert.match(tasks.get(id).error ?? "", /^guest died: /);
-    assert.deepEqual(told, [`task ${id} failed`]);
+    assert.deepEqual(told, [`task ${id} failed; what you last sent it may be unanswered`]);
 
     // the owner starts it again: the Worker's seq 1 is read past the row hortusd wrote, and the exit is clean
     told.length = 0;
@@ -370,7 +370,7 @@ test("a task that cannot start fails once: approvals and notes from others wait 
     tasks.hooks.failed = (x) => void told.push(x);
     const u = tasks.create({ kind: "unattended", title: "u", brief: "b", runtime: "host", scope: { credentials: [] } });
     await until(() => tasks.get(u.id).status === "waiting", 3000, "the failed start");
-    assert.deepEqual(told, [`task ${u.id} failed`]);
+    assert.deepEqual(told, [`task ${u.id} failed; what you last sent it may be unanswered`]);
     const row = ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ?").all(u.id) as {
       seq: number;
       body: string;

@@ -197,6 +197,9 @@ export async function egress(
   let addresses: { address: string }[];
   try {
     addresses = await dnsLookup(host, { all: true });
+    // a lookup of ours that lands on the source port of a session's recent query rides its conntrack entry to that session's
+    // DNS, which answers with the session's own address (2 in a live walk, a Worker's model call refused): a new port misses it
+    if (addresses.some((a) => a.address.startsWith("10.77."))) addresses = await dnsLookup(host, { all: true });
   } catch (e) {
     return refuse(502, `cannot resolve ${host}: ${(e as NodeJS.ErrnoException).code ?? e}`);
   }
@@ -326,8 +329,8 @@ const utf8 = (b: Buffer): string | undefined => {
 const STREAM_REQUEST = /^application\/(x-git-|octet-stream)/i;
 const HTML = /^\s*(text\/html|application\/xhtml\+xml)/i;
 /** A messenger's own history read by API: what `scope.dofs` would have tainted, by another door. */
-const HISTORY =
-  /^(\w+ slack\.com\/api\/conversations\.(history|replies)|GET discord\.com\/api\/v\d+\/channels\/\d+\/messages)/;
+export const HISTORY =
+  /^(\w+ slack\.com\/api\/(conversations\.(history|replies)|pins\.list)|GET discord\.com\/api\/(v\d+\/)?channels\/\d+\/(messages|pins))/i;
 const STREAM_RESPONSE = /^(text\/event-stream|application\/(x-git-|octet-stream))/i;
 const HOP = new Set([
   "connection",
@@ -1066,7 +1069,7 @@ async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   // forge prompt needs them, and tainting them is `auto` meaning `human`
   if (p.client.task && p.client.role === "worker" && HTML.test(ct))
     taint(ctx().db, p.client.task, `read a web page: ${p.host}`);
-  const asked = `${p.raw.method} ${p.host}${p.template.url.match(URL_PARTS)?.[2] ?? ""}`;
+  const asked = `${p.raw.method} ${p.host}${routed(p.template.url.match(URL_PARTS)?.[2] ?? "")}`;
   if (p.client.task && p.client.role === "worker" && HISTORY.test(asked))
     taint(ctx().db, p.client.task, `read a messenger's history: ${p.host}`);
   // `accept-encoding: identity` is only a request: a compressed body would hide every value from the scrubber

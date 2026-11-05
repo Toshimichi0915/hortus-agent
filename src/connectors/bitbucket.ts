@@ -7,7 +7,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
-import { cached, dirOf, eventQueue, HttpError, iso, matches, rest, worst } from "./forge.ts";
+import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest, worst } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const HOUR = 3600_000;
@@ -164,7 +164,9 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const opened = [(b.pullrequest ?? b.issue)?.title, b.pullrequest?.description ?? b.issue?.content?.raw]
       .filter(Boolean)
       .join("\n\n");
-    const text = b.comment?.content?.raw ?? (opened || (result ?? ""));
+    const writer = b.comment?.user ?? b.pullrequest?.author ?? b.issue?.reporter;
+    const written = b.comment?.content?.raw ?? (opened || (result ?? ""));
+    const text = u && writer && idOf(writer) !== idOf(u) ? NOT_THEIRS : written;
     return {
       dof: name,
       key,

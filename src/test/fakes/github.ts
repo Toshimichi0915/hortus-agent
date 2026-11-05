@@ -652,7 +652,13 @@ export class FakeGitHub {
     if (rest === "/pulls" && M === "POST") {
       const pr = await this.openPR(
         r.full_name,
-        { user: "hortus[bot]", title: String(body.title), head: String(body.head), base: String(body.base ?? "main") },
+        {
+          user: "hortus[bot]",
+          title: String(body.title),
+          head: String(body.head),
+          base: String(body.base ?? "main"),
+          body: String(body.body ?? ""),
+        },
         { drop: true },
       );
       return ok(this.pullJson(r, r.things.get(pr.n) as Thing), 201);

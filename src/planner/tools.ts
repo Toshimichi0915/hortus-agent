@@ -5,8 +5,8 @@
  */
 import { existsSync } from "node:fs";
 import { z } from "zod";
-import { dirOf } from "../connectors/forge.ts";
-import { dofNames, readableOf, taint, taintOf } from "../db.ts";
+import { dirOf, gitOf } from "../connectors/forge.ts";
+import { dofNames, isCi, readableOf, taint, taintOf } from "../db.ts";
 import { define } from "../rpc.ts";
 import * as paths from "../paths.ts";
 import { tasks } from "../runtime/index.ts";
@@ -47,7 +47,11 @@ function batchTaint(caller: Caller): string | undefined {
   const n = /^planner-(\d+)$/.exec(caller.task ?? "")?.[1];
   if (n === undefined) return undefined;
   const db = pctx().db;
-  const strangers = db.prepare("SELECT 1 FROM events WHERE consumed = ? AND trusted = 0 LIMIT 1").get(Number(n));
+  const untrusted = db.prepare("SELECT dof, author FROM events WHERE consumed = ? AND trusted = 0").all(Number(n)) as {
+    dof: string;
+    author: string | null;
+  }[];
+  const strangers = untrusted.some((e) => !isCi(pctx().config, e));
   const results = db.prepare("SELECT DISTINCT task_id FROM outbox WHERE consumed = ?").all(Number(n)) as {
     task_id: string;
   }[];
@@ -85,13 +89,21 @@ define("task_create", {
     const evs = events(event_ids);
     for (const e of evs) if (!e.trusted) throw new RpcError("forbidden", `untrusted event e${e.id}`);
     const { project } = scope;
+    // an order on a forge's thread is about that repo: a follow-up on a closed PR created without it had every call
+    // refused, and its Worker spent its whole budget on them (1 of 8 live)
+    const forged = evs.flatMap(refsOf).flatMap((r) => {
+      const [dof = "", name = ""] = r.split(":");
+      const d = c.dofs[dof];
+      return d && gitOf(d) ? [`${dof}:${name}`] : [];
+    });
+    const repos = scope.repos?.length ? scope.repos : [...new Set(forged)];
     if (project !== undefined) {
       if (!c.projects[project]) throw new RpcError("not_found", `no project ${project}`);
       const other = evs.find((e) => !isOwner(c, e));
       if (other)
         throw new RpcError("forbidden", `scope.project needs every event to be the owner's (e${other.id} is not)`);
     }
-    for (const r of scope.repos ?? []) {
+    for (const r of repos) {
       const [dof = "", name = ""] = r.split(":");
       const d = c.dofs[dof];
       // `owner/repo` (GitLab: groups/sub/repo), no `..` segment: the name also becomes a path and a scope pattern
@@ -118,7 +130,7 @@ define("task_create", {
       brief: full,
       scope: {
         ...(scope.credentials ? { credentials: scope.credentials } : {}),
-        ...(scope.repos ? { repos: scope.repos } : {}),
+        repos,
         // v7 › Review round 7: none unless the Planner asks (the brief carries the events)
         dofs: scope.dofs ?? [],
       },
@@ -149,7 +161,8 @@ define("task_attach", {
         task_id,
         {
           from: ref ?? `${e.dof}:${e.key}`,
-          ...(e.author ? { author: e.author } : {}),
+          // the owner's follow-up on a forge read as a stranger's: "merge this" answered with "that's the owner's call"
+          ...(e.author ? { author: isOwner(pctx().config, e) ? `${e.author} (the owner)` : e.author } : {}),
           trusted: !!e.trusted,
           text: `${e.summary ?? ""}${where}`,
           data: { event: e.id, dof: e.dof, key: e.key, refs: refsOf(e) },

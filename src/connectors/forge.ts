@@ -4,6 +4,11 @@
  */
 import type { ConnectorDeps, Event, Incoming } from "../types.ts";
 
+/** An event's author is who acted, so `trusted` and the owner's plain rendering are theirs: the text of what they acted on
+ * stays out when someone else wrote it. The owner's label on a stranger's issue put its body before the Planner, as the
+ * owner's own unquoted order and with `scope.project` open (round 19). */
+export const NOT_THEIRS = "(its text is someone else's: read it in the mirror)";
+
 /**
  * The webhook listener's hand-off to the gateway loop. `push` queues one event and resolves when the gateway acks it
  * (after its INSERT, before any mirror work), so the listener answers `200` only once the row exists. One consumer.

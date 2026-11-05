@@ -437,7 +437,7 @@ for (const m of [discord, telegram]) {
       assert.equal(eventRow("mention the date")?.task_id, dmTask);
       const msg = inboxOf(dmTask).at(-1);
       assert.equal(msg?.trusted, true);
-      assert.equal(msg?.author, m.dof === "discord" ? "200" : "500");
+      assert.equal(msg?.author, `${m.dof === "discord" ? "200" : "500"} (the owner)`);
       assert.match(msg?.text ?? "", /alice: thanks, and mention the date/);
       await until(
         () => reqs(dmTask).some((r) => r.messages.some((x) => x.content?.includes("mention the date"))),

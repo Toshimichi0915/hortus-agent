@@ -5,7 +5,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
-import { dirOf, eventQueue, matches, worst } from "./forge.ts";
+import { dirOf, eventQueue, matches, NOT_THEIRS, worst } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const MEMBER = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -148,15 +148,19 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
   function toEvent(type: string, key: string, p: Payload): Event {
     const repo = p.repository?.full_name ?? "";
     const thread = threadOf(type, p);
-    const obj: { title?: string; body?: string | null; updated_at?: string; author_association?: string } | undefined =
-      p.comment ?? p.review ?? p.pull_request ?? p.issue;
+    const obj:
+      | { title?: string; body?: string | null; updated_at?: string; author_association?: string; user?: User }
+      | undefined = p.comment ?? p.review ?? p.pull_request ?? p.issue;
     const ci = type === "check_suite";
     const prs = ci ? (p.check_suite?.pull_requests ?? []).map((x) => ref(repo, `!${x.number}`)) : [];
     const s = p.check_suite;
     const result = s && `${s.conclusion ?? s.status} on ${s.head_sha.slice(0, 7)}`;
     // an issue's order is in its body: the title alone reached the brief, and the Planner filled in the rest (round 18)
     const opened = [obj?.title, obj?.body].filter(Boolean).join("\n\n");
-    const text = p.comment?.body ?? p.review?.body ?? (opened || (result ?? (p as { ref?: string }).ref ?? ""));
+    // a review's verdict is its state: an approval has no text, and the task saw nothing but "submitted"
+    const review = p.review && [p.review.state.toLowerCase(), p.review.body].filter(Boolean).join(": ");
+    const written = p.comment?.body ?? review ?? (opened || (result ?? (p as { ref?: string }).ref ?? ""));
+    const text = obj?.user && obj.user.login !== p.sender?.login ? NOT_THEIRS : written;
     return {
       dof: name,
       key,

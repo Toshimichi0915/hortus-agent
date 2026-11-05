@@ -290,7 +290,7 @@ test("the owner's issue comment → task (repos, host fallback) → the Worker a
 }, async () => {
   planner(`export default ({ n, events }) => n === 0 ? { calls: [{ name: "task_create", input: {
     title: "fix #1", brief: "!bash sh ${join(fake, "worker.sh")}", event_ids: [events[0].id],
-    scope: { repos: ["github:o/r"], credentials: ["github"] } } }] } : { text: "created" };`);
+    scope: { credentials: ["github"] } } }] } : { text: "created" };`); // no repos: the event's own is the default
   const count = batches().length;
   await gh.comment("o/r", 1, { user: "toshi", body: "fix this" });
   const b = await nextBatch(count);

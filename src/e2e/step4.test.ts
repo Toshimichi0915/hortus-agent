@@ -348,6 +348,13 @@ test("untrusted: task_create refused → ignored; a stranger in the task's threa
   assert.equal(msg.author, "U2");
   assert.equal(msg.trusted, false);
   assert.match(msg.text, /bob: the logs are in/);
+  // the owner in the same thread is said to be the owner
+  slack.post("C1", { user: "U1", text: "and the old ones too", thread_ts: threadTs });
+  b = await nextBatch(count++);
+  const own = db((d) => d.prepare("SELECT body FROM inbox WHERE task_id = ? ORDER BY seq DESC").get(threadTask)) as {
+    body: string;
+  };
+  assert.equal(JSON.parse(own.body).author, "U1 (the owner)");
 
   // (c) bob and the owner in one batch: the brief carries bob's text inside <<<quoted … >>>
   planner(`export default ({ n, events }) => {
@@ -906,7 +913,9 @@ test("failures reach the owner once: a coalesced DM and one Planner row each, no
   assert.deepEqual(failureDms().length - before, 1, `the burst's first DM: ${failureDms().slice(before)}`);
   assert.match(
     failureDms().at(-1) ?? "",
-    new RegExp(`^task \\S+ (failed|is over budget) http://127\\.0\\.0\\.1:${port}/tasks$`),
+    new RegExp(
+      `^task \\S+ (failed; what you last sent it may be unanswered|is over budget) http://127\\.0\\.0\\.1:${port}/tasks$`,
+    ),
   );
   const spent = ids.at(-1) as string;
   assert.match(taskRow(spent)?.error ?? "", /^budget_exceeded: budget exceeded: /);
@@ -953,7 +962,10 @@ test("failures reach the owner once: a coalesced DM and one Planner row each, no
     const again = ids[0] as string;
     await api("task.send", { id: again, text: "try once more" });
     await until(() => failureDms().length === dms + 1, 15_000, "the new failure's DM");
-    assert.match(failureDms().at(-1) ?? "", new RegExp(`^task ${again} failed `));
+    assert.match(
+      failureDms().at(-1) ?? "",
+      new RegExp(`^task ${again} failed; what you last sent it may be unanswered `),
+    );
     await until(() => allResults(seen).includes(`[${again}] result:`), 20_000, "the new failure's row");
     assert.match(allResults(seen), /failed: worker\.provider ghost is not a credential/);
   } finally {

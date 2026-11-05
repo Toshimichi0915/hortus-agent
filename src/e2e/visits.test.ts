@@ -221,6 +221,11 @@ test("a chat mid-turn at a stop, nothing unread: waiting, and the next message g
   await down();
   await up();
   await waitStatus(id, "waiting");
+  // the turn died with the owner's line in it: the page says so
+  const db = openDb(paths.db());
+  const said = db.prepare("SELECT 1 FROM replies WHERE task_id = ? AND body LIKE '%did not finish%'").get(id);
+  db.close();
+  assert.ok(said);
   await api("task.send", { id, text: "next\n!bash echo next-answer" });
   await seen(id, "next-answer");
   await waitStatus(id, "waiting");
