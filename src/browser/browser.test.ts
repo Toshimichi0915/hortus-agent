@@ -244,6 +244,19 @@ test("cookies: captured as a placeholder in the browser, the real value at the f
   assert.match(other.body, /destination/);
 });
 
+test("an Upgrade header is no way round the cookie layer: a session's Set-Cookie is captured, the page taints", async () => {
+  const up = { connection: "Upgrade", upgrade: "websocket" };
+  const set = await raw({ host: "app.fake.test", path: "/set", headers: up });
+  const row = ctx.db
+    .prepare("SELECT name, value FROM captured WHERE json_extract(meta, '$.host') = 'app.fake.test'")
+    .get() as { name: string; value: string } | undefined;
+  assert.ok(row, "captured");
+  assert.equal(row.value, "sess-app.fake.test");
+  assert.match(String(set.headers["set-cookie"]), new RegExp(`session=hortus-secret-${row.name}`));
+  assert.doesNotMatch(JSON.stringify(set), /sess-app/);
+  assert.ok(ctx.db.prepare("SELECT 1 FROM tasks WHERE id = 'T' AND taint IS NOT NULL").get(), "tainted");
+});
+
 test("captured requests: GET passes, POST asks per request; another task needs a grant first", {
   skip: !hasChromium,
 }, async () => {

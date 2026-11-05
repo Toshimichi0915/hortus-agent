@@ -1036,28 +1036,30 @@ async function slot(c: Client): Promise<() => void> {
   };
 }
 
-async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
+/** Set-Cookie captured first, whatever the body or transport (HEAD, 204, a stream, binary, a WebSocket's handshake): the
+ * client never gets a real value. The scrubber that knows the capture. */
+export function takeCookies(p: Prepared, res: http.IncomingMessage): Scrubber {
+  if (!p.cookie || res.headers["set-cookie"] === undefined) return p.scrub;
+  // unscrubbed: a value it already knows would read as a placeholder and its new Expires be lost (a rolling session)
+  const raw = joined(flatHeaders(res.headers));
+  const r = transforms.response(COOKIE, { status: res.statusCode ?? 502, headers: raw, body: null }, p.raw);
+  if (!r.capture?.length) return p.scrub;
+  store(p, r.capture);
+  return scrubber(p.host);
+}
+
+export async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
   const status = res.statusCode ?? 502;
-  let scrub = p.scrub;
+  let scrub: Scrubber;
+  try {
+    scrub = takeCookies(p, res);
+  } catch (e) {
+    res.resume();
+    log.error("transform failed", e, { transform: COOKIE, host: p.host });
+    return refuse(502, "transform failed", { transform: COOKIE });
+  }
   let headers = scrub.headers(flatHeaders(res.headers));
   const ct = String(res.headers["content-type"] ?? "");
-  // Set-Cookie is captured first, whatever the body (HEAD, 204, a stream, binary): the browser never gets a real value
-  if (p.cookie && headers["set-cookie"] !== undefined) {
-    try {
-      // unscrubbed: a value it already knows would read as a placeholder and its new Expires be lost (a rolling session)
-      const raw = joined(flatHeaders(res.headers));
-      const r = transforms.response(COOKIE, { status, headers: raw, body: null }, p.raw);
-      if (r.capture?.length) {
-        store(p, r.capture);
-        scrub = scrubber(p.host);
-        headers = scrub.headers(flatHeaders(res.headers));
-      }
-    } catch (e) {
-      res.resume();
-      log.error("transform failed", e, { transform: COOKIE, host: p.host });
-      return refuse(502, "transform failed", { transform: COOKIE });
-    }
-  }
   if (p.raw.method === "HEAD" || status === 204 || status === 304) {
     res.resume();
     return { status, headers, body: "" };
