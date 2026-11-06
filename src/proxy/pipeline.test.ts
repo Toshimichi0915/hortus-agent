@@ -78,6 +78,10 @@ const fake = http.createServer((req, res) => {
       const kind = req.url.slice(7);
       if (kind === "json") return json({ usage: { prompt_tokens: 100, completion_tokens: 20 } });
       if (kind === "none") return json({ error: "nothing counted" });
+      if (kind === "limited") {
+        res.writeHead(429, { "content-type": "application/json" });
+        return res.end('{"error":"rate limited"}');
+      }
       if (kind === "ndjson") {
         res.writeHead(200, { "content-type": "application/x-ndjson" });
         return res.end(`${'{"message":{"content":"x"}}\n'.repeat(200)}{"done":true,"prompt_eval_count":900,"eval_count":200}\n`);
@@ -915,6 +919,18 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     assert.equal(await charged("cut"), 35, "a stream cut before its last usage: a token a delta at least");
     assert.equal(await charged("none"), Math.ceil((2 + 29) / 4), "no usage in a body: its bytes, request and response");
     assert.ok((await charged("ndjson")) >= 1300, "Ollama's native stream on the same key is counted too");
+    // a refusal generated nothing: its prompt is not charged (at each retry of a rate limit)
+    const r0 = row().metered;
+    const limited = await send({
+      host: "api.gh.test",
+      method: "POST",
+      path: "/model/limited",
+      headers: { authorization: "Bearer hortus-secret-gh" },
+      body: "x".repeat(40_000),
+    });
+    assert.equal(limited.status, 429);
+    await sleep(50);
+    assert.ok(row().metered - r0 <= 10, `a 429 charged ${row().metered - r0}`);
     assert.ok((await charged("silent")) >= 1000, "a stream that reports nothing is counted by its bytes");
     // another credential, or an uncredentialed call to the same host, is nobody's model spend
     const n = row().metered;

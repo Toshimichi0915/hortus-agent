@@ -423,6 +423,9 @@ test("tasks: SIGKILL while a close waits for its session to end → the restart 
   // the wait is a session's teardown, or its whole start (a big clone, a VM's boot): a restart then ran it again
   writeFileSync(paths.paused(), "");
   task("ck");
+  // and its schedule's run, which ends with it: the restart's finish closes it too
+  task("ck-r");
+  run("UPDATE tasks SET kind = 'run', parent = 'ck' WHERE id = 'ck-r'");
   const d = start("tasks.close.after-kill");
   await up();
   await call("task.close", { id: "ck" }).catch(() => {});
@@ -431,6 +434,7 @@ test("tasks: SIGKILL while a close waits for its session to end → the restart 
   await up();
   await until(() => !existsSync(paths.task("ck")), 10_000, "the close finished").catch(() => {});
   assert.equal(sql<{ status: string }>("SELECT status FROM tasks WHERE id = 'ck'")[0]?.status, "done");
+  assert.equal(sql<{ status: string }>("SELECT status FROM tasks WHERE id = 'ck-r'")[0]?.status, "done");
   assert.equal(existsSync(paths.task("ck")), false);
   await stop();
   rmSync(paths.paused(), { force: true });

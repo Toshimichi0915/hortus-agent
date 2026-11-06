@@ -1216,7 +1216,10 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     try {
       u = text === undefined ? undefined : usageOf(JSON.parse(text));
     } catch {} // not JSON
-    charge(p, u ? u.input + u.output : Math.ceil(((p.raw.body?.length ?? 0) + r.buf.length) / 4));
+    // a refusal (a 429 of the provider's own limit, a 5xx) generated nothing: its prompt charged at every retry stopped a
+    // long task "over budget" for a rate limit (round 23)
+    const asked = status < 400 ? (p.raw.body?.length ?? 0) : 0;
+    charge(p, u ? u.input + u.output : Math.ceil((asked + r.buf.length) / 4));
   }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);
