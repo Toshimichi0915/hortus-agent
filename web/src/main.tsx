@@ -1,5 +1,5 @@
 /** The console's shell: the sidebar (new chat, pages, recent chats, settings, pause), the routes, toasts. */
-import { type ReactNode, StrictMode, useEffect, useState } from "react";
+import { Component, type ReactNode, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Label } from "@/components/ui/label";
 import {
@@ -33,10 +33,12 @@ import { TaskPage, Tasks } from "./pages/tasks.tsx";
 import {
   Button,
   buttonVariants,
+  Callout,
   ConfirmHost,
   cn,
   confirmAction,
   Empty,
+  errorText,
   Icon,
   type IconName,
   isDark,
@@ -78,6 +80,22 @@ const ROUTES: [RegExp, (m: string[]) => ReactNode][] = [
   ],
   [/^\/settings\/([\w-]+)$/, ([, s = ""]) => <Settings section={s} />],
 ];
+
+/** A page that throws (it reads a field today's daemon lacks: CONNECT.md's step 3) says why; the shell stays up. */
+class PageGuard extends Component<{ children: ReactNode }, { error?: unknown }> {
+  override state: { error?: unknown } = {};
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+  override render() {
+    if (this.state.error === undefined) return this.props.children;
+    return (
+      <Page title="This page could not be shown">
+        <Callout tone="danger">{errorText(this.state.error)}</Callout>
+      </Page>
+    );
+  }
+}
 
 function Route({ path }: { path: string }) {
   const moved = MOVED[path];
@@ -353,7 +371,9 @@ function App() {
         <SidebarInset id="main" tabIndex={-1} className="min-w-0 overflow-hidden outline-none">
           <TopBar />
           <PausedBanner />
-          <Route path={path} />
+          <PageGuard key={path}>
+            <Route path={path} />
+          </PageGuard>
         </SidebarInset>
         <Toasts />
         <ConfirmHost />

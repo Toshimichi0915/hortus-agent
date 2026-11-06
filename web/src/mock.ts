@@ -1,7 +1,7 @@
 /**
  * A pretend hortusd: seed data and one handler per RPC, so every page can be designed and clicked through without the
  * daemon. Chats get a scripted Worker that thinks, runs tools, streams Markdown and waits on approvals.
- * Deleted when api.ts is wired to the real one.
+ * `pnpm web` runs on it (`VITE_MOCK=1`); CONNECT.md's step 9 deletes it.
  */
 import {
   ApiError,
@@ -21,10 +21,10 @@ import {
   type Source,
   type Task,
   type TaskDetail,
+  bus,
 } from "./api.ts";
 import { validateConfig } from "./schema.ts";
 
-export const bus = new EventTarget();
 const emit = (...topics: string[]) => {
   for (const t of topics) bus.dispatchEvent(new Event(t));
 };
@@ -1321,6 +1321,7 @@ export const handlers: Record<string, Handler> = {
     const t = get(id);
     return {
       task: { ...t, pending: pendingOf(id).length },
+      replies: replies.get(id) ?? [],
       approvals: pendingOf(id).map(withTitle),
       inbox: inbox.get(id) ?? [],
       outbox: outbox.get(id) ?? [],
@@ -1353,7 +1354,6 @@ export const handlers: Record<string, Handler> = {
         : {}),
     };
   },
-  "task.rows": ({ id, after }: { id: string; after: number }) => (replies.get(id) ?? []).filter((x) => x.seq > after),
   "task.open": ({ text, cwd }: { text: string; cwd?: string }) => {
     const project = Object.entries(config.projects).find(([, p]) => p.path === cwd)?.[0] ?? null;
     const id = Date.now().toString(36) + Math.random().toString(16).slice(2, 10);

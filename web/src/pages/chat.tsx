@@ -7,6 +7,7 @@ import {
   type Config,
   type Credential,
   call,
+  reconnecting,
   type Row,
   streamRows,
   type Task,
@@ -28,6 +29,7 @@ import {
   navigate,
   RelTime,
   useAction,
+  useStore,
   useTitle,
 } from "../ui.tsx";
 import { ApprovalCard, approvalTitle } from "./approvals.tsx";
@@ -344,6 +346,7 @@ export function Home() {
 export function Conversation({ id }: { id: string }) {
   const d = useCall<TaskDetail>("task.get", { id }, ["tasks", "approvals"]);
   const paused = useCall<{ paused: boolean }>("pause.get", {}, ["tasks"]);
+  const down = useStore(reconnecting);
   const [rows, setRows] = useState<Row[]>([]);
   const [panel, setPanel] = useState(false);
   const [budget, setBudget] = useState(false);
@@ -392,6 +395,11 @@ export function Conversation({ id }: { id: string }) {
               {t?.title ?? ""}
             </h1>
             {t && (t.status !== "waiting" || t.pending || t.error) && <TaskStatus task={t} />}
+            {down && (
+              <span className="flex-none text-xs text-muted-foreground" role="status">
+                Reconnecting…
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {t?.project && (

@@ -1,18 +1,19 @@
 /**
- * The console API as the pages use it. `call(method, input)` is `POST /api/<method>` (role owner, `X-Hortus: 1`);
- * `subscribe(topics)` is the SSE stream (`/events/tasks,approvals`); `streamRows` is a chat's (`/events/chat?task=`).
- * For now all three run against the in-memory mock in mock.ts: wiring the daemon replaces their bodies, not the pages.
+ * The console API as the pages use it, and the one door to it. `call(method, input)` is `POST /api/<method>` (role
+ * owner, `X-Hortus: 1`); `subscribe(topics)` and `streamRows` share the page's one SSE stream (src/console/live.ts).
+ * `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead, which a production bundle leaves out.
  *
- * ponytail: what the pages read beyond today's RPCs, for the wiring step: `pause.get`; `task.get`'s `outbox`,
- * `schedules`, `origin`, `tainted` and `console_log`; approvals' `task_title`; `credential.list`'s `enabled` (the
- * durable grant); `project.status`; `source.list`'s `size`, `deliveries_today`, `last_delivery`, `missing`, `webhook`; `dof.file`; `login.frame` (the mock's stand-in for the `/events/login` frames);
- * `remote.status`; `vm.image`; and the chat stream sending each row's JSON line instead of its HTML.
+ * ponytail: what the pages read beyond today's RPCs, until CONNECT.md's step 3: `pause.get`; `task.get`'s `outbox`,
+ * `schedules`, `origin`, `tainted` and `console_log`; `task.list`'s `pending`; approvals' `task_title`;
+ * `credential.list`'s `enabled` (the durable grant); `project.status`; `source.list`'s `size`, `deliveries_today`,
+ * `last_delivery`, `missing`, `webhook`; `dof.file`; `login.frame` (the mock's stand-in for the `/events/login` frames);
+ * `remote.status`; `vm.image`; the `settings` event; and the chat stream sending each row's JSON line, not its HTML.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config.ts";
 import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
-import { bus, handlers } from "./mock.ts";
-import { errorText } from "./ui.tsx";
+import { liveStream } from "../../src/console/live.ts";
+import { errorText, store, toast } from "./ui.tsx";
 
 export type { Config, CredentialType, SearchHit, TaskKind, TaskStatus };
 
@@ -29,24 +30,63 @@ export class ApiError extends Error {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const CODES: Record<number, ApiError["code"]> = { 400: "invalid", 403: "forbidden", 404: "not_found" };
+
 export async function call<T = unknown>(method: string, input: unknown = {}): Promise<T> {
-  await sleep(80 + Math.random() * 160);
-  const h = handlers[method] as ((i: unknown) => unknown) | undefined;
-  if (!h) throw new ApiError("not_found", `no method ${method}`);
-  return structuredClone(await h(input)) as T;
+  if (import.meta.env.VITE_MOCK === "1") {
+    const { handlers } = await import("./mock.ts");
+    await sleep(80 + Math.random() * 160);
+    const h = handlers[method] as ((i: unknown) => unknown) | undefined;
+    if (!h) throw new ApiError("not_found", `no method ${method}`);
+    return structuredClone(await h(input)) as T;
+  }
+  let status: number;
+  let text: string;
+  try {
+    const res = await fetch(`/api/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Hortus": "1" },
+      body: JSON.stringify(input),
+    });
+    status = res.status;
+    text = await res.text();
+  } catch {
+    throw new ApiError("failed", "hortusd is not answering");
+  }
+  // the guards in front of the router answer in plain text
+  let body: { result?: T; error?: { code: ApiError["code"]; message: string; data?: unknown } } | undefined;
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  if (body?.error) throw new ApiError(body.error.code, body.error.message, body.error.data);
+  if (status >= 300 || !body) throw new ApiError(CODES[status] ?? "failed", text.slice(0, 200) || `HTTP ${status}`);
+  return body.result as T;
 }
 
-/** Calls `f` on each event of `topics` (`tasks`, `approvals`, `settings`, `chat:<id>`). */
+/** Each topic's events (`tasks`, `approvals`, `settings`, `chat:<id>`), from the stream or from mock.ts. */
+export const bus = new EventTarget();
+/** The page's stream is down, and retrying. */
+export const reconnecting = store(false);
+const watch =
+  import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), reconnecting.set);
+
+/** Calls `f` on each event of `topics`. */
 export function subscribe(topics: string[], f: () => void): () => void {
   for (const t of topics) bus.addEventListener(t, f);
+  const release = watch?.(topics);
   return () => {
     for (const t of topics) bus.removeEventListener(t, f);
+    release?.();
   };
 }
 
 /**
- * A chat's rows after `after`, then each new one as it lands (the SSE replay). One pull at a time, in order: events
- * that arrive meanwhile ask for one more, so rows are never repeated or reordered.
+ * A chat's rows after `after`, then each new one as it lands. One pull at a time, in order: events that arrive meanwhile
+ * ask for one more, so rows are never repeated or reordered. A pull that fails waits for the next event; the stream's
+ * own reconnect is one.
+ *
+ * ponytail: `task.get`'s last 1000 rows are the source, because the chat stream sends HTML; over 1000 rows between two
+ * pulls leaves a gap. CONNECT.md's step 4 puts the rows in the stream.
  */
 export function streamRows(id: string, after: number, onRows: (rows: Row[]) => void): () => void {
   let last = after;
@@ -62,7 +102,7 @@ export function streamRows(id: string, after: number, onRows: (rows: Row[]) => v
     try {
       do {
         again = false;
-        const rows = (await call<Row[]>("task.rows", { id, after: last })).filter((r) => r.seq > last);
+        const rows = (await call<{ replies: Row[] }>("task.get", { id })).replies.filter((r) => r.seq > last);
         if (!live) return;
         const end = rows.at(-1);
         if (end) {
@@ -70,6 +110,8 @@ export function streamRows(id: string, after: number, onRows: (rows: Row[]) => v
           onRows(rows);
         }
       } while (again);
+    } catch {
+      // the page's own `task.get` shows why
     } finally {
       busy = false;
     }
@@ -81,6 +123,9 @@ export function streamRows(id: string, after: number, onRows: (rows: Row[]) => v
     off();
   };
 }
+
+/** RPCs the daemon lacks, once per load: until CONNECT.md's step 3, as several pages only spin on them. */
+const gaps = new Set<string>();
 
 /**
  * `method(input)`, again on each event of `topics`; `null` calls nothing. An answer to an older input never replaces
@@ -98,6 +143,10 @@ export function useCall<T>(method: string | null, input: unknown = {}, topics: s
       if (n === seq.current) setState({ data, loading: false });
     } catch (e) {
       if (n === seq.current) setState((s) => ({ ...s, error: errorText(e), loading: false }));
+      if (e instanceof ApiError && e.message === `no method ${method}` && !gaps.has(method)) {
+        gaps.add(method);
+        toast(`This hortusd has no ${method}`, "error");
+      }
     }
   }, [method, key]);
   const topicKey = topics.join(",");
@@ -154,6 +203,7 @@ export interface Msg {
 
 export interface TaskDetail {
   task: Task;
+  replies: Row[];
   approvals: Approval[];
   inbox: Msg[];
   outbox: Msg[];
