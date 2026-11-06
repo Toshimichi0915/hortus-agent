@@ -30,7 +30,15 @@ import { taskId } from "../ids.ts";
 import { publishLog, renderSession } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
-import { type InboxMsg, RpcError, type TaskJson, type TaskKind, type TaskScope, type TaskStatus } from "../types.ts";
+import {
+  GOES_ON,
+  type InboxMsg,
+  RpcError,
+  type TaskJson,
+  type TaskKind,
+  type TaskScope,
+  type TaskStatus,
+} from "../types.ts";
 import { providerSecret } from "../vault/providers.ts";
 import { read as readVault } from "../vault/vault.ts";
 
@@ -561,8 +569,7 @@ define("task.budget", {
     if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is ${t.status}`);
     // the raise means go on, and nothing else would start it: the page just said "ok". Not a schedule's parent over
     // budget: its timers fire again by themselves
-    const spent =
-      t.status === "waiting" && /^budget_exceeded: (budget exceeded|the session was stopped)/.test(t.error ?? "");
+    const spent = t.status === "waiting" && GOES_ON.test(t.error ?? "");
     budget(id, b);
     if (spent) inboxWrite(id, { from: "console", trusted: true, text: "The owner raised the budget: go on." });
     return { ok: true };

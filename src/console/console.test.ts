@@ -367,6 +367,11 @@ test("500 tasks render under 200 ms, hostile titles and replies are escaped ever
   ctx.db.prepare("UPDATE tasks SET metered = 1500000 WHERE id = 't1'").run();
   assert.match((await get("/tasks/t1")).body, /1\.5M \/ 2\.0M tokens/);
   ctx.db.prepare("UPDATE tasks SET metered = 0 WHERE id = 't1'").run();
+  // live: a stop at its hours went on at the raise alone, while the card asked for a raise and then a message too
+  const stop = "budget_exceeded: the session was stopped after 1.00 h";
+  ctx.db.prepare("UPDATE tasks SET error = ? WHERE id = 't1'").run(stop);
+  assert.match((await get("/tasks/t1")).body, /waiting: raise its budget and it goes on/);
+  ctx.db.prepare("UPDATE tasks SET error = NULL WHERE id = 't1'").run();
   for (const path of [...ROUTES, "/tasks/t1", "/chat/t1"]) {
     const r = await get(path);
     clean(path, r.body);

@@ -356,3 +356,6 @@ export interface ResponseResult {
 
 /** What the Approvals page shows for one entry; the shape depends on `kind`/`category`. */
 export type ApprovalSummary = Record<string, unknown>;
+
+/** A budget stop the owner's raise alone starts again (task.budget writes "go on"); the task's card says so. */
+export const GOES_ON = /^budget_exceeded: (budget exceeded|the session was stopped)/;

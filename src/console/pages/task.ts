@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { taintOf } from "../../db.ts";
 import { readCapped } from "../../hostile.ts";
+import { GOES_ON } from "../../types.ts";
 import {
   budget,
   button,
@@ -93,7 +94,7 @@ export const task: Page = (ctx, { m, q }) => {
     "tasks",
     t.title || id,
     h`<div data-refresh id="card">
-${open ? pausedLine(ctx) : ""}${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${t.error.startsWith("budget_exceeded") ? "raise its budget, then " : ""}${t.kind === "chat" ? "a message" : "a note"} from you starts it again` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
+${open ? pausedLine(ctx) : ""}${t.error ? h`<div class="r error">${errorLine(t.error)}${t.status === "waiting" ? ` · waiting: ${GOES_ON.test(t.error) ? "raise its budget and it goes on" : `${t.error.startsWith("budget_exceeded") ? "raise its budget, then " : ""}${t.kind === "chat" ? "a message" : "a note"} from you starts it again`}` : ""}${t.error.includes("\n") ? details("full error", t.error) : ""}</div>` : ""}
 <section class="summary">${t.summary ? h`<pre>${t.summary}</pre>` : h`<p class="empty">no summary yet</p>`}</section>
 ${t.brief ? details("Brief", t.brief) : ""}
 <table class="kv">
