@@ -101,7 +101,7 @@ export async function recover(c: Ctx): Promise<void> {
       const { cursor } = scan(join(paths.out(id), "sessions"));
       const unread = pending(paths.task(id), cursor).length > 0;
       tasks.setStatus(id, unread ? "queued" : "waiting");
-      // the turn it was in is over with nothing said: the owner's last line just sat there (round 19)
+      // the turn it was in is over with nothing said: the owner's last line just sat there
       if (!unread)
         reply(id, {
           type: "status",
@@ -133,7 +133,7 @@ export async function recover(c: Ctx): Promise<void> {
     ids = readdirSync(join(paths.home(), "tasks"));
   } catch {}
   for (const id of ids) rmSync(join(paths.task(id), "vfs"), { recursive: true, force: true });
-  // a close a crash cut short (round 8): the row is closed, its directory still here
+  // a close a crash cut short: the row is closed, its directory still here
   const closed = c.db.prepare("SELECT 1 FROM tasks WHERE id = ? AND status IN ('done', 'failed')");
   for (const id of ids)
     if (closed.get(id)) {

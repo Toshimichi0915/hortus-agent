@@ -16,7 +16,7 @@ const log = logger("gate");
 
 export type Summary = Record<string, unknown>;
 
-/** Wired by the integration: the task inbox writer (step 3), owner.notify (step 4), the console's base URL. */
+/** Wired by the integration: the task inbox writer, owner.notify, the console's base URL. */
 export const deps = {
   inboxWrite(taskId: string, msg: Omit<InboxMsg, "seq" | "ts">): void {
     log.info("inbox write not wired", { task: taskId, text: msg.text });
@@ -125,7 +125,7 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
   if (open) return check(input);
   // a tainted task (untrusted messages, a web page, a stranger's search hit, a tainted batch):
   // the judge sees only the brief and the request, so the owner decides, once per task if they grant the category
-  // to it (round 7: a task grant taken while the entry showed the taint)
+  // to it (a task grant taken while the entry showed the taint)
   const tainted = taintOf(c.db, task, c.config);
   if (tainted.length)
     return taintGranted(input.category, task)
@@ -151,7 +151,7 @@ export function check(input: CheckInput): "pass" | { pending: number } {
   const kind = input.kind ?? "request";
   const requester = input.caller.task ?? null;
   const task = input.durable ? null : requester;
-  // origin:* (always human): a grant on the origin passes every non-consequential request (v6 › Browser)
+  // origin:* (always human): a grant on the origin passes every non-consequential request
   if (
     kind === "request" &&
     input.category.startsWith("origin:") &&
@@ -249,7 +249,7 @@ export function coalesce(
 
 /**
  * The entry may be approved with a task grant: an `auto` request sent to the owner only because its task is tainted
- * (not consequential: those ask every time, v6).
+ * (not consequential: those ask every time).
  */
 export function grantable(row: { kind: string | null; task_id: string | null; payload?: string | null }): boolean {
   if (row.kind !== "request" || !row.task_id || !row.payload) return false;
@@ -323,7 +323,7 @@ function applyDecision(
 }
 
 /**
- * Round 8: a decision (or an expiry), its task grant and its inbox messages commit together; a crash between them
+ * A decision (or an expiry), its task grant and its inbox messages commit together; a crash between them
  * left the entry decided and its tasks never told, waiting for good. A SAVEPOINT nests in a caller's transaction
  * (submit.ts). A crash rolls it all back to pending (the owner decides again); an inbox file already renamed stays, a
  * stale "retry" the Worker meets as a 403 pending. At depth 0 the SAVEPOINT is a deferred transaction, unlike every
@@ -358,7 +358,7 @@ function addToScope(taskId: string, category: string): void {
 
 /**
  * Every minute: pending entries older than 72 h become `expired`; a retry then creates a fresh entry. The requesting
- * task hears it as it would a rejection (v6: "expires as rejected"): a Worker waiting on the entry was otherwise
+ * task hears it as it would a rejection: a Worker waiting on the entry was otherwise
  * left waiting for good, with nothing pending on its card.
  */
 export function expire(now = Date.now()): number {

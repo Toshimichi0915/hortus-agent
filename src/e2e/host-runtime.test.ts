@@ -1,5 +1,5 @@
 /**
- * Step 3 (the parts that need no network): the real daemon (HORTUS_NO_NET=1)
+ * The host runtime (the parts that need no network): the real daemon (HORTUS_NO_NET=1)
  * in a delegated user scope (`systemd-run --user --scope -p Delegate=yes`, so sessions get cgroups), real sandboxed
  * Workers (Landlock) and a fake provider plugin shipped through `worker.plugins`. The fake "model" acts on directive
  * lines in the last user message (`!bash <cmd>`, `!done <summary>`, `!send <text>`, `!fail`), answers a tool result
@@ -68,7 +68,7 @@ let unit = "";
 let n = 0;
 
 function startDaemon(): void {
-  unit = `hortusd-step3-${process.pid}-${++n}`;
+  unit = `hortusd-host-runtime-${process.pid}-${++n}`;
   daemon = spawn(
     "systemd-run",
     [
@@ -150,8 +150,8 @@ const turn = async (id: string, text: string) => {
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step3-");
-  fake = tempDir("hortus-step3fake-");
+  home = tempDir("hortus-host-runtime-");
+  fake = tempDir("hortus-host-runtime-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -425,7 +425,7 @@ test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof 
   skip,
 }, async () => {
   await turn(chatA, "!done zebracorn summary line");
-  // v6 step 3: `hortus tasks <id>` shows the card with the Worker's notes and summary
+  // `hortus tasks <id>` shows the card with the Worker's notes and summary
   const cli = spawnSync(process.execPath, ["--no-warnings", bin("hortus"), "tasks", chatA], {
     env: { ...process.env, HORTUS_HOME: home },
     encoding: "utf8",
@@ -483,7 +483,7 @@ if has npm; then r npx --offline --yes ./lp; r npm init -y; r npm i --offline ./
 if has pnpm; then mkdir pn && cd pn && echo {} > package.json && r pnpm add --offline ../lp && r pnpm store path; cd ..; fi
 if has gh; then r gh config get git_protocol; fi
 if python3 -c 'import ensurepip' 2> /dev/null; then r python3 -m venv .venv && r .venv/bin/pip --version; fi
-r git init -q g && r git -C g config user.name x && r mkdir -p "$XDG_CACHE_HOME/hortus-step3-$$" && rmdir "$XDG_CACHE_HOME/hortus-step3-$$"
+r git init -q g && r git -C g config user.name x && r mkdir -p "$XDG_CACHE_HOME/hortus-host-runtime-$$" && rmdir "$XDG_CACHE_HOME/hortus-host-runtime-$$"
 echo end
 `,
   );

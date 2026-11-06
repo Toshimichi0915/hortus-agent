@@ -1,7 +1,7 @@
 /**
- * Step 4b with a live Worker (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`; no sudo, unlike step4live): does a real model,
+ * Discord and Telegram with a live Worker (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`; no sudo, unlike planner.live.test.ts): does a real model,
  * from the real Worker prompt and a brief as the Planner writes it, reply in the right place on Discord and Telegram?
- * No daemon (step4b.test.ts is the daemon's half): the task plugin alone as in planner.live.test.ts, the shipped
+ * No daemon (discord-telegram.test.ts is the daemon's half): the task plugin alone as in agent/planner.live.test.ts, the shipped
  * transforms readable, and a `curl` on PATH standing in for the proxy: hosts to the fakes, placeholders to the tokens.
  * A Bearer header on Discord or a Telegram URL without the placeholder is refused by the fake as by the service.
  */

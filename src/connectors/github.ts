@@ -154,7 +154,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const prs = ci ? (p.check_suite?.pull_requests ?? []).map((x) => ref(repo, `!${x.number}`)) : [];
     const s = p.check_suite;
     const result = s && `${s.conclusion ?? s.status} on ${s.head_sha.slice(0, 7)}`;
-    // an issue's order is in its body: the title alone reached the brief, and the Planner filled in the rest (round 18)
+    // an issue's order is in its body: the title alone reached the brief, and the Planner filled in the rest
     const opened = [obj?.title, obj?.body].filter(Boolean).join("\n\n");
     // a review's verdict is its state: an approval has no text, and the task saw nothing but "submitted"
     const review = p.review && [p.review.state.toLowerCase(), p.review.body].filter(Boolean).join(": ");
@@ -230,7 +230,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  /** The PR's top message (v6's PR example) and, with `diff`, its `files/diff.patch`. */
+  /** The PR's top message and, with `diff`, its `files/diff.patch`. */
   /** `heard`: a reconcile's, past the first sync, of an open PR (its CI result, routed if nobody heard it) */
   async function prTop(repo: string, pr: Pull, diff: boolean, heard = false): Promise<Change[]> {
     const t = `!${pr.number}`;

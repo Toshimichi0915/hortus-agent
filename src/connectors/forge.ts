@@ -6,7 +6,7 @@ import type { Change, ConnectorDeps, Event, Incoming } from "../types.ts";
 
 /** An event's author is who acted, so `trusted` and the owner's plain rendering are theirs: the text of what they acted on
  * stays out when someone else wrote it. The owner's label on a stranger's issue put its body before the Planner, as the
- * owner's own unquoted order and with `scope.project` open (round 19). */
+ * owner's own unquoted order and with `scope.project` open. */
 export const NOT_THEIRS = "(its text is someone else's: read it in the mirror)";
 
 /** How a PR or MR's end, or its reopening, opens an event's summary (each connector's `<type>.<action>`). */

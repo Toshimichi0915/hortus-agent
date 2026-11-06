@@ -1,12 +1,12 @@
 /**
- * Round 8: does the live Planner scope `scope.dofs` narrowly (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`)? The real
+ * Does the live Planner scope `scope.dofs` narrowly (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`)? The real
  * planner prompt and tools, live DeepSeek through ollama.com (the key copied into the temp ctl/home, as live.test.ts),
  * one batch of the owner's requests; the verdict RPCs go to a recording stand-in for hortusd.internal. Only two events
  * need a DOF (a thread's history, a search of past messages); every other task should get none. Prints `# planner …`.
  *
- * A tally over RUNS batches, not one batch (round 13): the model hands a DOF to about 1 unneeded task in 25 with this
+ * A tally over RUNS batches, not one batch: the model hands a DOF to about 1 unneeded task in 25 with this
  * prompt ("reply to bob" so as to read the channel, "remind me" so as to confirm in the thread), and to 1 in 5 without
- * its rule (round 8), so one batch failed 1 run in 4 and told nobody anything. The bound sits between the two rates.
+ * its rule, so one batch failed 1 run in 4 and told nobody anything. The bound sits between the two rates.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

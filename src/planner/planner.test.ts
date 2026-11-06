@@ -16,7 +16,7 @@ test("renderEvent: a stranger's burst costs the batch 500 characters each; the o
   assert.equal(renderEvent(c, { ...e, author: "U1", trusted: 1 }).match(/x/g)?.length, 2000);
 });
 
-test("planner.runtime: unset, a VM once the image is there (v6), the host until then; the owner's word stands", () => {
+test("planner.runtime: unset, a VM once the image is there, the host until then; the owner's word stands", () => {
   const unset = Config.parse({});
   assert.equal(plannerRuntime(unset, null), "vm");
   assert.equal(plannerRuntime(unset, "no image"), "host");

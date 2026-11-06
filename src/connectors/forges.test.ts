@@ -1,5 +1,5 @@
 /**
- * The step-6 forge flow, parameterized by forge, against the fake GitHub,
+ * The forge flow, parameterized by forge, against the fake GitHub,
  * GitLab and Bitbucket at once: one gateway, one webhook listener, the real mirror writer, vault and proxy pipeline
  * (HORTUS_NO_NET=1, ephemeral ports). Workers are loopback clients: 127.0.0.2 (REST) and 127.0.0.5 (git, reached
  * through `http.curloptResolve`). GitHub-only behaviour (installation tokens, the delivery log) is in github.test.ts.
@@ -118,7 +118,7 @@ interface Harness {
   inScope: string;
   outScope: string;
   create: { path: string; body: string };
-  /** every REST door to a ref, as the service documents it: "the merge button is the approval" (v6) */
+  /** every REST door to a ref, as the service documents it: "the merge button is the approval" */
   writes: [string, string][];
   /** the other doors to the same calls (GraphQL, numeric ids): no scope pattern, so refused, not asked */
   reachless: string[];
@@ -194,11 +194,11 @@ const H: Harness[] = [
       ["PATCH", "/repos/o/r"],
       ["POST", "/repos/o/r/branches/feat/x/rename"],
       ["POST", "/repos/o/r/releases"],
-      // round 13, from the published OpenAPI: a temporary private fork is a repository; an import fills one
+      // from the published OpenAPI: a temporary private fork is a repository; an import fills one
       ["POST", "/repos/o/r/security-advisories/GHSA-1/forks"],
       ["PUT", "/repos/o/r/import"],
       ["PATCH", "/repos/o/r/import"],
-      // round 14: anything on GraphQL but a read the transform vouches for (src/proxy/gh.test.ts); publishing a draft
+      // anything on GraphQL but a read the transform vouches for (src/proxy/gh.test.ts); publishing a draft
       ["POST", "/graphql"],
       ["PATCH", "/repos/o/r/releases/1"],
     ],
@@ -262,7 +262,7 @@ const H: Harness[] = [
       // Grape's `format :json` routes a `.json` suffix to the same endpoint
       ["PUT", "/api/v4/projects/g%2Fsub%2Fp/merge_requests/1/merge.json"],
       ["PUT", "/api/v4/projects/123/merge_requests/1/merge"],
-      // round 13, from the published OpenAPI: an import into a project, deletes that are a POST
+      // from the published OpenAPI: an import into a project, deletes that are a POST
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/import/git"],
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/jobs/1/erase"],
       ["POST", "/api/v4/projects/g%2Fsub%2Fp/housekeeping"],
@@ -658,7 +658,7 @@ for (const h of H) {
     db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:!${pr.n}`);
     const end = (await h.merge(pr.n, "toshi")) as Sent;
     await until(() => fm(dof, `${D}/!${pr.n}/!${pr.n}.md`)?.frontmatter.state === "merged", 3000, "merged");
-    // its wake comes after the commit, which a loaded machine finishes well after the file is there (round 24)
+    // its wake comes after the commit, which a loaded machine finishes well after the file is there
     const woke = db.prepare("SELECT 1 FROM events WHERE key = ? AND consumed = 0");
     await until(() => woke.get(end.guid), 3000, "the merge's wake");
     const w = await quiet();

@@ -92,7 +92,7 @@ test("a wrong token is a 401", async () => {
   await assert.rejects(create({ ...deps(), fetch: (u, i) => fetch(u, i) }), /HTTP 401/);
 });
 
-test("message: key session_id:s, author member, refs, v6 frontmatter, wake", async () => {
+test("message: key session_id:s, author member, refs, frontmatter, wake", async () => {
   const m = fake.post("300", { user: "201", text: "hello world" });
   const r = await mirrored();
   assert.match(r.event.key, /^sess-\d+:\d+$/);

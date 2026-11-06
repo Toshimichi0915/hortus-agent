@@ -1,5 +1,5 @@
 /**
- * Forge repo mirrors (v6 › Projects › Forge origin): one bare read cache per project at
+ * Forge repo mirrors: one bare read cache per project at
  * `repos/<dof>/<owner__repo>.git`, fetched on push events and the 10-min poll, never pruned, `gc.auto 0`. Workers
  * clone with `--reference` to it; it is never a push target.
  *

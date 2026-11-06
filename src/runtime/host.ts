@@ -119,7 +119,7 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     ["filter.lfs.smudge", "git-lfs smudge -- %f"],
     ["filter.lfs.process", "git-lfs filter-process"],
   ];
-  // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
+  // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password,
   // under the user each forge expects
   for (const [name, d] of Object.entries(config?.dofs ?? {})) {
     const g = gitOf(d);

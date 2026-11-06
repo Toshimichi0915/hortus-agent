@@ -1,6 +1,6 @@
 /**
- * Round 8: the owner's day on a real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider, fake Slack and
- * GitHub, a fake judge endpoint behind `dev.upstreams`). Round 7 counted it in-process (gate.test "a day"); here every
+ * The owner's day on a real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider, fake Slack and
+ * GitHub, a fake judge endpoint behind `dev.upstreams`). gate.test.ts counts it in-process ("a day"); here every
  * step is the real one: the owner's DMs wake the Planner, whose scripted task_create picks `scope.dofs` from the
  * text (25 tasks read the slack DOF, where a stranger wrote; 10 read the owner-only github DOF, 5 none: both judged), each
  * Worker's curl goes through the proxy from its loopback alias (2 posts, 1 consequential delete under `auto`), taint
@@ -23,7 +23,7 @@ const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "tru
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// as step6's fake: the Planner scripted by planner.mjs, a Worker acting on `!bash`, `done` on a `!done` tool output;
+// as github.test.ts's fake: the Planner scripted by planner.mjs, a Worker acting on `!bash`, `done` on a `!done` tool output;
 // it also stands in for the `openai` type, so planner.provider can be an openai credential the judge calls for real
 const FAKE = (dir: string) => `
 const DIR = ${JSON.stringify(dir)};

@@ -44,7 +44,7 @@ function entries(z: string[]): DiffEntry[] {
 export async function recover(db: DatabaseSync, name: string): Promise<void> {
   const tree = paths.dof(name);
   if (!existsSync(join(tree, ".git"))) return;
-  // and the ref locks of one killed inside its ref update: each later commit died on "cannot lock ref" (round 23)
+  // and the ref locks of one killed inside its ref update: each later commit died on "cannot lock ref"
   const wt = join(paths.dofRepo(name), "worktrees", basename(tree));
   for (const f of [join(wt, "index.lock"), join(wt, "HEAD.lock"), join(paths.dofRepo(name), "refs/heads/main.lock")])
     rmSync(f, { force: true });
@@ -188,7 +188,7 @@ async function commitNow(db: DatabaseSync | null, name: string, changes: Change[
     await git(root, "update-ref", INDEXED, sha);
   }
   // `gc.auto 0` left every commit's objects loose for good: ~5 a message, and the channel's tree is rewritten whole
-  // each time (round 7 soak: 1,240 messages were 43 MB loose, 1.9 MB packed). `gc --auto` packs them once ~1,000 are
+  // each time (1,240 messages were 43 MB loose, 1.9 MB packed). `gc --auto` packs them once ~1,000 are
   // loose, in the chain (never detached; ~0.25 s in a child), and prunes nothing: every object is reachable from `main`.
   const gc = [`gc.auto=${gcAuto.loose}`, "gc.autoDetach=false", "gc.pruneExpire=never"].flatMap((c) => ["-c", c]);
   // the commit is made and indexed: a failed pack (ENOSPC) is logged, the next commit tries again

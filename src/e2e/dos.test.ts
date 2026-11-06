@@ -1,5 +1,5 @@
 /**
- * Event-loop denial of service (review round 5): a Worker and a hostile upstream attack hortusd's proxy, RPC and
+ * Event-loop denial of service: a Worker and a hostile upstream attack hortusd's proxy, RPC and
  * search while the console is probed. The daemon's modules (vault, proxy, mirror, console) run in this process; the
  * hostile upstream and the attacking Worker run in a forked child (src/test/fakes/hostile.ts), so their work is not on
  * the loop measured. Per attack: the loop's longest hold (monitorEventLoopDelay max), `POST /api/task.list` p95, and
@@ -198,7 +198,7 @@ test(
 );
 
 test("20 Workers at once, each flooding RPCs and proxy requests: the console stays responsive", opts, async () => {
-  // before round 6's turns and global buffering bound: hold 1.3 s, task.list p95 550 ms, rss +1.4 GB
+  // before turns and global buffering were bounded: hold 1.3 s, task.list p95 550 ms, rss +1.4 GB
   // 100 s, not 60: at 96 runnable processes on 32 CPUs 78 of 1,280 searches were still queued at 60 s with hold 202 ms and
   // p95 204 ms. hold and p95 are what guard the console, and a search that never ends still fails here
   const r = await measure("swarm", 64, 100_000, 700, 20);

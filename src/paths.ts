@@ -1,4 +1,4 @@
-/** The ~/.hortus tree (hortus_v6.md › Process). Read lazily so tests can point HORTUS_HOME at a temp dir. */
+/** The ~/.hortus tree. Read lazily so tests can point HORTUS_HOME at a temp dir. */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";

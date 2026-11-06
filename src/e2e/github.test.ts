@@ -1,7 +1,7 @@
 /**
- * Step 6 done-when with the Planner: the real daemon (HORTUS_NO_NET=1) in a delegated
- * user scope like step4.test.ts, the fake GitHub behind `dev.upstreams`, webhooks posted to the listener on an
- * ephemeral `HORTUS_WEBHOOK_PORT`. The fake provider scripts both the Planner (`<fake>/planner.mjs`, as in step 4) and
+ * The GitHub flow with the Planner: the real daemon (HORTUS_NO_NET=1) in a delegated
+ * user scope like planner.test.ts, the fake GitHub behind `dev.upstreams`, webhooks posted to the listener on an
+ * ephemeral `HORTUS_WEBHOOK_PORT`. The fake provider scripts both the Planner (`<fake>/planner.mjs`, as in planner.test.ts) and
  * the Worker (directive lines; a tool result carrying `!done <summary>` calls `done`). The Worker's REST calls go
  * through the proxy's plain listener from its loopback alias; its git reaches the alias's TLS listener through the
  * NO_NET insteadOf + `http.curloptResolve` sandboxEnv adds. The test approves pending entries as the owner would.
@@ -193,8 +193,8 @@ const pending = () =>
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step6-");
-  fake = tempDir("hortus-step6fake-");
+  home = tempDir("hortus-github-");
+  fake = tempDir("hortus-github-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -228,7 +228,7 @@ before(async () => {
     JSON.stringify({ ...gh.vault("github"), fake: { type: "token", value: "x", transform: "fake" } }),
     { mode: 0o600 },
   );
-  unit = `hortusd-step6-${process.pid}`;
+  unit = `hortusd-github-${process.pid}`;
   daemon = spawn(
     "systemd-run",
     [

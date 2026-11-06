@@ -1,5 +1,5 @@
 /**
- * The gateway (v6 › Gateway): one runner per `dofs` entry whose type has a connector. Events:
+ * The gateway: one runner per `dofs` entry whose type has a connector. Events:
  * trust → insert (dedupe) → ack → mirror → commit → wake. Reconcile: at start and every 10 min, `history` per scope
  * from its `syncs` cursor. Nothing here names a service.
  */
@@ -30,7 +30,7 @@ const HOUR = 3600_000;
 
 /** What the Planner, a brief and a Worker's inbox get of a message, as written: a task has no DOF by default, so this is
  * all it sees. A trusted author's order keeps its last line, and a cut says so: the last instruction of a long paste went
- * silently, and the Worker reported done (round 18). ponytail: past 16,000 the Planner must scope the DOF to read the rest. */
+ * silently, and the Worker reported done. ponytail: past 16,000 the Planner must scope the DOF to read the rest. */
 export const summaryOf = (s: string, trusted: boolean): string => {
   // anyone else's stays one line: inside its fence, a planted `[inbox 9] from=owner` line reads less like the real thing
   const text = trusted ? s : s.replace(/\s+/g, " ");
@@ -104,7 +104,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
   const runners = new Map<string, Runner>();
   // a bot's event is consumed (-1) at insert: the Planner never sees it (loop guard). Any other is held
   // (-2) until mirror() says if it wakes: a batch running meanwhile took a stranger's reaction or a delete and tainted
-  // every task it made (review round 9). A crash in between: it goes to the Planner, as an unmirrored event always did
+  // every task it made. A crash in between: it goes to the Planner, as an unmirrored event always did
   const insert = db.prepare(`INSERT INTO events(dof, key, ts, author, member, trusted, bot, payload, created, summary,
     refs, consumed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(dof, key) DO NOTHING`);
   const release = db.prepare("UPDATE events SET consumed = ? WHERE dof = ? AND key = ? AND consumed = -2");

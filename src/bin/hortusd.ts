@@ -119,7 +119,7 @@ async function main(): Promise<void> {
   // a turn that ended without `done` on a task with nothing left to wake it. A close refused while it ran or while a
   // request waited, and the PR over: nothing else reaches the Planner, and the task would wait on an ended PR for good.
   // No PR: a question on the card, or work finished with a plain last line. Only the owner can tell those apart, and
-  // nothing else said the task stopped (round 22)
+  // nothing else said the task stopped
   exitHooks.onExit.push((t, msgs) => {
     if (t.kind === "chat" || t.status !== "waiting" || t.error || msgs.some((m) => m.type !== "reply")) return;
     if (existsSync(join(paths.ctl(t.id), "STOP"))) return;
@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     tasks.failureRow(t.id, "result", "its turn ended without done, and every PR/MR of it has ended");
     wakePlanner();
   });
-  // Session addresses (step 3's dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
+  // Session addresses (the dispatcher calls sessionNet.open/close): the proxy's listeners and links registry.
   sessionNet.init({
     db: ctx.db,
     proxy: { listen: async (a) => void (await listen(a, listenOpts(ctx))), unlisten },
@@ -206,7 +206,7 @@ async function main(): Promise<void> {
     started.push(m);
   }
   gateDeps.consoleUrl = `http://127.0.0.1:${consoleModule.port()}`;
-  // round 8: what expired while hortusd was down is told now (every module is up, so the inbox is), not a minute later
+  // what expired while hortusd was down is told now (every module is up, so the inbox is), not a minute later
   gate.expire();
   log.info("started", { home: paths.home(), modules: started.map((m) => m.name) });
 }

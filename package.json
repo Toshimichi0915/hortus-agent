@@ -2,7 +2,7 @@
   "name": "hortus-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "hortus v6: hortusd (daemon, vault, proxy, console), hortus-agent (Worker/Planner), hortus (CLI), dof",
+  "description": "hortusd (daemon, vault, proxy, console), hortus-agent (Worker/Planner), hortus (CLI), dof",
   "type": "module",
   "bin": {
     "hortusd": "dist/bin/hortusd.js",

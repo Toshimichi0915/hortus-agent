@@ -245,7 +245,7 @@ function clean(path: string, html: string): void {
   assert.match(html, /<script src="\/static\/app\.js" defer><\/script>/);
 }
 
-test("Schedules: a row shows its last run's summary (v6 › Console); a merge cut at 64 KB links the whole diff", async () => {
+test("Schedules: a row shows its last run's summary; a merge cut at 64 KB links the whole diff", async () => {
   ctx.db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES ('sw', 'unattended', 'watch', 'waiting')").run();
   const { lastInsertRowid: id } = ctx.db
     .prepare("INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sw', '2030-01-01T00:00:00Z', 3600, 'x')")
@@ -461,7 +461,7 @@ test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., link
   assert.match((await get(`${base}/f.png`)).body, /binary file, 5 bytes/);
 });
 
-test("round 6 UI: a task's error on the list and card (a boot timeout's reason, not the serial tail), pause, sources", async () => {
+test("UI: a task's error on the list and card (a boot timeout's reason, not the serial tail), pause, sources", async () => {
   const now = new Date().toISOString();
   const boot = "boot timeout: no contact from the guest within 120 s (console.log below)\n[ 1.2] virtiofs: mounting";
   const ins = ctx.db.prepare(
@@ -478,7 +478,7 @@ test("round 6 UI: a task's error on the list and card (a boot timeout's reason, 
   rmSync(paths.paused());
   assert.match((await get("/settings")).body, /While paused, queued tasks, schedules and the Planner wait/);
   assert.match((await get("/sources")).body, /no sources: add a messenger or forge under <code>dofs<\/code>/);
-  // round 7: a fresh install's Slack said only "auth.test: HTTP 403"; the page names the missing credentials
+  // a fresh install's Slack said only "auth.test: HTTP 403"; the page names the missing credentials
   ctx.config = { ...ctx.config, dofs: { chat: { type: "slack", owner: "U1" } } } as typeof ctx.config;
   try {
     assert.match((await get("/sources")).body, /no chat or chat-app credential \(Credentials\)/);
@@ -487,7 +487,7 @@ test("round 6 UI: a task's error on the list and card (a boot timeout's reason, 
   }
 });
 
-test("round 6 UI: a search hit's [mark] is a <mark>, other brackets stay", () => {
+test("UI: a search hit's [mark] is a <mark>, other brackets stay", () => {
   assert.equal(
     String(hit("[inbox 1] from=owner [Hello] there", "hello")),
     "[inbox 1] from=owner <mark>Hello</mark> there",

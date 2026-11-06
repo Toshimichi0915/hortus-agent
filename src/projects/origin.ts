@@ -215,7 +215,7 @@ export async function prepareClone(
     const ref =
       existsSync(objects) && !existsSync(join(objects, "info/alternates")) ? ["--reference", resolve(p.path)] : [];
     // whole or not at all: a restart inside a clone left one on `main` with the origin's path as its remote, and as
-    // `dir` existed nothing finished it (round 23). No session has run in `.new`: hortusd's own to remove
+    // `dir` existed nothing finished it. No session has run in `.new`: hortusd's own to remove
     const tmp = `${dir}.new`;
     rmSync(tmp, { recursive: true, force: true });
     await git(["clone", "-q", "--no-local", ...ref, paths.project(name), tmp]);

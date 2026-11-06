@@ -1,5 +1,5 @@
 /**
- * Step 4 done-when, live (HORTUS_TEST_NET=1 and HORTUS_TEST_LLM=1, passwordless sudo), set up like step3live.test.ts:
+ * The Planner, live (HORTUS_TEST_NET=1 and HORTUS_TEST_LLM=1, passwordless sudo), set up like host-runtime.live.test.ts:
  * the daemon as a transient system unit with its capabilities, the fake Slack behind `dev.upstreams`, and a real model
  * for both the Planner and the Worker (`ollama-cloud` copied from the owner's ~/.hortus/secrets.json into the temp
  * vault). The owner's DM → one batch → `task_create` on project foo → the Worker replies in the DM thread through
@@ -18,7 +18,7 @@ import { FakeSlack } from "../test/fakes/slack.ts";
 import { tempDir, until } from "../test/until.ts";
 
 const LIVE = process.env.HORTUS_TEST_NET === "1" && process.env.HORTUS_TEST_LLM === "1";
-const UNIT = "hortusd-step4test";
+const UNIT = "hortusd-planner-live-test";
 const MODEL = "deepseek-v4.1-flash:1017";
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const realHome = homedir();
@@ -115,7 +115,7 @@ before(async () => {
   >;
   const key = owner["ollama-cloud"]?.apiKey;
   assert.ok(key, "~/.hortus/secrets.json has no ollama-cloud entry");
-  home = tempDir("hortus-step4live-");
+  home = tempDir("hortus-planner-live-");
   process.env.HORTUS_HOME = join(home, ".hortus");
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
   const project = join(home, "foo");

@@ -1,5 +1,5 @@
 /**
- * The webhook listener and the forge chores the gateway loop does not know (v6 › Gateway):
+ * The webhook listener and the forge chores the gateway loop does not know:
  * `POST /<dof>/webhook` on `127.0.0.1:7701` (`HORTUS_WEBHOOK_PORT`; the owner's tunnel forwards to it) → the forge
  * verifies and parses → the event joins that connector's queue, which its `events()` yields into the gateway loop →
  * `200` once the gateway inserted it (or found the duplicate), before any mirror work. Push events and the 10-min

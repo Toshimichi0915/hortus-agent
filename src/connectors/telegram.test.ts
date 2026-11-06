@@ -74,7 +74,7 @@ test("before the owner's first message: no DM scope, dm() fails, the Sources hin
   assert.ok(conn.status().notes?.includes("message the bot once to open your DM"));
 });
 
-test("message: key update_id, member via getChatMember, refs, v6 frontmatter, wake; long poll with timeout", async () => {
+test("message: key update_id, member via getChatMember, refs, frontmatter, wake; long poll with timeout", async () => {
   const m = fake.post(GROUP, { user: ALICE, text: "hello world" });
   const r = await mirrored();
   assert.equal(r.event.key, String(fake.sent.at(-1)?.update_id));

@@ -63,7 +63,7 @@ function staticForgeRows(ctx: Ctx, name: string, type: string): Raw {
 }
 
 /** A messenger's credentials as its connector names them (`<name>`; Slack's Socket Mode `<name>-app`): a missing one
- * reached this page only as the connector's "auth.test: HTTP 403" (review round 7, a fresh install). */
+ * reached this page only as the connector's "auth.test: HTTP 403" (a fresh install). */
 const MESSENGER_CREDS: Record<string, string[]> = { slack: ["", "-app"], discord: [""], telegram: [""] };
 function missingCreds(name: string, type: string): Raw {
   const v = readVault();

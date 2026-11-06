@@ -225,7 +225,7 @@ test("login: a correct assertion signs in; replay, stale counter, wrong RP ID or
   assert.equal((await signIn(a)).status, 200);
 });
 
-test("v6 3d: the phone decides a pending entry off the LAN with its cookie; without it, 401", async () => {
+test("the phone decides a pending entry off the LAN with its cookie; without it, 401", async () => {
   const cookie = token(await enrol(auth(), "decider"));
   const { lastInsertRowid: id } = ctx.db
     .prepare(

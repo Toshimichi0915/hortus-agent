@@ -1,5 +1,5 @@
 /**
- * Step 6b done-when: "the step-6 flow runs on each" of GitLab and Bitbucket. step6.test.ts's flow on the real daemon
+ * github.test.ts's flow on GitLab and Bitbucket, on the real daemon
  * (HORTUS_NO_NET=1, delegated user scope, fake provider scripting the Planner and the Worker), parameterized over the
  * fakes behind `dev.upstreams`: the owner's comment → task → the Worker's clone (`--reference` to the repo mirror),
  * approved push, MR/PR by REST → refs → review and CI back to the task → close. GitLab is the harder shape: a
@@ -298,8 +298,8 @@ const tree = (f: Forge) => join(fake, `tree-${f.dof}`);
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step6b-");
-  fake = tempDir("hortus-step6bfake-");
+  home = tempDir("hortus-gitlab-bitbucket-");
+  fake = tempDir("hortus-gitlab-bitbucket-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -357,7 +357,7 @@ before(async () => {
     JSON.stringify({ ...gl.vault("gle"), ...bb.vault(), fake: { type: "token", value: "x", transform: "fake" } }),
     { mode: 0o600 },
   );
-  unit = `hortusd-step6b-${process.pid}`;
+  unit = `hortusd-gitlab-bitbucket-${process.pid}`;
   daemon = spawn(
     "systemd-run",
     [
@@ -427,7 +427,7 @@ after(async () => {
   if (!process.env.KEEP) rmSync(fake, { recursive: true, force: true });
 });
 
-test("a chat gets every mirrored forge project (v6 › Forge origin), with its clone URL in the prompt", {
+test("a chat gets every mirrored forge project, with its clone URL in the prompt", {
   skip,
 }, async () => {
   const { id } = await api<{ id: string }>("task.open", { text: "hi" });

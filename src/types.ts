@@ -163,7 +163,7 @@ export interface Forge extends Connector {
   redeliveries?(since: string, seen: (key: string) => boolean): AsyncIterable<{ key: string; event: Event }>;
 }
 
-/** What a connector gets from hortusd. `fetch` is placeholder-aware: step 1 swaps from vault.json, step 2 is the pipeline. */
+/** What a connector gets from hortusd. `fetch` is placeholder-aware: the proxy pipeline (tests: a direct swap from vault.json). */
 export interface ConnectorDeps {
   name: string;
   /** the dofs.<name> entry (config.ts DofConfig) */

@@ -245,7 +245,7 @@ test("the shipped delete patterns hold for GET, for any case, and for the plural
     ["GET", "api.telegram.org", `${bot}/getMe`],
     ["GET", "discord.com", "/api/v10/channels/delete-me/messages"],
     ["GET", "discord.com", "/api/v10/channels/300/messages%2Fbulk-delete"],
-    // round 13: what the widened lists must not catch. A pattern with `*` for its method sees every read
+    // what the widened lists must not catch. A pattern with `*` for its method sees every read
     ["GET", "api.telegram.org", `${bot}/getChatMember?chat_id=1&user_id=2`],
     ["POST", "api.telegram.org", `${bot}/getChatAdministrators`],
     ["POST", "api.telegram.org", `${bot}/getUpdates`],

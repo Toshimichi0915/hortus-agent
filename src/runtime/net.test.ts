@@ -118,7 +118,7 @@ if (!enabled) {
   let local: Server;
   let lan: Server; // stands in for a LAN host: reachable unless a rule drops it
   let console_: Server;
-  let remote_: Server; // the remote console (v6 3d: "a host session cannot open the listener")
+  let remote_: Server; // the remote console
   before(async () => {
     await net.flushStale();
     await net.ensureDummy();

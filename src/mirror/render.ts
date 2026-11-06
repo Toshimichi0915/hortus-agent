@@ -1,6 +1,6 @@
 /**
  * Markdown with a YAML header, schema-free: `render(frontmatter, body)` and its inverse `parse(text)`. The YAML is the
- * small subset v6's examples use: one `key: value` per line, scalars plain unless they could read as something else,
+ * small subset the mirror writes: one `key: value` per line, scalars plain unless they could read as something else,
  * arrays and objects inline (flow style).
  */
 

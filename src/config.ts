@@ -1,5 +1,5 @@
 /**
- * hortusd.json (hortus_v6.md › Config). Every object is loose: keys this version does
+ * hortusd.json. Every object is loose: keys this version does
  * not know survive a load/save round trip. A new key is one line here with a default.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

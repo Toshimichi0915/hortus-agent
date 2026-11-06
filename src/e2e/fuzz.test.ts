@@ -1,5 +1,5 @@
 /**
- * Generator-based fuzzing of everything hortusd reads from a Worker, an upstream or a client (review round 4): outbox
+ * Generator-based fuzzing of everything hortusd reads from a Worker, an upstream or a client: outbox
  * files, stdout lines, session JSONL (renderer, token scan, inbox cursor), summary.md, forge webhook bodies, transform
  * `response()` results, WebSocket frames through the relay, DNS packets, TLS and HTTP bytes to the proxy, worker RPC
  * bodies through hortusd.internal, owner `POST /api/*` bodies to a real daemon, and CLI args. Deterministic: one seeded

@@ -562,7 +562,7 @@ export class FakeDiscord {
   }
 }
 
-/** Test-only stand-in for the proxy's `ws:text` swap (step 1's `directFetch` for frames): vault.json values. */
+/** Test-only stand-in for the proxy's `ws:text` swap (`directFetch` for frames): vault.json values. */
 export function directSocket(names: string[]): (url: string) => globalThis.WebSocket {
   return (url) => {
     const ws = new globalThis.WebSocket(url);

@@ -1,6 +1,6 @@
 /**
- * Handles and the built-in operations that resolve them, the only cryptography a transform can ask for (v6 › Secret
- * Vault). `{secret:name}` inserts the value, `{basic:user:name}` the base64 of `user:value`, `{sign:op(args)}` runs
+ * Handles and the built-in operations that resolve them, the only cryptography a transform can ask for.
+ * `{secret:name}` inserts the value, `{basic:user:name}` the base64 of `user:value`, `{sign:op(args)}` runs
  * `ops[op]` with a JSON argument list whose first element is the credential name. A new operation is one entry here.
  */
 import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto";
@@ -61,7 +61,7 @@ export const late = new Set(["aws-sigv4"]);
 function value(s: Secret): string {
   if ("captured" in s) return s.captured.value;
   if (s.entry.type === "token") return s.entry.value;
-  // ponytail: github-app needs the installation-token op (step 17); webhook-secret/aws never ride as plain values
+  // ponytail: github-app needs the installation-token op; webhook-secret/aws never ride as plain values
   throw new Error(`credential type ${s.entry.type} cannot be inserted as a value`);
 }
 
@@ -125,7 +125,7 @@ export function equals(name: string, value: string | undefined): boolean {
   return timingSafeEqual(got, want) && raw.length === want.length;
 }
 
-/** v6 › Projects › GitHub permissions. */
+/** The GitHub App permissions a token is minted with, per role. */
 export const PERMISSIONS = {
   worker: { contents: "write", issues: "write", pull_requests: "write", checks: "read", actions: "read" },
   core: { contents: "read", issues: "read", pull_requests: "read", checks: "read" },

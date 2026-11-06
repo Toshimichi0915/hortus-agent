@@ -34,7 +34,7 @@ export async function main(argv: string[]): Promise<number> {
   mkdirSync(join(dir, "out"), { recursive: true });
   writeFileSync(join(dir, "out", "booted"), "");
   mkdirSync(task.paths.work, { recursive: true });
-  // chat starts in its scratch dir (v6 Chat); a project task in its clone once it exists
+  // chat starts in its scratch dir; a project task in its clone once it exists
   const clone = task.paths.clone;
   process.chdir(task.kind !== "chat" && clone && existsSync(clone) ? clone : task.paths.work);
   const code = await runTask(dir, task, pluginFor(task, dir));

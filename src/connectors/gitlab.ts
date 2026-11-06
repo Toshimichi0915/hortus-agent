@@ -386,7 +386,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     async webhook(req) {
       const h = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k.toLowerCase(), v]));
       if (!equals(`${name}-webhook`, h["x-gitlab-token"])) return { ok: false };
-      // `webhook-id` (19.0) = `Idempotency-Key` (17.4), stable across retries; the event UUID, v6's key, is shared by a
+      // `webhook-id` (19.0) = `Idempotency-Key` (17.4), stable across retries; the event UUID, the old key, is shared by a
       // recursive chain of hooks, so distinct events could collapse on it, and stays for older instances
       const key = h["webhook-id"] ?? h["idempotency-key"] ?? h["x-gitlab-event-uuid"];
       if (!key) return { ok: false };

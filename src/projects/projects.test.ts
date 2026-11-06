@@ -433,7 +433,7 @@ test("merge: another task's landing while this one's entry is being made → it 
   }
 });
 
-test("v6 done-when (RPC level, non-git): an owner edit between request and approval → replaced + rebase → lands", async () => {
+test("an owner edit between request and approval → replaced + rebase → lands", async () => {
   await sync("plain");
   inbox.length = 0;
   const w = await deliver("tp", "plain", "CHANGELOG.md", "- one line\n");

@@ -48,7 +48,7 @@ const migrations: string[] = [
   CREATE INDEX schedules_fire ON schedules(fire_at);
   CREATE INDEX inbox_task_seq ON inbox(task_id, seq);
   `,
-  // step 3: the card's error line (a Worker that exited non-zero without an outbox message)
+  // the card's error line (a Worker that exited non-zero without an outbox message)
   "ALTER TABLE tasks ADD COLUMN error TEXT;",
   // 3c: schedule ids are never reused (a run's `schedule:<id>` key and `schedules/<id>/` outlive a deleted row)
   `
@@ -62,24 +62,24 @@ const migrations: string[] = [
   `,
   // 3h: a capture's metadata (cookie name, Domain/Path/Expires, the request host, the capturing task and role)
   "ALTER TABLE captured ADD COLUMN meta TEXT;",
-  // step 4: the Planner's batch line (Event.summary, Event.refs as JSON) and which result rows a batch has read
+  // the Planner's batch line (Event.summary, Event.refs as JSON) and which result rows a batch has read
   `ALTER TABLE events ADD COLUMN summary TEXT; ALTER TABLE events ADD COLUMN refs TEXT;
   ALTER TABLE outbox ADD COLUMN consumed INTEGER DEFAULT 0;`,
-  // review round 6: why a task's context holds text the owner did not vouch for (a JSON array of reasons)
+  // why a task's context holds text the owner did not vouch for (a JSON array of reasons)
   "ALTER TABLE tasks ADD COLUMN taint TEXT;",
-  // review round 7: a DOF's authors without scanning the FTS table (untrustedDofs)
+  // a DOF's authors without scanning the FTS table (untrustedDofs)
   `ALTER TABLE search_meta ADD COLUMN author TEXT;
   UPDATE search_meta SET author = (SELECT author FROM search WHERE search.rowid = search_meta.rowid);
   CREATE INDEX search_meta_author ON search_meta(dof, author);`,
-  // review round 16: which passkey a session signed in with, so deleting it ends them (null: from before this)
+  // which passkey a session signed in with, so deleting it ends them (null: from before this)
   "ALTER TABLE console_sessions ADD COLUMN passkey TEXT;",
-  // review round 22: a task's runs, looked up at every gate check (family)
+  // a task's runs, looked up at every gate check (family)
   "CREATE INDEX tasks_parent ON tasks(parent);",
-  // review round 22: when a scope's first sync ended (only what is newer is a missed message) and the tokens the proxy
+  // when a scope's first sync ended (only what is newer is a missed message) and the tokens the proxy
   // counted on a task's model calls
   `ALTER TABLE syncs ADD COLUMN first TEXT; UPDATE syncs SET first = last_sync;
   ALTER TABLE tasks ADD COLUMN metered INTEGER NOT NULL DEFAULT 0;`,
-  // review round 23: the CI result a live event mirrored (gateway › missed), so a reconcile does not route it again
+  // the CI result a live event mirrored (gateway › missed), so a reconcile does not route it again
   `ALTER TABLE events ADD COLUMN heard TEXT;
   CREATE INDEX events_heard ON events(dof, heard) WHERE heard IS NOT NULL;`,
 ];
@@ -87,8 +87,8 @@ const migrations: string[] = [
 const TAINT_MAX = 5;
 
 /**
- * A task and every run of its schedules: one holder of grants and logins (v6 › Schedules › Runs: "the parent's grants
- * cover it"; each firing is a new task, and a grant asked of one was asked again at the next).
+ * A task and every run of its schedules: one holder of grants and logins (each firing is a new task, and a grant
+ * asked of one was asked again at the next).
  */
 export function family(db: DatabaseSync, task: string): string[] {
   const r = db.prepare("SELECT parent FROM tasks WHERE id = ?").get(task) as { parent: string | null } | undefined;
@@ -116,7 +116,7 @@ export function taint(db: DatabaseSync, task: string, reason: string): void {
  * (every batch reads strangers), and what `taint()` recorded. Empty: untainted, as far as hortusd can see.
  */
 /** A forge's event with no author is a CI result: a state and a sha, nobody's words, so it taints nothing. Under `auto` the
- * first one sent the rest of a PR's requests to the owner, up to 47 of them (round 19). */
+ * first one sent the rest of a PR's requests to the owner, up to 47 of them. */
 export const isCi = (c: Pick<Config, "dofs">, e: { dof: string; author: string | null }): boolean => {
   const d = c.dofs[e.dof];
   return e.author === null && !!d && !!gitOf(d);
@@ -250,7 +250,7 @@ export function openDb(path: string): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
   // journal_size_limit: the auto-checkpoint keeps the WAL backfilled, but its file stays at its high-water mark, and an
-  // FTS5 segment merge grows with the index (round 7 soak: 4 → 9.5 MB in 30 min); truncated back to 8 MB after one
+  // FTS5 segment merge grows with the index (4 → 9.5 MB in 30 min); truncated back to 8 MB after one
   db.exec(
     "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = 8388608;",
   );

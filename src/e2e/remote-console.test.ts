@@ -1,11 +1,11 @@
 /**
- * v6 step 3d's last done-when (v6 › Projects › Chat): "a chat opened from the phone edits a
+ * The remote console: "a chat opened from the phone edits a
  * project in place like one opened at the machine". The real daemon (HORTUS_NO_NET=1, delegated user scope) with
  * `console.listen` on; the only things done at the machine are the enrolment code (socket) and reading the disk.
  * Everything else goes through the TLS listener with the phone's cookie and `Host`: the requests app.js makes, then
  * (Chromium present) app.js itself at 390 px. A chat neither clones, pushes nor merges: the edit is in the checkout at
  * once and "the next sync carries its commits"; a Worker's merge is what the phone approves.
- * The fake model is step 3's: directive lines, `$CWD` = the directory the system prompt names, text in word deltas.
+ * The fake model is host-runtime.test.ts's: directive lines, `$CWD` = the directory the system prompt names, text in word deltas.
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
@@ -288,7 +288,7 @@ test("the phone enrols at the machine's code and signs in with its passkey", { s
   assert.match(await page200("/"), /<nav>/);
 });
 
-test("v6 3d: a chat opened from the phone edits a git project in place; the next sync carries its commit", {
+test("a chat opened from the phone edits a git project in place; the next sync carries its commit", {
   skip,
 }, async () => {
   // what the Chat page offers: the project picker, the call and where it goes next
@@ -380,7 +380,7 @@ interface Entry {
 const mergeOf = async (task: string) =>
   (await api<Entry[]>("approval.list", { limit: 500 })).find((a) => a.task_id === task && a.category === "merge");
 
-test("v6 3d: the phone approves a Worker's merge; a chat's dirty checkout holds it until the chat cleans it", {
+test("the phone approves a Worker's merge; a chat's dirty checkout holds it until the chat cleans it", {
   skip,
 }, async () => {
   const id = await worker("worker.txt");

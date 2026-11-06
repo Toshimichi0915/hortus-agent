@@ -318,7 +318,7 @@ test("existing name: a manifest naming slack shows it configured, no field; appr
   const prev = readVault().slack as VaultEntry;
   await decide(r.approval, "approve", { slack: { value: "xoxb-other" } });
   assert.deepEqual(readVault().slack, prev);
-  // the submitting task gets no scope or grant on a name that existed before (v6: only the new names)
+  // the submitting task gets no scope or grant on a name that existed before (only the new names)
   const row = ctx.db.prepare("SELECT task_id FROM approvals WHERE id = ?").get(r.approval) as { task_id: string };
   const grants = ctx.db
     .prepare("SELECT 1 FROM approvals WHERE kind = 'grant' AND hash = 'grant:slack' AND task_id = ?")
@@ -457,7 +457,6 @@ test("dof transform submit <dir> posts the dir's files as the task's worker", as
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// review round 2
 
 test("a host another transform handles is refused; a transform's refs for a DOF not of its type are dropped", async () => {
   await invalid(submit("aaa", files("aaa", { host: "slack.com" })), /slack\.com is handled by transform slack/);

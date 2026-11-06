@@ -57,7 +57,7 @@ reactions: { "+1": [alice], eyes: [hortus] }
 ---
 Body in the service's own markup.
 `;
-// v6's forge example without its explanatory `# …` comments (annotations of the doc, not file content)
+// a forge thread as the mirror writes it
 const FORGE = `---
 id: "!42"
 thread: "!42"
@@ -75,7 +75,7 @@ checks: failure
 Body in the forge's Markdown.
 `;
 
-test("render/parse round-trip v6's examples byte for byte", () => {
+test("render/parse round-trip the examples byte for byte", () => {
   for (const text of [SLACK, FORGE]) {
     const { frontmatter, body } = parse(text);
     assert.equal(render(frontmatter, body), text);
@@ -146,7 +146,7 @@ test("recover: a stale index.lock is dropped; commits made without indexing (a c
   await repo.commit(null, "rec", [{ op: "delete", path: "C1/T1/M2.md" }, msg("C1/T1/M1.md", "kept edit")], "x");
   const lock = join(paths.dofRepo("rec"), "worktrees", "rec", "index.lock");
   writeFileSync(lock, "");
-  // a git SIGKILLed with hortusd inside its ref update: every later commit died on "cannot lock ref" (round 23)
+  // a git SIGKILLed with hortusd inside its ref update: every later commit died on "cannot lock ref"
   const refLocks = [
     join(paths.dofRepo("rec"), "refs", "heads", "main.lock"),
     join(paths.dofRepo("rec"), "worktrees", "rec", "HEAD.lock"),
@@ -200,7 +200,7 @@ test("50 concurrent commits on one DOF, two DOFs in parallel", async () => {
 });
 
 test("loose objects are packed past gc.auto (repos say gc.auto 0), history and the index ref kept", async () => {
-  // git samples objects/17/: past `gc.auto / 256` loose objects there it packs (round 7 soak: they were never packed)
+  // git samples objects/17/: past `gc.auto / 256` loose objects there it packs (they were never packed)
   gcAuto.loose = 1;
   try {
     const before = Number(git("gh", "rev-list", "--count", "main"));
@@ -318,7 +318,7 @@ test("logs: excerpt, [image], no summary, crash-cut line, republish keeps one ro
   assert.equal(summary.frontmatter.status, "done");
 
   writeFileSync(join(paths.out("t1"), "summary.md"), "Found the walrus.\n");
-  // v6 › layout: title, status, events, opened, updated
+  // title, status, events, opened, updated
   db.prepare(
     `INSERT INTO tasks(id, kind, title, status, event_keys, created) VALUES ('t1', 'unattended', 'w', 'done', '["slack:C1:T9"]', '2026-01-02T03:04:05.000Z')`,
   ).run();

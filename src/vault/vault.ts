@@ -61,7 +61,7 @@ export function touch(name: string): void {
   write({ ...v, [name]: { ...e, last_use: now.toISOString() } });
 }
 
-/** Tokens minted by ops (github-app installation tokens, step 17): scrubbed like any other secret. */
+/** Tokens minted by ops (github-app installation tokens): scrubbed like any other secret. */
 export const minted = new Map<string, { value: string; expires: number }>();
 let mintedVersion = 0;
 export function mint(key: string, value: string, ttlMs: number): void {

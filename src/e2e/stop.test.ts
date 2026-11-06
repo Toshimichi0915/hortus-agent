@@ -1,5 +1,5 @@
 /**
- * A Settings save and a stop with everything live (review round 11): one real daemon with Slack, Discord and Telegram connected,
+ * A Settings save and a stop with everything live: one real daemon with Slack, Discord and Telegram connected,
  * an SSE client, a running session, a login view stalled in its navigation, a pending approval, and a client that
  * connected to each TLS port and said nothing. The save and the stop each take seconds, the stop exits 0 (not by
  * STOP_MS), and nothing of the daemon's is left.

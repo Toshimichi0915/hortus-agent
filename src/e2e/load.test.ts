@@ -1,5 +1,5 @@
 /**
- * Load (round 4): the real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider as in step3.test.ts) runs
+ * Load: the real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider as in host-runtime.test.ts) runs
  * rounds of 20 simultaneous chats. Each reply echoes its own task's word (no cross-talk), the console answers while
  * they run, every chat closes, no task cgroup is left, and hortusd's fds and RSS stay flat from round to round.
  * Numbers are printed as `# load …` lines.
@@ -172,10 +172,10 @@ test(`${ROUNDS} rounds of ${N} simultaneous chats: own replies, responsive conso
   }
   const [first, , last] = stats;
   assert.ok(first && last);
-  // alone: 17–21 ms since round 6 paced the sandbox spawns (was 125–156 ms); the median round, as a thread hortusd holds
+  // alone: 17–21 ms since the sandbox spawns were paced (was 125–156 ms); the median round, as a thread hortusd holds
   // shows in most rounds and a machine under 32 stressors and 64 test files in one (595 ms once, then 210, 156, 170)
   const p95 = stats.map((s) => s.p95);
-  // (517, 535, 281 once in round 16, with no change of the median alone; a regression to a held thread is seconds)
+  // (517, 535, 281 once, with no change of the median alone; a regression to a held thread is seconds)
   assert.ok((pct(p95, 0.5) ?? 0) < 1000, `console p95 ${p95} ms while ${N} chats ran`);
   // round 0 opens the 20 aliases' listener sets (kept for reuse); later rounds must not add any
   assert.ok(last.fds <= (stats[1]?.fds ?? 0) + 5, `fds grew: ${stats.map((s) => s.fds)}`);

@@ -308,7 +308,7 @@ test("schedules: SIGKILL right after a firing started its run → restart fires 
   await stop();
 });
 
-// round 8: the gate's decisions, expiries and closes around a SIGKILL (dispatcher PAUSED: no Worker runs)
+// the gate's decisions, expiries and closes around a SIGKILL (dispatcher PAUSED: no Worker runs)
 const task = (id: string, status = "waiting"): void => {
   const t = new Date().toISOString();
   run(

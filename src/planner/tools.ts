@@ -149,7 +149,7 @@ define("task_attach", {
   input: z.object({ task_id: z.string(), event_ids: EventIds }),
   run({ task_id, event_ids }) {
     const evs = events(event_ids);
-    // a reply in a thread a chat posted in is routed to it (v6 › Chat), and starts it with nobody watching, on the
+    // a reply in a thread a chat posted in is routed to it, and starts it with nobody watching, on the
     // owner's files: so not a stranger's
     if (tasks.get(task_id).kind === "chat") {
       const other = evs.find((e) => !e.trusted);
@@ -224,7 +224,7 @@ define("task_close", {
       )
       .all(task_id) as { path: string | null }[];
     // but the end of a PR makes its merge moot: a merge by the forge's button left the Worker's merge request waiting and
-    // the close refused, 3 of 3 live, with a dead entry on the Approvals page until it expired (round 20).
+    // the close refused, 3 of 3 live, with a dead entry on the Approvals page until it expired.
     // Only with no other PR open, and only an end that stays: the owner's, or a merge, whoever's hand (a merge queue's
     // sender is unpublished); a stranger's close may be undone
     const prs = prTurns(pctx().db, task_id);
@@ -237,13 +237,13 @@ define("task_close", {
       return !on || !moot.some((p) => p.ref.endsWith(`:${on}`));
     };
     // the owner was just told it is over budget, and a raise on its card goes on: closed at once, its work was deleted
-    // seconds after that DM (live, round 23 pass D). The end of its every PR still ends it
+    // seconds after that DM (seen live). The end of its every PR still ends it
     if (error?.startsWith("budget_exceeded") && !(prs.length && over))
       throw new RpcError("invalid", `task ${task_id} stopped at its budget: the owner decides, leave it open`);
     if (waiting.some((a) => live(a.path)))
       throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
     // someone else's end, and the Worker is who tells the owner: with an `ended:` on the card the Planner closed at once,
-    // 2 of 2 live, and nobody ever said who closed the PR (round 22)
+    // 2 of 2 live, and nobody ever said who closed the PR
     const unheard = ended.find((e) => !e.trusted && !merged(e.summary) && e.task_id === null);
     if (unheard)
       throw new RpcError(

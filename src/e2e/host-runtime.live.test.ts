@@ -1,6 +1,6 @@
 /**
- * Step 3 done-when, live (HORTUS_TEST_NET=1 and HORTUS_TEST_LLM=1, passwordless sudo): the daemon as a transient
- * system unit with its capabilities (like step 2's variant), real host sessions on 10.77.1.n, the fake Slack behind
+ * The host runtime, live (HORTUS_TEST_NET=1 and HORTUS_TEST_LLM=1, passwordless sudo): the daemon as a transient
+ * system unit with its capabilities (like vault-proxy.test.ts's variant), real host sessions on 10.77.1.n, the fake Slack behind
  * `dev.upstreams`, and a real model (`ollama-cloud` copied from the owner's ~/.hortus/secrets.json into the temp
  * vault, the only read of that file, test-only). HOME is a temp directory; the owner's real dotfiles are added to
  * `policy.deny` so the chat profile cannot reach them either. Prints a timeline of what the model did.
@@ -17,7 +17,7 @@ import { FakeSlack } from "../test/fakes/slack.ts";
 import { tempDir, until } from "../test/until.ts";
 
 const LIVE = process.env.HORTUS_TEST_NET === "1" && process.env.HORTUS_TEST_LLM === "1";
-const UNIT = "hortusd-step3test";
+const UNIT = "hortusd-host-runtime-live-test";
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const realHome = homedir();
 
@@ -104,7 +104,7 @@ before(async () => {
   >;
   const key = owner["ollama-cloud"]?.apiKey;
   assert.ok(key, "~/.hortus/secrets.json has no ollama-cloud entry");
-  home = tempDir("hortus-step3live-");
+  home = tempDir("hortus-host-runtime-live-");
   process.env.HORTUS_HOME = join(home, ".hortus");
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
   project = join(home, "foo");

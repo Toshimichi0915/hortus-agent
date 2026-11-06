@@ -649,7 +649,7 @@ function suite(): void {
       const has = (x: string) => spawnSync("sh", ["-c", `command -v ${x}`]).status === 0;
       if (has("go")) assert.ok(lines.includes(`go ${join(out, "work/.cache/go")}`), lines.join("\n"));
       // compiled, not `java Tmp.java`: a JDK 8 the owner made the default (archlinux-java) has no source-file mode, and
-      // read it as a class name (round 22's two failures, round 23)
+      // read it as a class name
       if (has("javac"))
         assert.ok(
           lines.some((l) => l.startsWith(join(out, "tmp/abc"))),

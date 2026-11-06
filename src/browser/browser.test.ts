@@ -1,5 +1,5 @@
 /**
- * Step 3h on loopback (HORTUS_NO_NET=1): headless Chromium through the proxy to a fake site (dev.upstreams). The
+ * Browser tools on loopback (HORTUS_NO_NET=1): headless Chromium through the proxy to a fake site (dev.upstreams). The
  * Worker's browser is a BrowserSession pointed at a loopback alias registered as its session (127.0.0.2, task T) by
  * `--host-resolver-rules`; the login view does the same for itself (role login). The console runs on an ephemeral port
  * and the login flow is driven through its SSE and `login.input` endpoints, as the page's script does.
@@ -425,7 +425,7 @@ const typeKeys = async (id: number, text: string) => {
   }
 };
 
-test("v6 done-when: browser_login → login view (SSE + login.input) → Done → inbox cookies; logged in, also after a restart", {
+test("browser_login → login view (SSE + login.input) → Done → inbox cookies; logged in, also after a restart", {
   skip: !hasChromium,
 }, async () => {
   process.env.HORTUS_RPC = `http://127.0.0.1:${shared.http}`;

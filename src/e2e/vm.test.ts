@@ -689,7 +689,7 @@ test("SIGKILL with a VM on a tap: the restart flushes the tap and its rules, the
   await until(() => !db((d) => d.prepare("SELECT 1 FROM links WHERE kind = 'vm'").get()), 10_000, "links row released");
 });
 
-test("v6 step 5: a VM task clones the origin, pushes hortus/<id>, and its merge lands through the same gate", {
+test("a VM task clones the origin, pushes hortus/<id>, and its merge lands through the same gate", {
   skip: online,
 }, async () => {
   const id = `vmm${Date.now().toString(36)}`;

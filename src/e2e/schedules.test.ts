@@ -1,6 +1,6 @@
 /**
- * Step 3c with real Workers: the daemon (HORTUS_NO_NET=1) in a delegated user
- * scope as in step3.test.ts, its schedule tick every 300 ms (HORTUS_SCHEDULE_TICK_MS), and the clock advanced by
+ * Schedules with real Workers: the daemon (HORTUS_NO_NET=1) in a delegated user
+ * scope as in host-runtime.test.ts, its schedule tick every 300 ms (HORTUS_SCHEDULE_TICK_MS), and the clock advanced by
  * moving a row's `fire_at` into the past. The fake provider acts on directive lines in the last user message:
  * `!call <tool> <json input>`, `!done <summary>`; it records every request to `<fake>/<task>.jsonl`.
  */
@@ -49,12 +49,12 @@ let home: string;
 let fake: string;
 let port: number;
 let daemon: ChildProcess | undefined;
-const unit = `hortusd-step3c-${process.pid}`;
+const unit = `hortusd-schedules-${process.pid}`;
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step3c-");
-  fake = tempDir("hortus-step3cfake-");
+  home = tempDir("hortus-schedules-");
+  fake = tempDir("hortus-schedules-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(
@@ -171,7 +171,7 @@ const runsOf = (p: string) =>
 
 const skip = !hasScope && "no systemd-run --user (delegated cgroups)";
 
-test("v6 done-when: schedule(at = now + 2 min), done → waiting; at the tick the task resumes with its context", {
+test("schedule(at = now + 2 min), done → waiting; at the tick the task resumes with its context", {
   skip,
 }, async () => {
   const at = new Date(Date.now() + 2 * 60_000).toISOString();

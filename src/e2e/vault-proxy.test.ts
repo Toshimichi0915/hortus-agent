@@ -1,5 +1,5 @@
 /**
- * Step 2 done-when: the connector syncs through the
+ * The Secret Vault and proxy: the connector syncs through the
  * pipeline as role core with placeholders only; a client at a session address is refused a raw token, and a
  * placeholder request waits for the owner's decision on the console, passes once, then waits again.
  *
@@ -20,7 +20,7 @@ import { FakeSlack } from "../test/fakes/slack.ts";
 import { freePort, stopped, tempDir, until } from "../test/until.ts";
 
 const NET = process.env.HORTUS_TEST_NET === "1";
-const UNIT = "hortusd-step2test";
+const UNIT = "hortusd-vault-proxy-test";
 const TASK = "T2";
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 
@@ -52,7 +52,7 @@ const cleanupNet = () => {
 };
 
 before(async () => {
-  home = tempDir("hortus-step2-");
+  home = tempDir("hortus-vault-proxy-");
   process.env.HORTUS_HOME = home;
   fake = await FakeSlack.start();
   fake.user("U1", "alice");
@@ -122,7 +122,7 @@ before(async () => {
   );
   // the address belongs to a task row (the pipeline refuses an unknown task)
   const db = openDb(paths.db());
-  db.prepare("INSERT INTO tasks(id, kind, title, status, created) VALUES (?, 'chat', 'step 2', 'running', ?)").run(
+  db.prepare("INSERT INTO tasks(id, kind, title, status, created) VALUES (?, 'chat', 'vault-proxy', 'running', ?)").run(
     TASK,
     new Date().toISOString(),
   );
@@ -178,7 +178,7 @@ const consoleReq = (path: string, body?: unknown) =>
   });
 const authTests = () => fake.calls.filter((c) => c.method === "auth.test").length;
 
-test(`step 2 (${NET ? "hortus0, 10.77.1.9:443 via DNAT" : "loopback"}): placeholders in, approvals on the console`, async () => {
+test(`vault and proxy (${NET ? "hortus0, 10.77.1.9:443 via DNAT" : "loopback"}): placeholders in, approvals on the console`, async () => {
   // (a) the connector syncs through the pipeline: the fake saw only real tokens, never a placeholder
   await until(() => existsSync(join(paths.dof("slack"), "C1", "channel.md")), 15_000, "channel.md");
   assert.ok(fake.auths.length > 0);

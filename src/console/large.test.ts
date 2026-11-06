@@ -1,5 +1,5 @@
 /**
- * A large database (review round 6): every list the owner reads is capped at the SQL level, says what it cut and links
+ * A large database: every list the owner reads is capped at the SQL level, says what it cut and links
  * the next page (`?skip=`); merge diffs stay on the entry's own page; the nav badge is a count; the CLI says `--all`.
  */
 import assert from "node:assert/strict";

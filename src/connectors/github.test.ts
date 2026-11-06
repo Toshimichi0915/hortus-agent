@@ -1,7 +1,7 @@
 /**
- * Step 6 against the fake GitHub, gateway level: the real gateway, webhook listener, mirror writer, vault and proxy
+ * GitHub against the fake, gateway level: the real gateway, webhook listener, mirror writer, vault and proxy
  * pipeline (HORTUS_NO_NET=1, ephemeral ports). Workers are loopback clients: 127.0.0.2 (curl-like requests) and the
- * session address 127.0.0.5 (git, reached through `http.curloptResolve`). The Planner-routed done-when is tested
+ * session address 127.0.0.5 (git, reached through `http.curloptResolve`). The Planner-routed flow is tested
  * after the planner lands.
  */
 import assert from "node:assert/strict";

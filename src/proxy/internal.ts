@@ -19,9 +19,9 @@ const STATUS: Record<RpcError["code"], number> = { not_found: 404, forbidden: 40
 async function rpc(client: Client, req: IncomingRequest, method: string): Promise<Out> {
   let input: unknown;
   if (req.body) {
-    // the pipeline's own request bound: at 16 MB, a Worker's MAX_INFLIGHT RPCs buffered 4 GB (review round 7).
-    // and at most BODY_BUDGET (16 MB) of a client's bodies at once (server.ts › admit, review round 8). A longer
-    // declared body is uncharged there, because the pipeline streams it: here it must not start buffering (round 9)
+    // the pipeline's own request bound: at 16 MB, a Worker's MAX_INFLIGHT RPCs buffered 4 GB.
+    // and at most BODY_BUDGET (16 MB) of a client's bodies at once (server.ts › admit). A longer
+    // declared body is uncharged there, because the pipeline streams it: here it must not start buffering
     if (Number(req.headers["content-length"] ?? 0) > REQUEST_BUFFER) {
       req.body.resume();
       return refuse(413, "rpc body over 1 MB");

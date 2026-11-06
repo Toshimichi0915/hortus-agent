@@ -396,7 +396,7 @@ test("a failed task: the owner's acts and its one-shot timer start it again, wha
 });
 
 test("a task that cannot start fails once: approvals and notes from others wait in its inbox, the owner restarts it", async () => {
-  // review round 8: worker.provider names no vault credential; every approval decided re-ran the failed start
+  // worker.provider names no vault credential; every approval decided re-ran the failed start
   writeFileSync(paths.vault(), "{}", { mode: 0o600 });
   const ctx: Ctx = {
     config: Config.parse({ worker: { provider: "ghost", model: "m" } }),

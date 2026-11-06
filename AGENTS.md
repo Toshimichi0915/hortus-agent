@@ -1,6 +1,6 @@
 # AGENTS.md
 
-hortus-agent implements hortus v6 (`hortus_v6.md` in the owner's vault). One npm package, four bins: `hortusd` (daemon: DOF mirrors, Secret Vault and proxy, console), `hortus` (console CLI), `hortus-agent` (Worker and Planner on `@hortus/core`), `dof` (search CLI).
+hortus-agent implements hortus, a reactive agent system that works for one owner. One npm package, four bins: `hortusd` (daemon: DOF mirrors, Secret Vault and proxy, console), `hortus` (console CLI), `hortus-agent` (Worker and Planner on `@hortus/core`), `dof` (search CLI).
 
 ## Commands
 
@@ -21,7 +21,7 @@ Same as hortus: source imports use `.ts` extensions (`rewriteRelativeImportExten
 
 ## Layout
 
-`README.md` is the owner's guide (install, config, credentials, dev run, tests); its example `hortusd.json` is checked by `src/config.test.ts`. `src/types.ts` holds every cross-module contract (events, changes, connectors, task.json, transforms, RPC caller); the foundation sits beside it (`config.ts`, `db.ts`, `paths.ts`, `rpc.ts`, `ids.ts`, `log.ts`, `ctx.ts`, `install.ts`, `hostile.ts`: capped, no-follow reads of Worker-written files; `crash.ts`). `src/<area>/` per subsystem: `mirror/`, `gateway/` (the connector loop, webhook listener), `connectors/`, `vault/`, `proxy/`, `runtime/`, `agent/`, `console/`, `planner/`, `schedules/`, `projects/`, `browser/`; `src/bin/` the four bins; `src/e2e/` the end-to-end tests (`stepN` names follow v6's build steps). `transforms/<name>/` are the shipped transforms (copied to `dist/transforms`). `src/test/fakes/` are fake upstream services (Slack, Discord, Telegram, GitHub, GitLab, Bitbucket, a cookie site, a hostile upstream for the DoS tests, a fake QEMU; compiled with the rest, so tests can import them); `src/test/` also holds the helpers (`tempDir`/`until`, a software WebAuthn authenticator). `native/landlock.c` builds to `dist/hortus-landlock`. `scripts/`: `build.sh` (what `pnpm build` runs), `build-image.sh` (the VM image), `dev-run.sh` (the daemon in a capability-bearing unit).
+`README.md` is the owner's guide (install, config, credentials, dev run, tests); its example `hortusd.json` is checked by `src/config.test.ts`. `src/types.ts` holds every cross-module contract (events, changes, connectors, task.json, transforms, RPC caller); the foundation sits beside it (`config.ts`, `db.ts`, `paths.ts`, `rpc.ts`, `ids.ts`, `log.ts`, `ctx.ts`, `install.ts`, `hostile.ts`: capped, no-follow reads of Worker-written files; `crash.ts`). `src/<area>/` per subsystem: `mirror/`, `gateway/` (the connector loop, webhook listener), `connectors/`, `vault/`, `proxy/`, `runtime/`, `agent/`, `console/`, `planner/`, `schedules/`, `projects/`, `browser/`; `src/bin/` the four bins; `src/e2e/` the end-to-end tests, one per feature. `transforms/<name>/` are the shipped transforms (copied to `dist/transforms`). `src/test/fakes/` are fake upstream services (Slack, Discord, Telegram, GitHub, GitLab, Bitbucket, a cookie site, a hostile upstream for the DoS tests, a fake QEMU; compiled with the rest, so tests can import them); `src/test/` also holds the helpers (`tempDir`/`until`, a software WebAuthn authenticator). `native/landlock.c` builds to `dist/hortus-landlock`. `scripts/`: `build.sh` (what `pnpm build` runs), `build-image.sh` (the VM image), `dev-run.sh` (the daemon in a capability-bearing unit).
 
 ## Terminology
 

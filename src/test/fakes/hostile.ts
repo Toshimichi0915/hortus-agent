@@ -1,5 +1,5 @@
 /**
- * A hostile upstream and the Worker attacking through hortusd's proxy, in one forked child (review round 5), so that
+ * A hostile upstream and the Worker attacking through hortusd's proxy, in one forked child, so that
  * neither the server's nor the client's work runs on the event loop the test measures. The parent sends
  * `{ attack, proxy, n }` over IPC and gets `{ result }` back; `{ open }` reports the server's open sockets.
  *

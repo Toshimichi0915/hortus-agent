@@ -609,7 +609,7 @@ function get(host: string, path: string, from: string): Promise<R> {
   });
 }
 
-test("round 18: a messenger's thread read through its API taints; a post does not", async () => {
+test("a messenger's thread read through its API taints; a post does not", async () => {
   setConfig({});
   mode = "allow";
   ctx.db
@@ -638,7 +638,7 @@ test("round 18: a messenger's thread read through its API taints; a post does no
   assert.doesNotMatch("POST discord.com/api/v10/channels/1/messages", HISTORY);
 });
 
-test("round 19: a CI result attached to a task does not taint it; a stranger's event, and a messenger's author-less one, do", () => {
+test("a CI result attached to a task does not taint it; a stranger's event, and a messenger's author-less one, do", () => {
   const c = { dofs: { gh: { type: "github" }, slack: { type: "slack" } } } as unknown as typeof ctx.config;
   ctx.db
     .prepare("INSERT INTO tasks(id, kind, title, brief, status) VALUES ('TCI', 'unattended', 't', 'b', 'waiting')")
@@ -653,7 +653,7 @@ test("round 19: a CI result attached to a task does not taint it; a stranger's e
   assert.deepEqual(taintOf(ctx.db, "TCI", c), ["read untrusted messages (slack:?, gh:eve)"]);
 });
 
-test("round 6: a web page taints the task for good; an API response does not; a Planner batch is always tainted", async () => {
+test("a web page taints the task for good; an API response does not; a Planner batch is always tainted", async () => {
   setConfig({});
   mode = "allow";
   const add = ctx.db.prepare(
@@ -692,7 +692,7 @@ test("round 6: a web page taints the task for good; an API response does not; a 
 });
 
 /**
- * Round 7: the owner's day under the round-6 taint rule. 40 Planner-routed tasks (25 tainted: created from batches
+ * The owner's day under the taint rule. 40 Planner-routed tasks (25 tainted: created from batches
  * with untrusted events) and 10 chats, each making 2 non-consequential posts and 1 consequential delete with a fresh
  * credential under `auto`. The owner approves what is asked; on a tainted task's first non-consequential entry they
  * take "Approve, and allow … for this task" (a task grant). Prints `# day …` with the counts.
@@ -838,7 +838,7 @@ test("a run is its parent's: a tainted parent's run is the owner's to decide, wh
   taint(ctx.db, "R23", "read a web page: other.test");
   assert.ok(taintOf(ctx.db, "S23", ctx.config).includes("read a web page: other.test"));
 
-  // the parent's task grant (v6 › Runs: "the parent's grants cover it"), and not a sibling's
+  // the parent's task grant covers it, and not a sibling's
   const g = gate.check({
     caller: { role: "worker", task: "P22" },
     kind: "grant",

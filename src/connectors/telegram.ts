@@ -149,7 +149,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     }
   }
 
-  /** v6: the forum topic, else the root of the reply chain, else the message itself. */
+  /** The thread: the forum topic, else the root of the reply chain, else the message itself. */
   function threadOf(m: TMsg): number {
     const key = `${m.chat.id}:${m.message_id}`;
     const known = roots.get(key);

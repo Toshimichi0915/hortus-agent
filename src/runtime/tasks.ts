@@ -81,7 +81,7 @@ export interface CreateInput {
   budget?: { tokens: number; hours: number };
 }
 
-/** v6 › Worker › Runtimes: chat on the host, a project task by its project's `runtime`, the Planner by
+/** Runtimes: chat on the host, a project task by its project's `runtime`, the Planner by
  * `planner.runtime`, everything else in a VM (the dispatcher falls back to the host while the image is missing). */
 export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project">): "host" | "vm" {
   if (i.kind === "chat") return "host";
@@ -91,7 +91,7 @@ export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project
 }
 
 /**
- * v6 › Config: a task reaches the global list plus the lists of its projects, whatever the global setting. A chat includes
+ * A task reaches the global list plus the lists of its projects, whatever the global setting. A chat includes
  * every project, so one strict project makes every chat strict, and a chat's runs with it. null: no project has a list.
  */
 function projectOrigins(c: Config, kind: string, project: string | null | undefined, parent?: string): string[] | null {
@@ -195,7 +195,7 @@ export function create(i: CreateInput): TaskRow {
  * What starts a task whose last start or session failed (`error`): the owner (task.send, task.message, an approval they
  * approved, `owner`: their own event through the Planner) and a one-shot timer (each fires once, and nothing else would
  * run it; a recurring one starts its own `run`). A Planner note, a rejection, an expiry, a merge or rebase notice or a
- * stranger's event re-ran the failure once per message (review round 8: a task without its provider credential
+ * stranger's event re-ran the failure once per message (a task without its provider credential
  * restarted once a second); they wait in its inbox.
  */
 const restarts = (msg: Omit<InboxMsg, "seq" | "ts">, owner: boolean): boolean =>
@@ -268,7 +268,7 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
   closing.add(id);
   try {
     // closed before the wait: it is a session's teardown or its whole start (a clone, a VM's boot), and a restart in
-    // it found the row `running` and ran the task again (round 23). Its finish() sees a closed row: accounting only
+    // it found the row `running` and ran the task again. Its finish() sees a closed row: accounting only
     setStatus(id, outcome, { closed: now() });
     await hooks.kill(id);
     crashPoint("tasks.close.after-kill");
@@ -280,7 +280,7 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
 
 /**
  * After the row is closed: its requests, log, directories and schedules. Recovery runs it again for a closed task whose
- * `tasks/<id>` is still there (round 8: a crash inside close left the log unpublished and the directories behind).
+ * `tasks/<id>` is still there (a crash inside close left the log unpublished and the directories behind).
  */
 export async function finishClose(id: string): Promise<void> {
   const db = ctx().db;
@@ -353,7 +353,7 @@ function mergeOrigins(g: Config["origins"], t: string[] | null): TaskJson["origi
 }
 
 /**
- * Every mirrored forge project as `<dof>:<project>`: a chat gets them all (v6 › Forge origin).
+ * Every mirrored forge project as `<dof>:<project>`: a chat gets them all.
  * ponytail: read back from the mirror's directory name, so a project with `__` in its name stays out of a chat's
  * scope, and one mirrored later waits for the next chat; ask the connector's `projects()` if that bites.
  */

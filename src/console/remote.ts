@@ -468,7 +468,7 @@ define("passkey.list", {
   run: () => (state ? passkeyList(state.ctx.db) : []),
 });
 
-/** v6's "until the session is revoked" means nothing for a lost device while its passkey signs in again. Its sessions go
+/** "Until the session is revoked" means nothing for a lost device while its passkey signs in again. Its sessions go
  * with it, and those from before sessions named their passkey, which could be its. The last one may go: loopback enrols. */
 define("passkey.delete", {
   roles: ["owner"],

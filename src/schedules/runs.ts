@@ -52,7 +52,7 @@ export function overBudget(t: tasks.TaskRow): boolean {
   return tokensOf(t) >= b.tokens || (t.hours ?? 0) >= b.hours;
 }
 
-/** What a firing tells the Worker (v6 › Schedules › Expiry), so it can ask for more in time. */
+/** What a firing tells the Worker, so it can ask for more in time. */
 export const expiry = (at: string): string =>
   `This task's timers expire at ${at} unless a message reaches it; to go on past that, ask the owner.`;
 
@@ -71,7 +71,7 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     kind: "run",
     parent: p.id,
     title: `${p.title} @ ${local(fired, row.tz ?? ctx?.config.owner.tz ?? "UTC")}`,
-    // wrapped like any non-owner text: a Worker that read a stranger may have written it (v6 › Schedules › Runs)
+    // wrapped like any non-owner text: a Worker that read a stranger may have written it
     brief: `A timer of this task fired. What it was set to do, as the task wrote it then:\n${quote(row.text)}${
       row.expires_at ? `\n\n${expiry(row.expires_at)}` : ""
     }`,
@@ -103,7 +103,7 @@ export function onExit(run: tasks.TaskRow, msgs: OutboxMsg[]): void {
     const error = `budget_exceeded: runs of its schedules used ${tokensOf(charged)}/${b.tokens} tokens; its schedules stop firing`;
     d.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(error, parent.id);
     log().info("parent over budget: schedules stop firing", { task: parent.id, run: run.id });
-    // v6 › Schedules › Cost: the Planner gets it for the parent. A run that hit the same limit told the owner already
+    // the Planner gets it for the parent. A run that hit the same limit told the owner already
     tasks.failureRow(parent.id, "budget_exceeded", error);
     if (!msgs.some((m) => m.type === "budget_exceeded")) tasks.hooks.failed(`task ${parent.id} is over budget`);
   }

@@ -71,7 +71,7 @@ test("a wrong token is invalid_auth", async () => {
   await assert.rejects(create({ ...deps(), fetch: (u, i) => fetch(u, i) }), /invalid_auth/);
 });
 
-test("message: event fields, v6 frontmatter, wake, ack", async () => {
+test("message: event fields, frontmatter, wake, ack", async () => {
   const m = fake.post("C1", { user: "U_ALICE", text: "hello world" });
   const r = await mirrored();
   assert.match(r.event.key, /^Ev\d+$/);

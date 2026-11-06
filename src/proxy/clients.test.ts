@@ -1,5 +1,5 @@
 /**
- * Real clients through the real proxy (review round 14): curl's multipart uploads, the messengers' upload flows, and
+ * Real clients through the real proxy: curl's multipart uploads, the messengers' upload flows, and
  * package-manager fetches, on a session address with a fake upstream behind dev.upstreams.
  */
 import assert from "node:assert/strict";

@@ -1,6 +1,6 @@
 /**
- * Step 4b's done-when, "the step-4 flow runs on each": one real daemon
- * (HORTUS_NO_NET=1, delegated user scope, as step4.test.ts) with both connectors on fakes behind `dev.upstreams`
+ * planner.test.ts's flow on Discord and Telegram: one real daemon
+ * (HORTUS_NO_NET=1, delegated user scope, as planner.test.ts) with both connectors on fakes behind `dev.upstreams`
  * (Discord's gateway through the `ws:text` relay) and a fake provider through `worker.plugins`. Each test runs on each
  * messenger: the Planner is scripted by `<fake>/planner.mjs`; a Worker's reply is `!bash sh <fake>/<dof>.sh …`, a curl
  * from its loopback alias through the proxy, retried while its approval is pending, as a Worker's would be retried.
@@ -20,7 +20,7 @@ const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "tru
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// step4's fake: planner.mjs per batch, `!bash` lines (from the brief or a Planner note) for a Worker
+// planner.test.ts's fake: planner.mjs per batch, `!bash` lines (from the brief or a Planner note) for a Worker
 const FAKE = (dir: string) => `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const DIR = ${JSON.stringify(dir)};
@@ -105,7 +105,7 @@ let dc: FakeDiscord;
 let tg: FakeTelegram;
 let port: number;
 let daemon: ChildProcess | undefined;
-const unit = `hortusd-step4b-${process.pid}`;
+const unit = `hortusd-discord-telegram-${process.pid}`;
 
 const api = async <T = Record<string, unknown>>(method: string, body: unknown = {}): Promise<T> => {
   const r = await fetch(`http://127.0.0.1:${port}/api/${method}`, {
@@ -282,8 +282,8 @@ const telegram: Messenger = {
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step4b-");
-  fake = tempDir("hortus-step4bfake-");
+  home = tempDir("hortus-discord-telegram-");
+  fake = tempDir("hortus-discord-telegram-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(

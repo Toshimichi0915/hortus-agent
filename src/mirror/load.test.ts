@@ -1,5 +1,5 @@
 /**
- * Load (round 4): a 5,000-message backfill as one sync, then small syncs on top of it; prints the indexing time and
+ * Load: a 5,000-message backfill as one sync, then small syncs on top of it; prints the indexing time and
  * `dof.search` latency (trigram MATCH and the 2-character LIKE fallback) as `# load …` lines.
  */
 import assert from "node:assert/strict";

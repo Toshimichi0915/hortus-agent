@@ -1,7 +1,7 @@
 /**
- * Step 4 (the parts that need no live model): the real daemon (HORTUS_NO_NET=1) in
- * a delegated user scope like step3.test.ts, the fake Slack behind `dev.upstreams`, and a fake provider shipped
- * through `worker.plugins`. Workers act on directive lines (`!done <summary>`, as in step 3); a Planner batch
+ * The Planner (the parts that need no live model): the real daemon (HORTUS_NO_NET=1) in
+ * a delegated user scope like host-runtime.test.ts, the fake Slack behind `dev.upstreams`, and a fake provider shipped
+ * through `worker.plugins`. Workers act on directive lines (`!done <summary>`, as in host-runtime.test.ts); a Planner batch
  * (`planner-<n>`) calls `<fake>/planner.mjs`'s default export, re-imported per call, so each test scripts the
  * Planner's tool calls from the batch it got. Every model request is recorded to `<fake>/<task id>.jsonl`.
  */
@@ -23,7 +23,7 @@ const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "tru
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** a path in the real HOME (read-only to the unattended profile) the Planner tries to create */
-const PROBE = join(homedir(), `.hortus-step4-probe-${process.pid}`);
+const PROBE = join(homedir(), `.hortus-planner-probe-${process.pid}`);
 
 const FAKE = (dir: string) => `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -81,7 +81,7 @@ let unit = "";
 let n = 0;
 
 function startDaemon(crashAt?: string): void {
-  unit = `hortusd-step4-${process.pid}-${++n}`;
+  unit = `hortusd-planner-${process.pid}-${++n}`;
   daemon = spawn(
     "systemd-run",
     [
@@ -212,8 +212,8 @@ const taskRow = (id: string) =>
 
 before(async () => {
   if (!hasScope) return;
-  home = tempDir("hortus-step4-");
-  fake = tempDir("hortus-step4fake-");
+  home = tempDir("hortus-planner-");
+  fake = tempDir("hortus-planner-fake-");
   process.env.HORTUS_HOME = home;
   mkdirSync(join(fake, "plugins", "fake"), { recursive: true });
   writeFileSync(

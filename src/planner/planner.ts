@@ -98,7 +98,7 @@ const anything = (): boolean =>
     )
     .get() !== undefined;
 
-/** v6: a fresh VM per batch; the host until the image is there, or when the owner says so. */
+/** A fresh VM per batch; the host until the image is there, or when the owner says so. */
 export const plannerRuntime = (c: Config, missing: string | null = missingImage()): "host" | "vm" =>
   c.planner.runtime ?? (missing ? "host" : "vm");
 
@@ -216,7 +216,7 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
       .get(t.id) as { n: number };
     if (asks) what.push(`${asks} waiting for the owner`);
     // the Worker's report may predate the end, and this batch may be the only word of it: a close refused while it ran
-    // left the task on a PR that ended, with a report saying "open" (round 21)
+    // left the task on a PR that ended, with a report saying "open"
     const ended = prTurns(c.db, t.id).flatMap((p) => (p.end ? [p.ref] : []));
     if (ended.length) what.push(`ended: ${ended.join(" ")}`);
     // a Worker's record (it may restate what a stranger wrote): a JSON string, data like the title
@@ -296,7 +296,7 @@ async function batch(): Promise<boolean> {
   if (!events.length && !results.length) return false;
 
   // consumed before the run, and its row in the same transaction: a kill between the two left the events consumed with
-  // no row for the next start to give back (chaos, round 24). A dead batch's go back (planner start, release)
+  // no row for the next start to give back (chaos). A dead batch's go back (planner start, release)
   const brief = renderBatch(c, events, results);
   const t = now();
   const budget = { tokens: Math.max(1, cfg.daily_tokens - used), hours: 0.5 };

@@ -80,7 +80,7 @@ const json = (status: number, v: unknown): Out => ({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Egress (step 3)
+// Egress
 
 export interface Target {
   protocol: "http:" | "https:";
@@ -585,7 +585,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   if (req.body && stream) {
     body = req.body;
     // a push's identity is its ref commands, not the pack: they become the (read-only) body the transform renders
-    // and the hash covers, while the whole stream still goes upstream (v6 › Projects › Push)
+    // and the hash covers, while the whole stream still goes upstream
     if (RECEIVE_PACK.test(ct)) ({ body, commands: text } = await peekCommands(body));
   } else if (req.body) {
     const r = await readUpTo(req.body, REQUEST_BUFFER);
@@ -696,7 +696,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // cannot use it through the proxy
   if (found.length && (overrideHeader(template) || overrideField(template, ct, llmCall)))
     return refuse(403, "a credentialed request may not override its method", { host });
-  // v6: each push shows `old new refname`. A gzipped body (git never sends one) or a list over 1 MB shows none
+  // each push shows `old new refname`. A gzipped body (git never sends one) or a list over 1 MB shows none
   if (found.length && RECEIVE_PACK.test(ct) && template.body === null)
     return refuse(403, "a push whose ref commands cannot be read: gzipped, or over 1 MB of them; push fewer refs", {
       host,
@@ -1039,7 +1039,7 @@ const DECODERS: Record<string, () => Transform> = {
 
 /** Responses one client may be buffering at once (≤ 16 MB each, a few copies while scrubbed and transformed): 10
  * endless bodies cost hortusd 165 MB, and MAX_INFLIGHT of them would have been ~12 GB. Further responses wait, their
- * upstream sockets paused. `BUFFERING_ALL` bounds every client together (review round 6: 20 Workers × 4 were +1.1 GB);
+ * upstream sockets paused. `BUFFERING_ALL` bounds every client together (20 Workers × 4 were +1.1 GB);
  * a freed slot goes to the oldest waiter whose client is under its own bound. hortusd's own (core) calls are not
  * counted. */
 export const BUFFERING = 4;
@@ -1164,7 +1164,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
   // a web page (any HTML response, credentialed or not: the browser's loads, a forge's issue page) taints the task for
   // good. ponytail: HTML only; a stranger's text in JSON, plain text or an API response is not
   // tracked (npm, PyPI and Go would taint every build); add types if that bites. A messenger's history is: the prompt no
-  // longer sends Workers there (round 18), so what reads it means to. A forge's issues through its API stay a ceiling: the
+  // longer sends Workers there, so what reads it means to. A forge's issues through its API stay a ceiling: the
   // forge prompt needs them, and tainting them is `auto` meaning `human`
   if (p.client.task && p.client.role === "worker" && HTML.test(ct))
     taint(ctx().db, p.client.task, `read a web page: ${p.host}`);
@@ -1217,11 +1217,11 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
       u = text === undefined ? undefined : usageOf(JSON.parse(text));
     } catch {} // not JSON
     // a refusal (a 429 of the provider's own limit, a 5xx) generated nothing: its prompt charged at every retry stopped a
-    // long task "over budget" for a rate limit (round 23)
+    // long task "over budget" for a rate limit
     const asked = status < 400 ? (p.raw.body?.length ?? 0) : 0;
     // a GET generates nothing, so no bytes (core's model list at every session's start, ~5.4k by them, was charged to
     // every quiet schedule run), but it fetches what a background call made (OpenAI's `background: true`, then `GET
-    // /v1/responses/<id>`): its usage, or that pair was a way round the count (round 24)
+    // /v1/responses/<id>`): its usage, or that pair was a way round the count
     const get = p.template.method === "GET";
     charge(p, u ? u.input + u.output : get ? 0 : Math.ceil((asked + r.buf.length) / 4));
   }

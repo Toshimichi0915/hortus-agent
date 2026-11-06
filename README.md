@@ -16,7 +16,7 @@ except for consequential requests, merges, new transforms, logins, and tainted t
 message, a web page or an untrusted search hit, or can read a DOF holding one (a stranger's message, hortus's own
 replies); the Planner gives a task only the DOFs it needs, `scope.dofs`, usually none; "Approve, and
 allow … for this task" (`hortus approvals approve --grant <id>`) on a tainted task's routine request lets its later
-ones through, consequential ones still ask). The design is `hortus_v6.md` (in the owner's vault).
+ones through, consequential ones still ask).
 
 ## Install
 
@@ -99,7 +99,7 @@ messenger, one forge and the Planner's (and Workers') model:
   default: `trust`; `trust: "members"` on Telegram and Discord counts only chats and guilds you are in yourself). Forges list `repos`; a self-hosted one sets `host`.
 - `owner.notify`: the DOF whose DM tells you about new approvals, failed tasks and tasks that stopped with nothing left to wake them.
 - `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
-- `policy`: `human` (the default) asks you for **every** credentialed request, one decision each, as v6 says. It is
+- `policy`: `human` (the default) asks you for **every** credentialed request, one decision each. It is
   many: a clone is 3 decisions, a push 3, and a PR from issue to merge took 25-55 clicks and 1-2M tokens in a live walk,
   now and then reaching a task's 2M token budget, as each decision wakes the Worker with its whole context. `auto` is the
   answer for a credential you trust a Worker with: `"policy": { "*": "human", "credential:github": "auto" }`. You grant

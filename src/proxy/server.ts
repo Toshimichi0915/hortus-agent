@@ -57,7 +57,7 @@ export function writeOut(res: http.ServerResponse, out: Out): void {
 export const MAX_INFLIGHT = 256;
 const inflight = new Map<Client, number>();
 
-/** Request-body bytes one client may have buffered in hortusd at once (review round 8: MAX_INFLIGHT bodies of just
+/** Request-body bytes one client may have buffered in hortusd at once (MAX_INFLIGHT bodies of just
  * under REQUEST_BUFFER, held open, were +239 MB for one Worker and +4.98 GB for 20). A request is charged its
  * `content-length` up to REQUEST_BUFFER (a longer one streams), a chunked one and a WebSocket upgrade (its client frame
  * bound) REQUEST_BUFFER, until it closes; over the budget it is a 429. ponytail: charged by the declared size, not the

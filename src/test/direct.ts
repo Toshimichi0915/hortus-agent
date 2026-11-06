@@ -1,4 +1,4 @@
-/** Test-only placeholder-aware fetch (step 1's direct fetch, replaced by the pipeline's `coreFetch` in step 2): swaps
+/** Test-only placeholder-aware fetch (the pipeline's `coreFetch` does this in hortusd): swaps
  * `hortus-secret-<name>` in `Authorization` for the vault.json value (read on every call), then the global fetch. */
 import { readFileSync } from "node:fs";
 import * as paths from "../paths.ts";

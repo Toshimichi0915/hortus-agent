@@ -1,5 +1,5 @@
 /**
- * Soak (round 7): the real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider and fake Slack) under
+ * Soak: the real daemon (HORTUS_NO_NET=1, delegated user scope, fake provider and fake Slack) under
  * continuous churn: chats opening and closing, owner searches, a gated request from a loopback client approved on the
  * console and replayed, the fake Slack posting every 3 s (a mirror commit each), SSE clients connecting and leaving, a
  * schedule firing a run every minute. Samples hortusd every `SAMPLE_MS` (RSS, `process.memoryUsage()`, active
@@ -338,14 +338,14 @@ test(`soak: ${MINUTES} min of churn (${[...ONLY].join(",")}), bounded growth`, {
   const left = readdirSync(join(home, "tasks"));
   assert.ok(left.length <= 2 && left.includes(parent), `tasks/: ${left}`);
   // the bound: under 1 MB per 100 tasks after warm-up; the short run, still warming up,
-  // under 10 (round 4's growth from 20 spawns in one turn was ~13)
+  // under 10 (20 spawns in one turn once grew ~13)
   // and the short run does not count the JS heap: with the CPUs full no major GC finishes inside its minute (heap 34 →
-  // 84 MB, rss +19 MB/100 tasks; 6 min under the same load: heap flat, round 10); the long run does. What V8's peak in the
+  // 84 MB, rss +19 MB/100 tasks; 6 min under the same load: heap flat); the long run does. What V8's peak in the
   // window explains: rss keeps its high water, so subtracting the heap's end (a GC just before it) read a flat rss as
   // +44 MB/100 tasks
   const peak = Math.max(...samples.filter((s) => s.tasks >= warm.tasks).map((s) => s.heapTotal));
   const grew = per100("rss") - (LONG ? 0 : ((peak - warm.heapTotal) / Math.max(1, n)) * 100);
   // ponytail: the short bound is 25: rss still climbs to its plateau inside the short window (16 MB/100 tasks once in 12
-  // runs, round 16, where 10 minutes on the same tree gave 0.26): it catches a gross leak, HORTUS_TEST_SOAK=1 a small one
+  // runs, where 10 minutes on the same tree gave 0.26): it catches a gross leak, HORTUS_TEST_SOAK=1 a small one
   if (n >= 100) assert.ok(grew < (LONG ? 1 : 25), `rss ${grew} MB per 100 tasks`);
 });

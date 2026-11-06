@@ -98,7 +98,7 @@ define("approval.decide", {
     /** 3f: values for the credentials a transform entry names */
     credentials: z.record(z.string(), z.unknown()).optional(),
     reason: z.string().optional(),
-    /** round 7: also allow the entry's category for its (tainted) task; `gate.grantable` entries only */
+    /** also allow the entry's category for its (tainted) task; `gate.grantable` entries only */
     grant: z.boolean().optional(),
   }),
   run: async ({ id, decision, credentials, reason, grant }) => {

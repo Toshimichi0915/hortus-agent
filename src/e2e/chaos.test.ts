@@ -1,5 +1,5 @@
 /**
- * Chaos (review round 23, state and recovery): the step-4 daemon (HORTUS_NO_NET=1, a delegated user scope, the fake
+ * Chaos (state and recovery): planner.test.ts's daemon (HORTUS_NO_NET=1, a delegated user scope, the fake
  * Slack and the fake provider) SIGKILLed at random points while owner orders flow through Planner batches, Worker
  * sessions and closes. After the last restart every order must end routed, its task closed done, nothing stuck.
  * Opt-in (`HORTUS_TEST_CHAOS=1`): a minute of kills.

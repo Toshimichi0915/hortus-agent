@@ -170,7 +170,7 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
     return `${u.id} (${u.username})`;
   };
 
-  /** v6: a thread channel is filed under its parent; a plain channel message is its own thread. */
+  /** A thread channel is filed under its parent; a plain channel message is its own thread. */
   async function where(channel: string, message: string): Promise<{ channel: string; thread: string; dir: string }> {
     const c = await chan(channel);
     if (c && THREAD.has(c.type) && c.parent_id)

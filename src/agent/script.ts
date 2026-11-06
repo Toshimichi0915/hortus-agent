@@ -1,4 +1,4 @@
-/** A run's script (v6 Schedules): bash in the schedule dir before the first model call, 1 h kill. */
+/** A run's script: bash in the schedule dir before the first model call, 1 h kill. */
 import { spawn } from "node:child_process";
 import { quote } from "./inbox.ts";
 

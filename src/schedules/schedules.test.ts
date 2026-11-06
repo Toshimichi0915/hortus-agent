@@ -1,7 +1,7 @@
 /**
  * Schedules without a Worker: validation, DST, expiry, overlap, budget, run
  * accounting, unschedule rights, recovery and PAUSED, against the real tables with a fake clock and `tick()` called
- * directly. The Worker-driven cases (the v6 done-when, scripts, `/schedule` persistence) are in e2e/step3c.test.ts.
+ * directly. The Worker-driven cases (resume at the tick, scripts, `/schedule` persistence) are in e2e/schedules.test.ts.
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -134,7 +134,7 @@ test("one-shot without script: advanced (deleted) before acting, inbox schedule:
   };
   const body = JSON.parse(msg.body);
   assert.equal(body.from, `schedule:${id}`);
-  // v6 › Expiry: the message itself carries it, so the Worker can ask for more in time
+  // the message itself carries it, so the Worker can ask for more in time
   assert.match(body.text, /^look again\n\nThis task's timers expire at \d{4}-/);
   assert.ok(body.data.expires_at);
   assert.equal(tasks.get(p.id).status, "queued");
@@ -200,7 +200,7 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   const [r] = runsOf(p.id);
   assert.ok(r);
   assert.equal(r.title, "watch @ 2026-06-01 19:00");
-  // non-owner text (v6 › Runs), and it says when the timer ends
+  // non-owner text, and it says when the timer ends
   assert.match(r.brief, /<<<quoted\nis it there\?\n>>>/);
   assert.match(r.brief, /timers expire at \d{4}-/);
   assert.deepEqual(JSON.parse(r.budget ?? ""), { tokens: 600, hours: 1.5 });
@@ -395,7 +395,7 @@ test("an empty result: the run is closed at once and leaves no logs entry; one t
   const spent = runs.start(row(id) as runs.ScheduleRow, new Date(T));
   ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":30}', status = 'waiting' WHERE id = ?`).run(spent.id);
   runs.onExit(tasks.get(spent.id), [{ seq: 1, type: "result", text: "", ts: "" }]);
-  // the row closes first now (round 23), so `done` alone is the start of the close: wait for its end
+  // the row closes first now, so `done` alone is the start of the close: wait for its end
   await until(() => tasks.get(spent.id).status === "done" && !existsSync(paths.task(spent.id)), 3000, "the run closed");
   assert.ok(!existsSync(join(paths.logs(), spent.id)));
   assert.equal(JSON.parse(tasks.get(p.id).usage ?? "").runs, 30);

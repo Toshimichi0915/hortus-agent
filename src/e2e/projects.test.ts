@@ -1,6 +1,6 @@
 /**
- * Step 3b's done-when: the real daemon (HORTUS_NO_NET=1, delegated user scope as
- * in step3.test.ts) runs an unattended host Worker under Landlock on a non-git project. The fake provider plays the
+ * Projects: the real daemon (HORTUS_NO_NET=1, delegated user scope as
+ * in host-runtime.test.ts) runs an unattended host Worker under Landlock on a non-git project. The fake provider plays the
  * model from directive lines (`!bash <cmd>`, `!merge`, `!done`): the Worker commits CHANGELOG.md in its pre-clone,
  * pushes `hortus/<id>` through hortusd.internal (the session's loopback alias), and calls `merge()`.
  * An owner edit before approval sends it back to rebase; the second request lands in the directory.
@@ -165,7 +165,7 @@ const pushed = async (id: string, n: number) => {
   await waitStatus(id, "waiting");
 };
 
-test("v6 done-when: a host Worker on a non-git project delivers hortus/<id>; an owner edit → rebase → lands", {
+test("a host Worker on a non-git project delivers hortus/<id>; an owner edit → rebase → lands", {
   skip,
 }, async () => {
   process.env.HORTUS_HOME = home;

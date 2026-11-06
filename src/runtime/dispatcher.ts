@@ -34,8 +34,8 @@ const KINDS: Record<TaskKind, { profile: Kind; chat: boolean }> = {
   planner: { profile: "unattended", chat: false },
 };
 
-/** Called after an exit that produced a `result` or `budget_exceeded` (step 4 wakes the Planner for non-chat tasks; 3c
- * closes empty runs). */
+/** Called after an exit that produced a `result` or `budget_exceeded` (the Planner wakes for non-chat tasks;
+ * empty runs close). */
 export const exitHooks = {
   onResult(_task: tasks.TaskRow, _msg: OutboxMsg): void {},
   /** After every session exit with the fresh row and the new outbox messages (3c: a run's accounting and close). */
@@ -200,7 +200,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       const say = (text: string) => reply(row.id, { type: "status", text });
       if (note) say(note);
       if (vm) {
-        // round 8: the guest clones the origin itself, so sync it first (a host task's prepareClone does); without
+        // the guest clones the origin itself, so sync it first (a host task's prepareClone does); without
         // it a VM task cloned an empty origin (or a stale main) and its merge was refused as "not based on main"
         if (task.scope.project && task.paths.clone) await startSync(task.scope.project, say);
         const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);

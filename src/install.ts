@@ -1,4 +1,4 @@
-/** `hortus install [--force] [--ca]`: the hortusd system unit (v6 › Process), written with `sudo tee`. */
+/** `hortus install [--force] [--ca]`: the hortusd system unit, written with `sudo tee`. */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";

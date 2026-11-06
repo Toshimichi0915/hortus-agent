@@ -384,7 +384,7 @@ export class FakeTelegram {
 }
 
 /**
- * Test-only stand-in for the pipeline's `path:/bot{}/` swap (step 1's `directFetch` handles only Authorization): the
+ * Test-only stand-in for the pipeline's `path:/bot{}/` swap (`directFetch` handles only Authorization): the
  * vault.json value replaces `bothortus-secret-<name>` in the URL path.
  */
 export function directPathFetch(names: string[]): (url: string, init?: RequestInit) => Promise<Response> {
