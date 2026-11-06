@@ -211,6 +211,13 @@ test("a host session past its hours is killed: a tool that never returns reaches
     said.some((r) => r.body.includes("raised the budget")),
     "told to go on",
   );
+  // live 2026-11-06: the Planner closed a stopped task as failed seconds before the owner's raise from the open card;
+  // the raise said ok and wiped the reason, leaving "failed" with no error on the card
+  await tasks.close(id, "failed");
+  const why = "budget_exceeded: the session was stopped after 0.01 h (budget hours)";
+  ctx.db.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(why, id);
+  await assert.rejects(call("task.budget", { id, hours: 2 }, { role: "owner" }), /is failed/);
+  assert.equal(tasks.get(id).error, why);
   await dispatcherModule.stop();
   await proxyModule.stop();
 });

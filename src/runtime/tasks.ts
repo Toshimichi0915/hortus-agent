@@ -557,6 +557,8 @@ define("task.budget", {
   }),
   run({ id, ...b }) {
     const t = get(id);
+    // a closed task never runs again: a raise from a card opened before the close would only wipe why it failed
+    if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is ${t.status}`);
     // the raise means go on, and nothing else would start it: the page just said "ok". Not a schedule's parent over
     // budget: its timers fire again by themselves
     const spent =
