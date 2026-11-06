@@ -6,7 +6,7 @@
 import { policyFor } from "../config.ts";
 import { bus } from "../console/events.ts";
 import { crashPoint } from "../crash.ts";
-import { family, taintOf } from "../db.ts";
+import { type DatabaseSync, family, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import { type Caller, type InboxMsg, RpcError } from "../types.ts";
 import { judge } from "./judge.ts";
@@ -255,6 +255,21 @@ export function grantable(row: { kind: string | null; task_id: string | null; pa
   if (row.kind !== "request" || !row.task_id || !row.payload) return false;
   const p = JSON.parse(row.payload) as { consequential?: boolean; judge?: string };
   return !p.consequential && !!p.judge?.startsWith("tainted:");
+}
+
+/** An `approvals` row as the owner's RPCs answer it. */
+export function approvalOut(db: DatabaseSync, r: ApprovalRow) {
+  const title = db.prepare("SELECT title FROM tasks WHERE id = ?");
+  return {
+    ...r,
+    summary: JSON.parse(r.summary) as unknown,
+    payload: r.payload ? (JSON.parse(r.payload) as unknown) : null,
+    grantable: grantable(r),
+    url: approvalUrl(r.id),
+    task_title: r.task_id
+      ? (title.get(r.task_id) as { title: string | null } | undefined)?.title || r.task_id
+      : undefined,
+  };
 }
 
 /** `grant`: also approve the entry's category for its task (a `grantable` entry only), see `taintGranted`. */

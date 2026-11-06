@@ -22,6 +22,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { Config, load } from "../config.ts";
+import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
@@ -467,6 +468,19 @@ test("chat sessions never merge: no merge feature, the RPC refuses; a project ta
   await assert.rejects(call("merge", {}, owner), /not allowed for owner/);
 });
 
+test("project.status: git or folder, for each project; project writes say so on the bus", async () => {
+  const status = (await call("project.status", {}, owner)) as Record<string, { git: boolean }>;
+  assert.equal(status.g?.git, true);
+  assert.equal(status.plain?.git, false);
+  await assert.rejects(call("project.status", {}, { role: "worker", task: "t" }), /not allowed/);
+  let n = 0;
+  const count = () => n++;
+  bus.on("settings", count);
+  await call("project.sync", { name: "plain" }, owner);
+  assert.equal(n, 1);
+  bus.off("settings", count);
+});
+
 test("project.set refuses bad names and paths; delete keeps the origin renamed", async () => {
   for (const name of ["a/b", "..", "a..b", "../x", ""])
     await assert.rejects(call("project.set", { name, path: plain }, owner), /invalid|name/i, name);
@@ -474,10 +488,17 @@ test("project.set refuses bad names and paths; delete keeps the origin renamed",
   const extra = join(root, "extra");
   mkdirSync(extra);
   writeFileSync(join(extra, "f"), "f\n");
+  let saved = 0;
+  const count = () => saved++;
+  bus.on("settings", count);
   await call("project.set", { name: "extra", path: extra, exclude: [] }, owner);
+  assert.ok(saved > 0);
+  saved = 0;
   assert.equal(Config.parse(JSON.parse(readFileSync(paths.config(), "utf8"))).projects.extra?.path, extra);
   assert.ok(existsSync(paths.project("extra")));
   await call("project.delete", { name: "extra" }, owner);
+  bus.off("settings", count);
+  assert.equal(saved, 1);
   assert.equal(ctx.config.projects.extra, undefined);
   assert.ok(!existsSync(paths.project("extra")));
   assert.ok(readdirSync(join(paths.home(), "projects")).some((f) => f.startsWith("extra.git.removed-")));

@@ -25,6 +25,8 @@ import {
   RpcError,
 } from "../types.ts";
 
+import { deliveries, FORGE_TYPES, mirrorSize, missingCredentials } from "./sources.ts";
+
 export const RECONCILE_MS = 10 * 60_000;
 const HOUR = 3600_000;
 
@@ -69,6 +71,13 @@ export interface SourceStatus {
   error?: string;
   notes?: string[];
   scopes: { scope: string; cursor: string | null; last_sync: string | null }[];
+  /** credentials the connector needs that the vault lacks */
+  missing: string[];
+  /** forges: */
+  deliveries_today?: number;
+  last_delivery?: string | null;
+  /** the path the service's webhook posts to, behind the owner's tunnel */
+  webhook?: string;
 }
 
 export interface Gateway {
@@ -368,7 +377,16 @@ export function createGateway(deps: GatewayDeps): Gateway {
           .filter((x) => x.dof === dof)
           .map(({ scope, cursor, last_sync }) => ({ scope, cursor, last_sync }));
         const error = s.error ?? r?.error;
-        return { dof, type: cfg.type, ...s, ...(error ? { error } : {}), scopes };
+        const forge = FORGE_TYPES.includes(cfg.type) ? deliveries(db, dof) : undefined;
+        return {
+          dof,
+          type: cfg.type,
+          ...s,
+          ...(error ? { error } : {}),
+          scopes,
+          missing: missingCredentials(dof, cfg.type),
+          ...(forge ? { deliveries_today: forge.today, last_delivery: forge.last, webhook: `/${dof}/webhook` } : {}),
+        };
       });
     },
     async resync(dof, scope) {
@@ -395,7 +413,12 @@ let current: Gateway | undefined;
 /** The running gateway's connector for `dof` (webhooks.ts). */
 export const connectorOf = (dof: string): Connector | undefined => current?.connector(dof);
 
-define("source.list", { roles: ["owner"], input: z.unknown(), run: () => current?.list() ?? [] });
+define("source.list", {
+  roles: ["owner"],
+  input: z.unknown(),
+  run: () =>
+    Promise.all((current?.list() ?? []).map(async (s) => ({ ...s, size: await mirrorSize(paths.dof(s.dof)) }))),
+});
 define("source.resync", {
   roles: ["owner"],
   input: z.object({ dof: z.string(), scope: z.string().optional() }),

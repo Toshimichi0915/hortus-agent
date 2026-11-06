@@ -3,17 +3,14 @@
  * owner, `X-Hortus: 1`); `subscribe(topics)` and `streamRows` share the page's one SSE stream (src/console/live.ts).
  * `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead, which a production bundle leaves out.
  *
- * ponytail: what the pages read beyond today's RPCs, until CONNECT.md's step 3: `pause.get`; `task.get`'s `outbox`,
- * `schedules`, `origin`, `tainted` and `console_log`; `task.list`'s `pending`; approvals' `task_title`;
- * `credential.list`'s `enabled` (the durable grant); `project.status`; `source.list`'s `size`, `deliveries_today`,
- * `last_delivery`, `missing`, `webhook`; `dof.file`; `login.frame` (the mock's stand-in for the `/events/login` frames);
- * `remote.status`; `vm.image`; the `settings` event; and the chat stream sending each row's JSON line, not its HTML.
+ * ponytail: what the pages read beyond today's daemon: `login.frame` (the mock's stand-in for the `/events/login`
+ * frames, CONNECT.md's step 5) and the chat stream sending each row's JSON line, not its HTML (step 4).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config.ts";
 import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
 import { liveStream } from "../../src/console/live.ts";
-import { errorText, store, toast } from "./ui.tsx";
+import { errorText, store } from "./ui.tsx";
 
 export type { Config, CredentialType, SearchHit, TaskKind, TaskStatus };
 
@@ -124,9 +121,6 @@ export function streamRows(id: string, after: number, onRows: (rows: Row[]) => v
   };
 }
 
-/** RPCs the daemon lacks, once per load: until CONNECT.md's step 3, as several pages only spin on them. */
-const gaps = new Set<string>();
-
 /**
  * `method(input)`, again on each event of `topics`; `null` calls nothing. An answer to an older input never replaces
  * a newer one.
@@ -143,10 +137,6 @@ export function useCall<T>(method: string | null, input: unknown = {}, topics: s
       if (n === seq.current) setState({ data, loading: false });
     } catch (e) {
       if (n === seq.current) setState((s) => ({ ...s, error: errorText(e), loading: false }));
-      if (e instanceof ApiError && e.message === `no method ${method}` && !gaps.has(method)) {
-        gaps.add(method);
-        toast(`This hortusd has no ${method}`, "error");
-      }
     }
   }, [method, key]);
   const topicKey = topics.join(",");

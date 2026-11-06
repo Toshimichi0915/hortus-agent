@@ -81,7 +81,7 @@ const ROUTES: [RegExp, (m: string[]) => ReactNode][] = [
   [/^\/settings\/([\w-]+)$/, ([, s = ""]) => <Settings section={s} />],
 ];
 
-/** A page that throws (it reads a field today's daemon lacks: CONNECT.md's step 3) says why; the shell stays up. */
+/** A page that throws says why; the shell stays up. */
 class PageGuard extends Component<{ children: ReactNode }, { error?: unknown }> {
   override state: { error?: unknown } = {};
   static getDerivedStateFromError(error: unknown) {
@@ -227,7 +227,7 @@ function ThemeSwitch() {
 function AppSidebar() {
   const { path } = useLocation();
   const { setOpenMobile } = useSidebar();
-  const tasks = useCall<Task[]>("task.list", {}, ["tasks"]);
+  const tasks = useCall<Task[]>("task.list", {}, ["tasks", "approvals"]);
   const pending = useCall<number>("approval.count", {}, ["approvals"]);
   const [all, setAll] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a navigation closes the phone's drawer

@@ -105,6 +105,30 @@ test("RPCs: task.list and approval.list page; approval.count is the badge", asyn
   assert.equal(await call("approval.count", {}, owner), 120);
 });
 
+test("RPCs: task.get stays a page, a list's pending counts stay cheap", async () => {
+  const owner = { role: "owner" } as const;
+  const db = ctx.db;
+  const s = db.prepare("INSERT INTO schedules(task_id, every_sec, text) VALUES ('o1', 60, ?)");
+  db.exec("BEGIN");
+  for (let i = 0; i < 80; i++) s.run(`tick ${i}`);
+  db.exec("COMMIT");
+  const t = performance.now();
+  const list = (await call("task.list", { limit: 500 }, owner)) as { id: string; pending: number }[];
+  assert.ok(performance.now() - t < 2000);
+  assert.equal(list.find((x) => x.id === "o1")?.pending, 120);
+  const card = (await call("task.get", { id: "o1" }, owner)) as {
+    task: { pending: number };
+    outbox: { seq: number }[];
+    approvals: unknown[];
+    schedules: unknown[];
+  };
+  assert.equal(card.outbox.length, 50);
+  assert.equal(card.outbox.at(-1)?.seq, 119);
+  assert.equal(card.approvals.length, 50);
+  assert.equal(card.task.pending, 120);
+  assert.equal(card.schedules.length, 50);
+});
+
 test("CLI: hortus tasks says what it cut; --all lists every one", async () => {
   const run = async (...args: string[]) =>
     (

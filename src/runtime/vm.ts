@@ -4,15 +4,26 @@
  * `cgroup.kill`. `HORTUS_NO_NET=1` swaps the tap for `-netdev user` (boot-only: no proxy, no rules, no links row).
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { accessSync, constants, createWriteStream, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { z } from "zod";
 import type { Config } from "../config.ts";
 import { openAppend, readCapped } from "../hostile.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
+import { define } from "../rpc.ts";
 import type { Role, TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
 import type { Child, Exit } from "./host.ts";
@@ -59,6 +70,17 @@ const MAX_TIMER = 2 ** 31 - 1;
 export function init(d: VmDeps): void {
   deps = d;
 }
+
+/** The image only: what QEMU, virtiofsd or KVM lack shows when a task starts (`missingImage`). */
+define("vm.image", {
+  roles: ["owner"],
+  input: z.unknown(),
+  run() {
+    const dir = paths.images();
+    const present = IMAGE.every((f) => existsSync(join(dir, f)));
+    return { present, dir, ...(present ? { built: statSync(join(dir, "agent.ext4")).mtime.toISOString() } : {}) };
+  },
+});
 
 /** null, or the error a task card shows when the image has not been built or QEMU/virtiofsd/KVM are not there. */
 export function missingImage(dir = paths.images(), path = process.env.PATH ?? ""): string | null {

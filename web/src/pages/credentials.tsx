@@ -25,7 +25,7 @@ import {
 
 /**
  * The shipped transforms and the hosts their manifests send credentials to.
- * ponytail: a copy of transforms/<name>/manifest.json; a `transforms.list` RPC when Workers' own transforms should show
+ * ponytail: a copy of transforms/<name>/manifest.json; read `transforms.list` when Workers' own transforms should show
  */
 export const TRANSFORMS: Record<string, { label: string; hosts: string[]; provider?: boolean }> = {
   anthropic: { label: "Anthropic", hosts: ["api.anthropic.com"], provider: true },

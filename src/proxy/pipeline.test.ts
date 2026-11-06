@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
 import { Config } from "../config.ts";
+import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
@@ -84,7 +85,9 @@ const fake = http.createServer((req, res) => {
       }
       if (kind === "ndjson") {
         res.writeHead(200, { "content-type": "application/x-ndjson" });
-        return res.end(`${'{"message":{"content":"x"}}\n'.repeat(200)}{"done":true,"prompt_eval_count":900,"eval_count":200}\n`);
+        return res.end(
+          `${'{"message":{"content":"x"}}\n'.repeat(200)}{"done":true,"prompt_eval_count":900,"eval_count":200}\n`,
+        );
       }
       res.writeHead(200, { "content-type": "text/event-stream" });
       if (kind === "openai")
@@ -757,10 +760,53 @@ test("WebSocket: bytes relay both ways and closing one side closes the other", a
   await Promise.race([closed, sleep(2000).then(() => assert.fail("client not closed"))]);
 });
 
-test("credential.list never returns values; credential.set validates hosts", async () => {
-  const list = (await call("credential.list", {}, owner)) as Record<string, unknown>[];
-  assert.ok(list.some((c) => c.name === "slack" && c.type === "token" && c.transform === "slack"));
+test("transforms.list: names, hashes and hosts, no value; approvals carry their task's title", async () => {
+  const list = (await call("transforms.list", {}, owner)) as { name: string; hash: string; hosts: string[] }[];
+  const slack = list.find((t) => t.name === "slack");
+  assert.ok(slack?.hosts.includes("slack.com"));
+  assert.match(slack?.hash ?? "", /^[0-9a-f]{64}$/);
   assert.ok(!JSON.stringify(list).includes("xoxb-real"));
+  await assert.rejects(call("transforms.list", {}, { role: "worker", task: "t" }), /not allowed/);
+
+  const db = ctx.db;
+  db.prepare(
+    "INSERT INTO tasks(id, title, status) VALUES ('titled', 'A title', 'waiting'), ('untitled', NULL, 'waiting')",
+  ).run();
+  const row = db.prepare(
+    "INSERT INTO approvals(kind, category, task_id, summary, status) VALUES ('request', 'c', ?, '{}', 'zz')",
+  );
+  const id = (t: string | null) => Number(row.run(t).lastInsertRowid);
+  const title = (rows: { id: number; task_title?: string }[], n: number) => rows.find((r) => r.id === n)?.task_title;
+  const [a, b, c] = [id("titled"), id("untitled"), id(null)];
+  const rows = (await call("approval.list", { status: "zz" }, owner)) as { id: number; task_title?: string }[];
+  assert.equal(title(rows, a), "A title");
+  assert.equal(title(rows, b), "untitled");
+  assert.equal(title(rows, c), undefined);
+  assert.equal(((await call("approval.get", { id: a }, owner)) as { task_title: string }).task_title, "A title");
+});
+
+test("credential.list: the durable grant, never a value; its writes say so on the bus; credential.set validates hosts", async () => {
+  const db = ctx.db;
+  const grant = db
+    .prepare(
+      "INSERT INTO approvals(kind, category, task_id, summary, status) VALUES ('grant', 'credential:slack', ?, '{}', 'approved')",
+    )
+    .run(null);
+  let list = (await call("credential.list", {}, owner)) as Record<string, unknown>[];
+  assert.ok(list.some((c) => c.name === "slack" && c.type === "token" && c.transform === "slack"));
+  assert.equal(list.find((c) => c.name === "slack")?.enabled, true);
+  assert.equal(list.find((c) => c.name !== "slack")?.enabled, false);
+  assert.ok(!JSON.stringify(list).includes("xoxb-real"));
+  db.prepare("DELETE FROM approvals WHERE id = ?").run(grant.lastInsertRowid);
+  list = (await call("credential.list", {}, owner)) as Record<string, unknown>[];
+  assert.equal(list.find((c) => c.name === "slack")?.enabled, false);
+  let saved = 0;
+  const count = () => saved++;
+  bus.on("settings", count);
+  await call("credential.set", { name: "gone", type: "token", value: "v" }, owner);
+  await call("credential.delete", { name: "gone" }, owner);
+  bus.off("settings", count);
+  assert.equal(saved, 2);
   await assert.rejects(
     call("credential.set", { name: "x", type: "token", value: "v", hosts: ["bad host"] }, owner),
     /invalid|hostname/i,

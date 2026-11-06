@@ -440,6 +440,16 @@ const running = (): State => {
   return state;
 };
 
+define("remote.status", {
+  roles: ["owner"],
+  input: z.object({}).loose().default({}),
+  run: (_, caller) => ({
+    remote: !!caller.remote,
+    listening: !!state,
+    ...(state && { url: state.url, cert: state.tls ? "your certificate" : "the hortus CA" }),
+  }),
+});
+
 define("enroll.code", {
   roles: ["owner"],
   input: z.object({}).loose().default({}),
@@ -480,6 +490,7 @@ define("passkey.delete", {
     s.ctx.db.prepare("DELETE FROM console_sessions WHERE passkey = ? OR passkey IS NULL").run(id);
     s.ctx.log("console").info("passkey deleted", { id: id.slice(0, 12) });
     bus.emit("sessions");
+    bus.emit("settings");
     return { ok: true };
   },
 });
@@ -493,6 +504,7 @@ define("session.revoke", {
       throw new RpcError("not_found", "no such session");
     s.ctx.log("console").info("session revoked", { id: id.slice(0, 12) });
     bus.emit("sessions");
+    bus.emit("settings");
     return { ok: true };
   },
 });

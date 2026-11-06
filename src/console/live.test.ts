@@ -45,7 +45,7 @@ test("everything held in one tick shares one stream, and a chat puts itself in i
   await settle();
   assert.deepEqual(
     opened.map((o) => o.url),
-    ["/events/tasks,approvals,chat?task=a%2Fb"],
+    ["/events/tasks,approvals,settings,chat?task=a%2Fb"],
   );
 });
 
@@ -61,7 +61,11 @@ test("the stream follows the chat, and closes with its last holder", async () =>
   await settle();
   assert.deepEqual(
     opened.map((o) => o.url),
-    ["/events/tasks,approvals,chat?task=a", "/events/tasks,approvals,chat?task=b", "/events/tasks,approvals"],
+    [
+      "/events/tasks,approvals,settings,chat?task=a",
+      "/events/tasks,approvals,settings,chat?task=b",
+      "/events/tasks,approvals,settings",
+    ],
   );
   assert.deepEqual(
     opened.map((o) => o.closed),
@@ -83,6 +87,9 @@ test("events fire their topics; a gap shows, then every held topic fires once", 
   s.named.get("approvals")?.();
   s.onmessage?.({ lastEventId: "7" });
   assert.deepEqual(fired, ["approvals", "chat:a"]);
+  on("settings");
+  s.named.get("settings")?.();
+  assert.equal(fired.at(-1), "settings");
   fired.length = 0;
   s.readyState = 0; // the browser retries this one itself
   s.onerror?.();
@@ -103,7 +110,7 @@ test("a stream the browser gave up on is reopened from the last seq", async () =
   s.onerror?.();
   await sleep(30);
   assert.equal(s.closed, true);
-  assert.equal(opened[1]?.url, "/events/tasks,approvals,chat?task=a&after=41");
+  assert.equal(opened[1]?.url, "/events/tasks,approvals,settings,chat?task=a&after=41");
   fired.length = 0;
   opened[1]?.onopen?.();
   assert.deepEqual(fired, ["chat:a"]);

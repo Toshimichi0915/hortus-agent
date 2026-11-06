@@ -1,5 +1,6 @@
 /** The vault module: CA, transforms, the gate's expiry timer, and the owner's approval and credential RPCs. */
 import { z } from "zod";
+import { bus } from "../console/events.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { onApproved as landMerge } from "../projects/merge.ts";
 import { call, define } from "../rpc.ts";
@@ -45,14 +46,6 @@ export const vaultModule: Module = {
   },
 };
 
-const parse = (r: gate.ApprovalRow) => ({
-  ...r,
-  summary: JSON.parse(r.summary) as unknown,
-  payload: r.payload ? (JSON.parse(r.payload) as unknown) : null,
-  grantable: gate.grantable(r),
-  url: gate.approvalUrl(r.id),
-});
-
 /** Newest first, `limit` from `skip`; without `status`, pending then decided, each list paged (the CLI pages `--all`). */
 define("approval.list", {
   roles: ["owner"],
@@ -68,7 +61,7 @@ define("approval.list", {
     const page = (where: string, ...a: string[]) =>
       db.prepare(`SELECT * FROM approvals WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...a, limit, skip);
     const rows = status ? page("status = ?", status) : [...page("status = 'pending'"), ...page("status != 'pending'")];
-    return (rows as unknown as gate.ApprovalRow[]).map(parse);
+    return (rows as unknown as gate.ApprovalRow[]).map((r) => gate.approvalOut(db, r));
   },
 });
 
@@ -86,7 +79,7 @@ define("approval.get", {
   run: ({ id }) => {
     const r = ctx().db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as gate.ApprovalRow | undefined;
     if (!r) throw new RpcError("not_found", `no approval ${id}`);
-    return parse(r);
+    return gate.approvalOut(ctx().db, r);
   },
 });
 
@@ -116,6 +109,7 @@ define("approval.decide", {
       gate.decide(id, decision, "owner", { reason, grant });
     // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
     const why = decision === "approve" ? await landMerge(id) : null;
+    bus.emit("settings"); // a durable grant is credential.list's `enabled`, and a transform entry brings credentials
     return why ? { ok: true, message: `approved, not landed: ${why} (Retry is on the Approvals page)` } : { ok: true };
   },
 });
@@ -123,14 +117,20 @@ define("approval.decide", {
 define("credential.list", {
   roles: ["owner"],
   input: z.unknown(),
-  run: () =>
-    Object.entries(read()).map(([name, e]) => ({
+  run: () => {
+    const grants = ctx()
+      .db.prepare("SELECT category FROM approvals WHERE kind = 'grant' AND task_id IS NULL AND status = 'approved'")
+      .all() as { category: string }[];
+    const enabled = new Set(grants.map((g) => g.category));
+    return Object.entries(read()).map(([name, e]) => ({
       name,
       type: e.type,
       transform: e.transform ?? null,
       hosts: e.hosts ?? null,
       last_use: e.last_use ?? null,
-    })),
+      enabled: enabled.has(`credential:${name}`),
+    }));
+  },
 });
 
 const Hostname = z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/, "a hostname");
@@ -172,6 +172,7 @@ define("credential.set", {
     const kept = { ...(transform && { transform }), ...(hosts && { hosts }), ...(last_use && { last_use }) };
     write({ ...v, [name]: { ...kept, ...entry } as VaultEntry });
     retire(name);
+    bus.emit("settings");
     return { ok: true };
   },
 });
@@ -200,6 +201,7 @@ define("credential.delete", {
         "UPDATE approvals SET status = 'expired', reason = 'the credential was deleted' WHERE kind = 'grant' AND category = ? AND status = 'approved'",
       )
       .run(`credential:${name}`);
+    bus.emit("settings");
     return { ok: true };
   },
 });

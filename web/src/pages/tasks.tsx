@@ -204,7 +204,7 @@ export const SessionLogDialog = ({ id, open, onClose }: { id: string; open: bool
 
 export function Tasks() {
   const { query } = useLocation();
-  const list = useCall<Task[]>("task.list", {}, ["tasks"]);
+  const list = useCall<Task[]>("task.list", {}, ["tasks", "approvals"]);
   const [show, setShow] = useState<"open" | "closed" | "all">("open");
   const [kind, setKind] = useState(query.get("kind") ?? "all");
   const [q, setQ] = useState("");

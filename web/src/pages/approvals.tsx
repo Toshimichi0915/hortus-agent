@@ -760,7 +760,7 @@ function FakeSite({ frame, send }: { frame: LoginFrame | undefined; send: Send }
  */
 export function LoginView({ id }: { id: number }) {
   const a = useCall<Approval>("approval.get", { id }, ["approvals"]);
-  const frame = useCall<LoginFrame>("login.frame", { id }, [`login:${id}`]);
+  const frame = useCall<LoginFrame>(import.meta.env.VITE_MOCK === "1" ? "login.frame" : null, { id }, [`login:${id}`]);
   const [done, finishing] = useAction(() => call("login.done", { id }));
   const [reject, rejecting] = useAction(() => call("login.reject", { id }), "Rejected");
   // one at a time, in order: a late character must not land after a newer one

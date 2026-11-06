@@ -108,6 +108,18 @@ define("transforms.status", {
   run: () => ({ notes: status(), enabled: [...bound()].map(([name, hash]) => ({ name, hash })) }),
 });
 
+/** What is loaded, by name: a manifest's hosts name no credential's value. */
+define("transforms.list", {
+  roles: ["owner"],
+  input: z.unknown(),
+  run: () =>
+    [...transforms.all()].map(([name, { manifest, hash }]) => ({
+      name,
+      hash,
+      hosts: [...new Set(Object.values(manifest.credentials).flatMap((c) => c.hosts))],
+    })),
+});
+
 /** Start after mirrorModule (commit) and vaultModule (ctx, QuickJS): its table replaces the shipped-only one. */
 export const transformsDofModule: Module = {
   name: "transforms",

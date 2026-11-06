@@ -1,15 +1,20 @@
 /** The console module: the web UI listener and the RPCs it owns. */
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { Config, oneLine, save } from "../config.ts";
 import type { Ctx, Module } from "../ctx.ts";
+import { taintOf } from "../db.ts";
+import { readDofFile } from "../mirror/file.ts";
 import { define } from "../rpc.ts";
 import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
+import { type ApprovalRow, approvalOut } from "../vault/gate.ts";
 import { bus } from "./events.ts";
-import { parse } from "./html.ts";
+import { PAGE, parse } from "./html.ts";
 import { PENDING_FOR } from "./pages/approvals.ts";
 import { lastReplies } from "./pages/chat.ts";
+import { type ScheduleListRow, withSummaries } from "./pages/schedules.ts";
+import { consoleLog, taskOrigin } from "./pages/task.ts";
 import { CLOSED_SQL, OPEN_SQL, type TaskRow } from "./pages/tasks.ts";
 import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
 import { type Console, startServer } from "./server.ts";
@@ -23,6 +28,9 @@ const ctx = (): Ctx => {
 };
 
 const owner = ["owner"] as const;
+
+/** The approvals that wait on a task: a task's own, and a shared login or grant it waits for. */
+const COUNT_PENDING = `SELECT count(*) AS n FROM (${PENDING_FOR})`;
 
 function taskOut(t: TaskRow) {
   const r = t as TaskRow & { scope?: string; origins?: string; event_keys?: string };
@@ -48,10 +56,11 @@ define("task.list", {
     .default({ limit: 50, skip: 0 }),
   run({ limit, skip }) {
     const db = ctx().db;
+    const pending = db.prepare(COUNT_PENDING);
     return [
       ...(db.prepare(OPEN_SQL).all(limit, skip) as unknown as TaskRow[]),
       ...(db.prepare(CLOSED_SQL).all(limit, skip) as unknown as TaskRow[]),
-    ].map(taskOut);
+    ].map((t) => ({ ...taskOut(t), pending: (pending.get(t.id) as { n: number }).n }));
   },
 });
 
@@ -71,21 +80,35 @@ define("task.get", {
   roles: [...owner],
   input: z.object({ id: z.string() }),
   run({ id }) {
-    const db = ctx().db;
+    const c = ctx();
+    const db = c.db;
     const t = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
     if (!t) throw new RpcError("not_found", `no task ${id}`);
     const rows = <T>(sql: string) => db.prepare(sql).all(id) as unknown as T[];
-    return {
-      task: taskOut(t),
-      summary: t.summary,
-      replies: lastReplies(current as Ctx, id).map((r) => ({ ...r, body: line(r.body) })),
-      approvals: rows<{ summary: string }>(`${PENDING_FOR} ORDER BY id`).map((a) => ({
-        ...a,
-        summary: parse(a.summary) ?? null,
-      })),
-      inbox: rows<{ body: string }>("SELECT * FROM inbox WHERE task_id = ? ORDER BY seq DESC LIMIT 50")
+    // the newest PAGE, oldest first (a scheduled task's 5,000 posts); a body is the Worker's, so through `line`
+    const box = (table: "inbox" | "outbox") =>
+      rows<{ body: string }>(`SELECT * FROM ${table} WHERE task_id = ? ORDER BY seq DESC LIMIT ${PAGE}`)
         .reverse()
-        .map((m) => ({ ...m, body: parse(m.body) ?? m.body })),
+        .map((m) => ({ ...m, body: line(m.body) }));
+    const { n: pending } = db.prepare(COUNT_PENDING).get(id) as { n: number };
+    return {
+      task: { ...taskOut(t), pending },
+      summary: t.summary,
+      replies: lastReplies(c, id).map((r) => ({ ...r, body: line(r.body) })),
+      // what the Approvals page gets: a card reads `payload` and `grantable` (a tainted request says so there)
+      approvals: rows<ApprovalRow>(`${PENDING_FOR} ORDER BY id LIMIT ${PAGE}`).map((a) => approvalOut(db, a)),
+      inbox: box("inbox"),
+      outbox: box("outbox"),
+      schedules: withSummaries(
+        c,
+        rows<ScheduleListRow>(
+          `SELECT s.*, t.title FROM schedules s LEFT JOIN tasks t ON t.id = s.task_id WHERE s.task_id = ?
+            ORDER BY s.fire_at LIMIT ${PAGE}`,
+        ),
+      ),
+      origin: taskOrigin(c, id),
+      tainted: taintOf(db, id, c.config),
+      console_log: consoleLog(c, t) ?? undefined,
     };
   },
 });
@@ -106,12 +129,19 @@ define("settings.set", {
     if (!r.success) throw new RpcError("invalid", oneLine(r.error), r.error.issues);
     save(r.data, c.paths.config());
     await c.reload();
+    bus.emit("settings");
     // kept (Config is loose, for a newer version's keys), but a typo (`polcy`) would otherwise read as saved and in force
     const unknown = Object.keys(r.data).filter((k) => !(k in Config.shape));
     return unknown.length
       ? { ok: true, message: `saved; not settings hortusd knows: ${unknown.join(", ")}` }
       : { ok: true };
   },
+});
+
+define("pause.get", {
+  roles: [...owner],
+  input: z.unknown(),
+  run: () => ({ paused: existsSync(ctx().paths.paused()) }),
 });
 
 define("pause.set", {
@@ -123,6 +153,17 @@ define("pause.set", {
     else rmSync(p, { force: true });
     bus.emit("tasks", { paused });
     return { paused };
+  },
+});
+
+/** Owner only: a Worker's `scope.dofs` limits its reads, and this is not `dof.search`. */
+define("dof.file", {
+  roles: [...owner],
+  input: z.object({ dof: z.string(), path: z.string() }),
+  run({ dof, path }) {
+    const r = readDofFile([dof, ...path.split("/")]);
+    if ("error" in r) throw new RpcError("not_found", r.error);
+    return r;
   },
 });
 

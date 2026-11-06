@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Config } from "../config.ts";
 import { connectors } from "../connectors/index.ts";
 import { openDb } from "../db.ts";
+import * as paths from "../paths.ts";
 import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Heard, Incoming } from "../types.ts";
 import { createGateway, type GatewayDeps, summaryOf, timing } from "./gateway.ts";
+import { deliveries, mirrorSize, missingCredentials } from "./sources.ts";
 
 test("summaryOf: an owner's long order keeps its last line, a stranger's is cut sooner, and a cut says so", () => {
   const order = `${"note\n".repeat(1000)}the first line must be X`;
@@ -184,12 +186,48 @@ test("membership: the bot joining a channel adds it to scopes, the next reconcil
   assert.ok(db.prepare("SELECT 1 FROM syncs WHERE dof = 'slack' AND scope = 'C9'").get());
 });
 
+test("a forge's source: its webhook path, today's deliveries, and the credentials the vault lacks", () => {
+  const cfg = Config.parse({ dofs: { hub: { type: "github", owner: "o" } } });
+  const today = new Date().toISOString();
+  const ins = db.prepare("INSERT INTO events(dof, key, created) VALUES ('hub', ?, ?)");
+  ins.run("old", "2001-01-01T00:00:00.000Z");
+  ins.run("new", today);
+  ins.run("newer", today);
+  assert.deepEqual(harness(() => cfg, {}).gw.list()[0], {
+    dof: "hub",
+    type: "github",
+    connected: false,
+    error: "no connector type github",
+    scopes: [],
+    missing: ["hub", "hub-webhook"],
+    deliveries_today: 2,
+    last_delivery: today,
+    webhook: "/hub/webhook",
+  });
+  assert.deepEqual(deliveries(db, "none"), { today: 0, last: null });
+  assert.deepEqual(missingCredentials("nope", "slack"), ["nope", "nope-app"]);
+});
+
+test("mirrorSize: du's figure, nothing for a mirror that is not there", async () => {
+  assert.match((await mirrorSize(home)) ?? "", /^\d/);
+  assert.equal(await mirrorSize(join(home, "nope")), undefined);
+});
+
 test("source.list and source.resync", async () => {
+  mkdirSync(paths.dof("slack"), { recursive: true });
   const list = (await call("source.list", {}, owner)) as {
     dof: string;
     connected: boolean;
     scopes: { scope: string }[];
+    missing: string[];
+    size?: string;
+    webhook?: string;
+    deliveries_today?: number;
   }[];
+  assert.deepEqual(list[0]?.missing, []);
+  assert.match(list[0]?.size ?? "", /^\d/);
+  assert.equal(list[0]?.webhook, undefined); // no forge
+  assert.equal(list[0]?.deliveries_today, undefined);
   assert.equal(list[0]?.dof, "slack");
   assert.equal(list[0]?.connected, true);
   assert.deepEqual(list[0]?.scopes.map((s) => s.scope).sort(), ["C1", "C9", "D_U_OWNER"]);

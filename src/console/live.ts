@@ -10,8 +10,8 @@
 const CLOSED = 2; // EventSource.CLOSED; node has no EventSource to read it from
 
 /**
- * `(topics) => release`: holds the stream open for `topics` (`tasks`, `approvals`, `chat:<id>`), which fire as events
- * on `bus`. Holders of one render settle before the URL is looked at, so a chat page's mount opens one stream.
+ * `(topics) => release`: holds the stream open for `topics` (`tasks`, `approvals`, `settings`, `chat:<id>`), which fire
+ * as events on `bus`. Holders of one render settle before the URL is looked at, so a chat page's mount opens one stream.
  */
 export function liveStream(
   bus: EventTarget,
@@ -36,7 +36,7 @@ export function liveStream(
   const connect = () => {
     stop();
     const chat = task === undefined ? "" : `,chat?task=${encodeURIComponent(task)}${last < 0 ? "" : `&after=${last}`}`;
-    const s = open(`/events/tasks,approvals${chat}`);
+    const s = open(`/events/tasks,approvals,settings${chat}`);
     source = s;
     s.onopen = () => {
       onDown(false);
@@ -52,7 +52,7 @@ export function liveStream(
       last = Number(e.lastEventId);
       fire(`chat:${task}`);
     };
-    for (const t of ["tasks", "approvals"]) s.addEventListener(t, () => fire(t));
+    for (const t of ["tasks", "approvals", "settings"]) s.addEventListener(t, () => fire(t));
   };
 
   const sync = () => {

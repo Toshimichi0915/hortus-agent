@@ -7,7 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { load } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
-import { openDb } from "../db.ts";
+import { openDb, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
@@ -248,7 +248,9 @@ function clean(path: string, html: string): void {
 test("Schedules: a row shows its last run's summary; a merge cut at 64 KB links the whole diff", async () => {
   ctx.db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES ('sw', 'unattended', 'watch', 'waiting')").run();
   const { lastInsertRowid: id } = ctx.db
-    .prepare("INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sw', '2030-01-01T00:00:00Z', 3600, 'x')")
+    .prepare(
+      "INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sw', '2030-01-01T00:00:00Z', 3600, 'x')",
+    )
     .run();
   mkdirSync(paths.schedule(Number(id)), { recursive: true });
   writeFileSync(join(paths.schedule(Number(id)), "last-summary.md"), "## Goal\nnothing moved today\n");
@@ -427,6 +429,156 @@ test("task.list and task.get read the DB", async () => {
   assert.equal(card.approvals[0]?.summary.host, "slack.com");
   assert.equal(card.inbox.length, 1);
   await assert.rejects(call("task.get", { id: "nope" }, { role: "owner" }), /no task nope/);
+});
+
+const worker = { role: "worker", task: "t1" } as const;
+
+test("pause.get says what the PAUSED file says, to the owner alone", async () => {
+  assert.deepEqual(await call("pause.get", {}, { role: "owner" }), { paused: false });
+  writeFileSync(paths.paused(), "");
+  assert.deepEqual(await call("pause.get", {}, { role: "owner" }), { paused: true });
+  rmSync(paths.paused());
+  await assert.rejects(call("pause.get", {}, worker), /not allowed/);
+});
+
+test("task.list and task.get: what waits on a task, what it sent, where it came from, what tainted it", async () => {
+  const owner = { role: "owner" } as const;
+  const db = ctx.db;
+  const at = "2099-01-01T00:00:00.000Z"; // ahead of the other tests' tasks: the first of task.list
+  const task = db.prepare(
+    "INSERT INTO tasks(id, kind, title, status, budget, created, updated, parent) VALUES (?, ?, ?, 'waiting', '{}', ?, ?, NULL)",
+  );
+  task.run("card", "unattended", "the card", at, at);
+  task.run("other", "unattended", "other", at, at);
+  const appr = db.prepare(
+    "INSERT INTO approvals(kind, category, task_id, summary, status, requested_at, payload) VALUES (?, 'c', ?, '{}', ?, ?, ?)",
+  );
+  appr.run("request", "card", "pending", at, JSON.stringify({ judge: "tainted: a stranger" }));
+  appr.run("request", "card", "approved", at, null);
+  appr.run("login", null, "pending", at, JSON.stringify({ waiting: ["card", "other"] })); // a shared login waits for both
+  const pending = (id: string, list: { id: string; pending?: number }[]) => list.find((t) => t.id === id)?.pending;
+  const list = (await call("task.list", {}, owner)) as { id: string; pending: number }[];
+  assert.equal(pending("card", list), 2);
+  assert.equal(pending("other", list), 1);
+
+  const out = db.prepare("INSERT INTO outbox(task_id, seq, body, created) VALUES ('card', ?, ?, ?)");
+  out.run(1, JSON.stringify({ seq: 1, type: "reply", text: "sent", ts: at }), at);
+  // parses, and throws in the response's JSON.stringify: the card must stay readable
+  out.run(2, `${"[".repeat(200_000)}${"]".repeat(200_000)}`, at);
+  db.prepare(
+    "INSERT INTO events(dof, key, author, trusted, task_id, refs, summary) VALUES ('slack', 'k1', 'U9', 0, 'card', ?, 'hi')",
+  ).run(JSON.stringify(["slack:C7:1.2"]));
+  const sched = db.prepare("INSERT INTO schedules(task_id, every_sec, text, script) VALUES ('card', 60, 'tick', 'x')");
+  const { lastInsertRowid: sid } = sched.run();
+  mkdirSync(paths.schedule(Number(sid)), { recursive: true });
+  writeFileSync(join(paths.schedule(Number(sid)), "last-summary.md"), "ran fine");
+  mkdirSync(paths.out("card"), { recursive: true });
+  writeFileSync(join(paths.out("card"), "console.log"), `head${"x".repeat(70 * 1024)}tail`);
+
+  interface Card {
+    task: { pending: number };
+    approvals: { kind: string; payload: { judge?: string } | null; grantable: boolean; task_title?: string }[];
+    outbox: { seq: number; body: unknown }[];
+    schedules: { title: string; summary: string; text: string }[];
+    origin?: { dof: string; channel: string; author: string | null; summary: string };
+    tainted: string[];
+    console_log?: string;
+  }
+  const c = (await call("task.get", { id: "card" }, owner)) as Card;
+  assert.ok(JSON.stringify(c));
+  assert.equal(c.task.pending, 2);
+  assert.deepEqual(
+    c.outbox.map((m) => m.seq),
+    [1, 2],
+  );
+  assert.deepEqual(c.outbox[0]?.body, { seq: 1, type: "reply", text: "sent", ts: at });
+  assert.equal(typeof c.outbox[1]?.body, "string");
+  // as the Approvals page gets them: a tainted request's card names it, and offers the grant
+  assert.deepEqual(c.approvals[0]?.payload, { judge: "tainted: a stranger" });
+  assert.equal(c.approvals[0]?.grantable, true);
+  assert.equal(c.approvals[0]?.task_title, "the card");
+  assert.equal(c.schedules[0]?.title, "the card");
+  assert.equal(c.schedules[0]?.summary, "ran fine");
+  assert.deepEqual(c.origin, { dof: "slack", channel: "C7", author: "U9", summary: "hi" });
+  assert.deepEqual(c.tainted, taintOf(db, "card", ctx.config));
+  assert.match(c.tainted[0] ?? "", /read untrusted messages \(slack:U9\)/);
+  assert.equal(c.console_log?.length, 64 * 1024); // the tail
+  assert.ok(c.console_log?.endsWith("tail"));
+
+  // a Worker's link at console.log is not followed; no event, no origin; a chat has no console
+  writeFileSync(join(paths.home(), "outside.log"), "SECRET");
+  rmSync(join(paths.out("card"), "console.log"));
+  symlinkSync(join(paths.home(), "outside.log"), join(paths.out("card"), "console.log"));
+  const linked = (await call("task.get", { id: "card" }, owner)) as Card;
+  assert.equal(linked.console_log, undefined);
+  assert.equal(((await call("task.get", { id: "other" }, owner)) as Card).origin, undefined);
+  assert.equal(((await call("task.get", { id: "other" }, owner)) as Card).tainted.length, 0);
+  await assert.rejects(call("task.get", { id: "card" }, worker), /not allowed/);
+});
+
+test("dof.file: the page's checks; a link, .., an escape, a bare repo all refused; for the owner alone", async () => {
+  const owner = { role: "owner" } as const;
+  const dir = "C2/1700000000.0002#t";
+  const thread = join(paths.dof("slack"), dir);
+  mkdirSync(thread, { recursive: true });
+  writeFileSync(join(thread, "a.md"), "first");
+  writeFileSync(join(thread, "b.md"), "second");
+  const secret = join(paths.home(), "outside.md");
+  writeFileSync(secret, "SECRET");
+  symlinkSync(secret, join(thread, "link.md"));
+  symlinkSync(join(thread, "a.md"), join(thread, "inner.md"));
+  symlinkSync(paths.home(), join(paths.dof("slack"), "up")); // a directory link out of the root
+  assert.deepEqual(await call("dof.file", { dof: "slack", path: `${dir}/a.md` }, owner), {
+    text: "first",
+    size: 5,
+    siblings: ["a.md", "b.md"],
+  });
+  mkdirSync(paths.dofRepo("planted2"), { recursive: true });
+  writeFileSync(join(paths.dofRepo("planted2"), "config"), "[core]");
+  for (const [dof, path, why] of [
+    ["slack", `${dir}/link.md`, /not a regular file|outside the DOF/],
+    ["slack", `${dir}/inner.md`, /not a regular file/],
+    ["slack", "../../outside.md", /bad path/],
+    ["slack", `${dir}/../../../outside.md`, /bad path/],
+    ["slack", "up/outside.md", /outside the DOF/],
+    ["slack", "", /bad path/],
+    ["slack", `${dir}/nul\0.md`, /bad path/],
+    ["..", "outside.md", /bad path/],
+    ["../..", "outside.md", /bad path/],
+    [".", "outside.md", /bad path/],
+    ["planted2.git", "config", /no DOF/],
+    ["slack", dir, /not a regular file/],
+    ["slack", `${dir}/nope.md`, /no file/],
+  ] as [string, string, RegExp][])
+    await assert.rejects(call("dof.file", { dof, path }, owner), why, `${dof} ${path}`);
+  await assert.rejects(call("dof.file", { dof: "slack", path: `${dir}/a.md` }, worker), /not allowed/);
+  assert.equal((await post("dof.file", { dof: "slack", path: "../x" })).status, 404);
+
+  // a file over the cap comes cut; a thread of thousands lists the first of them
+  writeFileSync(join(thread, "big.md"), "x".repeat(2 * 1024 * 1024));
+  const big = (await call("dof.file", { dof: "slack", path: `${dir}/big.md` }, owner)) as {
+    text: string;
+    size: number;
+  };
+  assert.equal(big.text.length, 1024 * 1024);
+  assert.equal(big.size, 2 * 1024 * 1024);
+  const crowd = join(paths.dof("slack"), "crowd");
+  mkdirSync(crowd);
+  for (let i = 0; i < 1100; i++) writeFileSync(join(crowd, `${i}.md`), "");
+  const many = (await call("dof.file", { dof: "slack", path: "crowd/0.md" }, owner)) as { siblings: string[] };
+  assert.equal(many.siblings.length, 1000);
+});
+
+test("/events/settings: named like the others, alone or on a page's one stream; settings.set emits it", async () => {
+  const alone = stream("/events/settings", {}, (t) => t.includes("event: settings"));
+  const page = stream("/events/tasks,approvals,settings,chat?task=x", {}, (t) => t.includes("event: settings"));
+  await sleep(30);
+  await post("settings.set", { config: ctx.config });
+  assert.match(await alone, /event: settings\ndata: null/);
+  assert.match(await page, /event: settings\ndata: null/);
+  await sleep(50);
+  assert.equal(bus.listenerCount("settings"), 0);
+  assert.equal((await get("/events/settings,nope")).status, 404);
 });
 
 test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., links and leaving the root", async () => {

@@ -46,6 +46,23 @@ before(async () => {
 });
 after(() => consoleModule.stop());
 
+test("remote.status: the listener, its certificate's source, and whether this page came through it", async () => {
+  assert.deepEqual(await call("remote.status", {}, { role: "owner" }), {
+    remote: false,
+    listening: true,
+    url: origin,
+    cert: "the hortus CA",
+  });
+  const through = (await call("remote.status", {}, { role: "owner", remote: true })) as { remote: boolean };
+  assert.equal(through.remote, true);
+  await assert.rejects(call("remote.status", {}, { role: "worker", task: "t" }), /not allowed/);
+  await stopRemote();
+  assert.deepEqual(await call("remote.status", {}, { role: "owner" }), { remote: false, listening: false });
+  await startRemote(ctx);
+  origin = consoleUrl();
+  port = Number(new URL(origin).port);
+});
+
 interface Res {
   status: number;
   headers: Record<string, string | string[] | undefined>;

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { Ctx } from "../../ctx.ts";
 import { taintOf } from "../../db.ts";
 import { readCapped } from "../../hostile.ts";
 import { GOES_ON } from "../../types.ts";
@@ -37,8 +38,20 @@ const msg = (r: MsgRow) => {
 };
 
 /** The last 64 KB of `out/console.log` (a VM's serial output, an unattended session's stdout and stderr). */
-function tail(f: string): string | null {
-  return readCapped(f, 64 * 1024, true)?.text ?? null; // the Worker's file: no links, FIFOs
+export function consoleLog(ctx: Ctx, t: Pick<TaskRow, "id" | "kind">): string | null {
+  if (t.kind === "chat") return null;
+  // the Worker's file: no links, FIFOs
+  return readCapped(join(ctx.paths.out(t.id), "console.log"), 64 * 1024, true)?.text ?? null;
+}
+
+/** A Planner-created task: the event it came from. */
+export function taskOrigin(ctx: Ctx, id: string) {
+  const o = ctx.db
+    .prepare("SELECT dof, author, refs, summary FROM events WHERE task_id = ? ORDER BY id LIMIT 1")
+    .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
+  if (!o) return undefined;
+  const channel = parse<string[]>(o.refs)?.[0]?.split(":")[1] ?? "—";
+  return { dof: o.dof, channel, author: o.author, summary: o.summary ?? "" };
 }
 
 /** Text comes as deltas, one row each: a run of them is one timed line, and a row that renders to nothing is no line. */
@@ -76,11 +89,7 @@ export const task: Page = (ctx, { m, q }) => {
   const timers = ctx.db
     .prepare("SELECT * FROM schedules WHERE task_id = ? ORDER BY fire_at")
     .all(id) as unknown as ScheduleListRow[];
-  // a Planner-created task: the event it came from
-  const origin = ctx.db
-    .prepare("SELECT dof, author, refs, summary FROM events WHERE task_id = ? ORDER BY id LIMIT 1")
-    .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;
-  const channel = origin ? (parse<string[]>(origin.refs)?.[0]?.split(":")[1] ?? "—") : "";
+  const origin = taskOrigin(ctx, id);
   const open = isOpen(t.status);
   const tainted = taintOf(ctx.db, id, ctx.config);
   const pending = pendingFor(ctx, id);
@@ -88,7 +97,7 @@ export const task: Page = (ctx, { m, q }) => {
     t.runtime === "vm" && t.status === "running" && t.started
       ? ` · up ${Math.round((Date.now() - Date.parse(t.started)) / 60_000)} min`
       : "";
-  const log = t.kind === "chat" ? null : tail(join(ctx.paths.out(id), "console.log"));
+  const log = consoleLog(ctx, t);
   return layout(
     ctx,
     "tasks",
@@ -101,7 +110,7 @@ ${t.brief ? details("Brief", t.brief) : ""}
 <tr><th>Status</th><td>${t.status ?? ""}${t.outcome ? ` (${t.outcome})` : ""}</td></tr>
 <tr><th>Kind</th><td>${t.kind ?? ""}</td></tr><tr><th>Runtime</th><td>${t.runtime ?? "host"}${up}</td></tr>
 <tr><th>Project</th><td>${t.project ?? "—"}</td></tr>
-${origin ? h`<tr><th>Origin</th><td>${origin.dof} · channel ${channel} · author ${origin.author ?? "—"}<br><span class="pre">${origin.summary ?? ""}</span></td></tr>` : ""}
+${origin ? h`<tr><th>Origin</th><td>${origin.dof} · channel ${origin.channel} · author ${origin.author ?? "—"}<br><span class="pre">${origin.summary}</span></td></tr>` : ""}
 ${tainted.length ? h`<tr><th>Tainted</th><td class="untrusted">${tainted.join("; ")} (the owner decides its gated requests)</td></tr>` : ""}
 <tr><th>Budget</th><td>${budget(t)}</td></tr><tr><th>Created</th><td>${time(t.created)}</td></tr>
 <tr><th>Updated</th><td>${time(t.updated)}</td></tr>${t.closed ? h`<tr><th>Closed</th><td>${time(t.closed)}</td></tr>` : ""}

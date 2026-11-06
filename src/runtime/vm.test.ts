@@ -11,6 +11,7 @@ import { mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { outbox, sessionFiles, setup } from "../agent/testkit.ts";
 import * as paths from "../paths.ts";
+import { call } from "../rpc.ts";
 import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
@@ -161,6 +162,29 @@ test("build-image: the guest's copy of the CA is world-readable, as hortusd's 06
   // a plain `cp` kept 0600 as root: `runuser agent certutil` failed, so `hortus image build` failed on every real home
   const script = readFileSync(new URL("../../scripts/build-image.sh", import.meta.url), "utf8");
   assert.match(script, /^install -m 644 "\$ca" "\$root\/etc\/ssl\/certs\/hortus\.pem"/m);
+});
+
+test("vm.image: all three files, built when, for the owner alone", async () => {
+  const owner = { role: "owner" } as const;
+  const home = process.env.HORTUS_HOME;
+  process.env.HORTUS_HOME = tempDir("hortus-vm-image-");
+  try {
+    const dir = paths.images();
+    assert.deepEqual(await call("vm.image", {}, owner), { present: false, dir });
+    mkdirSync(dir, { recursive: true });
+    for (const f of ["agent.ext4", "initramfs.img"]) writeFileSync(join(dir, f), "");
+    assert.equal(((await call("vm.image", {}, owner)) as { present: boolean }).present, false);
+    writeFileSync(join(dir, "vmlinuz"), "");
+    assert.deepEqual(await call("vm.image", {}, owner), {
+      present: true,
+      dir,
+      built: statSync(join(dir, "agent.ext4")).mtime.toISOString(),
+    });
+    await assert.rejects(call("vm.image", {}, { role: "worker", task: "t" }), /not allowed/);
+  } finally {
+    if (home === undefined) delete process.env.HORTUS_HOME;
+    else process.env.HORTUS_HOME = home;
+  }
 });
 
 test("missingImage names the first missing file and the fix", () => {

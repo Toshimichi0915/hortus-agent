@@ -342,6 +342,14 @@ async function writeConfig(change: (c: Config) => void): Promise<void> {
   change(next);
   save(next, paths.config());
   await c.reload();
+  bus.emit("settings");
+}
+
+/** `fn`, a sync of a project: a shadow's snapshots are the Projects page's. */
+async function synced<T>(fn: () => Promise<T>): Promise<T> {
+  const r = await fn();
+  bus.emit("settings");
+  return r;
 }
 
 define("project.set", {
@@ -354,7 +362,7 @@ define("project.set", {
     await writeConfig((c) => {
       c.projects[name] = p;
     });
-    return sync(name);
+    return synced(() => sync(name));
   },
 });
 
@@ -392,7 +400,13 @@ define("project.delete", {
 define("project.sync", {
   roles: owner,
   input: Name.extend({ force: z.boolean().default(false) }),
-  run: ({ name, force }) => sync(name, force),
+  run: ({ name, force }) => synced(() => sync(name, force)),
+});
+
+define("project.status", {
+  roles: owner,
+  input: z.unknown(),
+  run: () => Object.fromEntries(Object.entries(ctx().config.projects).map(([n, p]) => [n, { git: isGit(p) }])),
 });
 
 define("project.snapshots", {
@@ -412,6 +426,6 @@ define("project.restore", {
     if (isGit(p)) throw new RpcError("invalid", `${name} is a git project: restore with git`);
     await ensure(name);
     const restored = await shadow.restore(name, p.path, sha);
-    return { sha: restored, ...(await sync(name)) };
+    return { sha: restored, ...(await synced(() => sync(name))) };
   },
 });

@@ -450,6 +450,7 @@ define("captured.forget", {
         "UPDATE approvals SET status = 'expired', reason = 'the site was forgotten' WHERE kind = 'grant' AND category = ? AND status = 'approved'",
       )
       .run(`origin:${origin}`);
+    bus.emit("settings");
     return { deleted: Number(r.changes) };
   },
 });

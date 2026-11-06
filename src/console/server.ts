@@ -155,9 +155,9 @@ function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined):
 
 /**
  * `/events/<names>`, comma-separated: a page's one stream (HTTP/1.1 gives an origin six connections, and an open SSE
- * holds one; three per chat page stalled every fetch with two chats open). `approvals` and `tasks` are named SSE events;
- * `chat` is the unnamed one: it replays every `replies` row after `Last-Event-ID` (or `?after=`; default: the last
- * 1000), then follows the bus.
+ * holds one; three per chat page stalled every fetch with two chats open). `approvals`, `tasks` and `settings` are named
+ * SSE events; `chat` is the unnamed one: it replays every `replies` row after `Last-Event-ID` (or `?after=`; default:
+ * the last 1000), then follows the bus.
  */
 function events(
   ctx: Ctx,
@@ -173,7 +173,10 @@ function events(
   }
   const taskId = q.get("task");
   const names = name.split(",");
-  if (names.some((n) => !["approvals", "tasks", "chat"].includes(n)) || (names.includes("chat") && !taskId)) {
+  if (
+    names.some((n) => !["approvals", "tasks", "settings", "chat"].includes(n)) ||
+    (names.includes("chat") && !taskId)
+  ) {
     send(res, 404, "text/plain", "no such stream");
     return;
   }

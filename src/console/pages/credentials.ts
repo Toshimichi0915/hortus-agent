@@ -8,6 +8,8 @@ interface Cred {
   transform: string | null;
   hosts: string[] | null;
   last_use: string | null;
+  /** its durable grant (the `auto` gate's one click per credential) */
+  enabled: boolean;
 }
 
 const pw = (name: string, label: string) =>
@@ -52,14 +54,6 @@ export const credentials: Page = async (ctx) => {
       : h`<p class="empty">no captured logins</p>`
     : error(o.error);
   const list = r.ok ? r.value : [];
-  // durable grants (the `auto` gate's one click per credential)
-  const enabled = new Set(
-    (
-      ctx.db
-        .prepare("SELECT category FROM approvals WHERE kind = 'grant' AND task_id IS NULL AND status = 'approved'")
-        .all() as { category: string }[]
-    ).map((g) => g.category),
-  );
   return layout(
     ctx,
     "credentials",
@@ -70,7 +64,7 @@ export const credentials: Page = async (ctx) => {
           ? h`<table><thead><tr><th>Name</th><th>Type</th><th>Transform</th><th>Hosts</th><th>Gate</th><th>Last use</th><th></th></tr></thead><tbody>${list.map(
               (c) =>
                 h`<tr><td>${c.name}</td><td>${c.type}</td><td>${c.transform ?? ""}</td><td>${(c.hosts ?? []).join(", ")}</td><td>${
-                  enabled.has(`credential:${c.name}`) ? "enabled" : ""
+                  c.enabled ? "enabled" : ""
                 }</td><td>${time(
                   c.last_use,
                 )}</td><td>${button("Delete", "credential.delete", { name: c.name }, { confirm: true })}</td></tr>`,

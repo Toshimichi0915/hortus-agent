@@ -87,7 +87,7 @@ Done when: `src/e2e/remote-console.test.ts` passes, and a real passkey has been 
 1. Make the new UI the default and remove `HORTUS_WEB`. Keep the `/tasks` and `/approvals/<id>` links used in DMs
    working.
 2. Move these helpers out of the old pages first: `errorLine`, `PAUSED`, `tokens`, `parse`, `kindOf`, `relative`,
-   `OPEN_SQL`, `CLOSED_SQL`, `PENDING_FOR`, `lastReplies`, `repliesAfter`.
+   `OPEN_SQL`, `CLOSED_SQL`, `PENDING_FOR`, `lastReplies`, `repliesAfter`, `consoleLog`, `taskOrigin`, `withSummaries`.
 3. Delete `src/console/pages/`, `html.ts` and `static/`. Keep `qr.ts`, which the new UI imports.
 4. Drop `html` from the chat stream, and the static-file lines from `build.sh`.
 5. Port the tests. A rough grep matches 21 test files, though many of those only use URLs. Keep the DoS, large-list and
