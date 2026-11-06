@@ -50,3 +50,5 @@ LFS: the `gitlab` transform drops `authenticated` and the `Authorization` of eac
 ## Extensibility verification
 
 - A fourth forge (Gitea) is the same pair of files; the parameterized suite is the acceptance test.
+
+**Round 23.** `history`'s cursor `null` alone is the first sync: a project empty at its first sync has the cursor `""`, and its next pass marks what it reads heard. A CI result on a task's open PR/MR is routed by its key (02-slack-gateway › Round 23).

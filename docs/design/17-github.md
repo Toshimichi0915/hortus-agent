@@ -71,3 +71,5 @@ REST subset (installation token minting with JWT verification against the App's 
 - 6b adds `gitlab`/`bitbucket` as files behind `Forge` plus transforms; the webhook listener, repo mirrors, scope checks and the Planner do not change.
 - `{api}`/`{host}` expansion in manifests is generic (every forge manifest uses it).
 - The `installation-token` op is GitHub-specific by design (v6); other forges use static tokens through the generic path.
+
+**Round 23.** `history`'s cursor `null` is the first sync; `""` (a first sync that found nothing) is a later pass, and marks what it reads heard (as GitLab and Bitbucket).

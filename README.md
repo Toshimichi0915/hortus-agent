@@ -42,7 +42,7 @@ directory); Workers do not need it, they get the CA through their environment.
 
 Worker VMs need an image: `hortus image build` (runs `scripts/build-image.sh` under sudo, and that needs Arch's `pacstrap`
 and `mkinitcpio`; `--no-browser` leaves Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Until it exists, VM tasks run as sandboxed
-host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy.
+host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy. The image trusts the CA of the home that built it (`~/.hortus/ca`), so an image copied from another home fails every model call with `Connection error.`: build it in the home that runs it.
 
 A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
 tool caches in `~/.hortus/cache`. It reads almost nothing of yours. Of your home it sees only its own project's checkout and
@@ -110,7 +110,7 @@ messenger, one forge and the Planner's (and Workers') model:
 - `origins`: `"*"` (any public host) or a list; a project's own `origins` makes its tasks reach only the global list plus
   that list, whatever the global says, and a chat holds every project's, so one strict project makes every chat strict. A
   session's own model host is never refused, whatever the lists say. A change reaches open tasks at their next request.
-- `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on, also when raised while it runs. A schedule's runs spend the budget of the task that set it.
+- `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on, also when raised while it runs. A schedule's runs spend the budget of the task that set it. A task stopped at its budget waits for you: the Planner does not close it unless its every PR/MR ended.
 - A message posted while `hortusd` or its connection is down is read back by the 10-minute reconcile and reaches the Planner as if it had come live, and so does a CI result on a task's open PR that no event brought (missed, or done before the PR existed); what the first sync of a source backfills does not.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
   `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.

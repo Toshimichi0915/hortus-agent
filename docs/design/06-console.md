@@ -87,3 +87,5 @@ The chat REPL subscribes to the stream with the RPC `task.stream` (a long-lived 
 - A new action is a `define()` in its module; the page calls `post("<method>", …)`; no server route is added.
 - Approval summaries render through `summaryView(kind, summary)` with one case per kind; 3b/3f/3h add cases.
 - The CLI's command table mirrors RPC methods one to one, so a plugin-shaped addition is one row.
+
+**Round 23.** A card's, the task list's and `hortus tasks`' spend is the larger of `usage.tokens` and `metered` plus `usage.runs` (`usage` is written at a session's end). `task.budget` refuses a closed task; the card says "raise its budget and it goes on" for the stops a raise alone resumes (`GOES_ON`, `types.ts`).
