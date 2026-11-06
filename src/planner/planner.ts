@@ -12,6 +12,7 @@ import { type Config, today } from "../config.ts";
 import { PR_TURN } from "../connectors/forge.ts";
 import { bus } from "../console/events.ts";
 import { errorLine, parse, tokens } from "../console/html.ts";
+import { crashPoint } from "../crash.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { type DatabaseSync, now, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
@@ -294,42 +295,45 @@ async function batch(): Promise<boolean> {
   }
   if (!events.length && !results.length) return false;
 
-  // consumed before the run: a crashed batch is not re-run (cards are authoritative; 15-planner.md › Wake and batch)
-  const { n } = c.db
-    .prepare(
-      "SELECT COALESCE(MAX(m), 0) + 1 AS n FROM (SELECT MAX(consumed) AS m FROM events UNION ALL SELECT MAX(consumed) FROM outbox)",
-    )
-    .get() as { n: number };
+  // consumed before the run, and its row in the same transaction: a kill between the two left the events consumed with
+  // no row for the next start to give back (chaos, round 24). A dead batch's go back (planner start, release)
+  const brief = renderBatch(c, events, results);
+  const t = now();
+  const budget = { tokens: Math.max(1, cfg.daily_tokens - used), hours: 0.5 };
+  let n = 0;
   c.db.exec("BEGIN IMMEDIATE");
   try {
+    ({ n } = c.db
+      .prepare(
+        "SELECT COALESCE(MAX(m), 0) + 1 AS n FROM (SELECT MAX(consumed) AS m FROM events UNION ALL SELECT MAX(consumed) FROM outbox)",
+      )
+      .get() as { n: number });
     for (const e of events) c.db.prepare("UPDATE events SET consumed = ? WHERE id = ?").run(n, e.id);
     for (const r of results)
       c.db.prepare("UPDATE outbox SET consumed = ? WHERE task_id = ? AND seq = ?").run(n, r.task_id, r.seq);
+    c.db
+      .prepare(
+        `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated,
+        started, hours) VALUES (?, 'planner', ?, ?, 'running', ?, ?, '{"tokens":0}', ?, '[]', ?, ?, ?, 0)`,
+      )
+      .run(
+        `planner-${n}`,
+        `planner batch #${n}, ${events.length} events${results.length ? `, ${results.length} results` : ""}`,
+        brief,
+        JSON.stringify({ credentials: [], repos: [] }),
+        JSON.stringify(budget),
+        runtime,
+        t,
+        t,
+        t,
+      );
     c.db.exec("COMMIT");
   } catch (e) {
     c.db.exec("ROLLBACK");
     throw e;
   }
-
+  crashPoint("planner.after-consume");
   const id = `planner-${n}`;
-  const t = now();
-  const budget = { tokens: Math.max(1, cfg.daily_tokens - used), hours: 0.5 };
-  c.db
-    .prepare(
-      `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated,
-        started, hours) VALUES (?, 'planner', ?, ?, 'running', ?, ?, '{"tokens":0}', ?, '[]', ?, ?, ?, 0)`,
-    )
-    .run(
-      id,
-      `planner batch #${n}, ${events.length} events${results.length ? `, ${results.length} results` : ""}`,
-      renderBatch(c, events, results),
-      JSON.stringify({ credentials: [], repos: [] }),
-      JSON.stringify(budget),
-      runtime,
-      t,
-      t,
-      t,
-    );
   bus.emit("tasks", { id, status: "running" });
   lastBatch = t;
   log().info("batch", { id, events: events.length, results: results.length });
@@ -346,20 +350,18 @@ async function batch(): Promise<boolean> {
       )
       .run(today(c.config), run.tokens);
   } finally {
-    // its directory before its row, so no row means nothing left: a batch run again after a crash takes the same id
-    // (its events went back to 0), and step4's recovery test read between the two (round 24)
+    // what it holds goes back, then its directory goes, then its row: a kill between them leaves the row and the next
+    // start does it again, and no row means nothing left (a batch run again takes the same id)
+    const back = !ok && (isStopping() || ++died <= RETRIES);
+    if (ok) died = 0;
+    if (back) release(c, n);
     rmSync(paths.task(id), { recursive: true, force: true });
     c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     bus.emit("tasks", { id });
-    if (ok) died = 0;
-    else if (isStopping()) release(c, n);
-    else if (++died > RETRIES) {
+    if (!ok && !back) {
       died = 0;
       tasks.hooks.failed(BATCH_FAILED);
-    } else {
-      release(c, n);
-      setTimeout(wake, RETRY_MS() * died).unref();
-    }
+    } else if (back && !isStopping()) setTimeout(wake, RETRY_MS() * died).unref();
   }
   return ok;
 }

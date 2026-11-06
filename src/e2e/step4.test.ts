@@ -80,7 +80,7 @@ let daemon: ChildProcess | undefined;
 let unit = "";
 let n = 0;
 
-function startDaemon(): void {
+function startDaemon(crashAt?: string): void {
   unit = `hortusd-step4-${process.pid}-${++n}`;
   daemon = spawn(
     "systemd-run",
@@ -105,6 +105,7 @@ function startDaemon(): void {
         HORTUS_NO_NET: "1",
         HORTUS_PLANNER_RETRY_MS: "100",
         HORTUS_PLANNER_RECHECK_MS: "1000",
+        HORTUS_TEST_CRASH_AT: crashAt ?? "",
       },
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -1088,6 +1089,28 @@ test("recovery: a batch killed with hortusd is run again, once its leftovers are
   assert.doesNotMatch(text, /the slow one/);
   assert.match(text, /after the restart/);
   assert.match(text, new RegExp(`## Open tasks\\n(.*\\n)*- ${fooTask} "README line" \\(`));
+});
+
+test("recovery: a batch killed right after it took its events → they go back at the restart, routed once", {
+  skip,
+}, async () => {
+  planner(`export default ({ events }) => events.length
+    ? { calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
+    : { text: "ok" };`);
+  const exited = new Promise((r) => daemon?.once("exit", r));
+  spawnSync("systemctl", ["--user", "kill", "-s", "KILL", `${unit}.scope`]);
+  await exited;
+  spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  // the batch's events marked consumed, its row not yet written: a kill there left them consumed for good (chaos)
+  startDaemon("planner.after-consume");
+  await up();
+  const died = new Promise((r) => daemon?.once("exit", r));
+  slack.post("C1", { user: "U1", text: "taken and killed" });
+  await died;
+  spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  startDaemon();
+  await up();
+  await until(() => eventRow("taken and killed")?.ignored, 15_000, "the verdict after the restart");
 });
 
 /** the owner's DMs about failures, from the fake Slack's side */
