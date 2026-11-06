@@ -38,6 +38,7 @@ interface Issue {
   updated_at: string;
 }
 interface MR extends Issue {
+  merge_user?: User | null;
   merged_by?: User | null;
   closed_by?: User | null;
   source_branch: string;
@@ -476,7 +477,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         const out = await prTop(project, mr, mr.state === "opened");
         const top = out[0];
         const s = state(mr.state);
-        const by = s === "merged" ? mr.merged_by : s === "closed" ? mr.closed_by : mr.author;
+        const by = s === "merged" ? (mr.merge_user ?? mr.merged_by) : s === "closed" ? mr.closed_by : mr.author;
         const act = s === "merged" ? "merge" : s === "closed" ? "close" : "open";
         const said = [mr.title, mr.description].filter(Boolean).join("\n\n");
         if (cursor && top)

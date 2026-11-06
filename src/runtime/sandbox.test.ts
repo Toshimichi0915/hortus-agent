@@ -635,7 +635,7 @@ function suite(): void {
           "-ec",
           // the first module fetch writes GOPATH/pkg/sumdb, `go install` GOPATH/bin; a JVM has /tmp compiled in
           `if command -v go; then G=$(go env GOPATH); mkdir -p "$G/pkg/sumdb" "$G/bin"; echo "go $G"; fi
-           if command -v java; then java Tmp.java; fi
+           if command -v java; then ls -la --time-style=full-iso . >&2; java Tmp.java; fi
            if command -v uv; then uv tool list; fi
            echo finished`,
         ],

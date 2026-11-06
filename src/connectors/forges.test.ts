@@ -37,7 +37,7 @@ import type { Forge, TaskJson } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { write as writeVault } from "../vault/vault.ts";
-import { dirOf, gitOf, mergeTarget, rest } from "./forge.ts";
+import { dirOf, gitOf, mergeTarget, PR_TURN, rest } from "./forge.ts";
 import { patchOf } from "./gitlab.ts";
 import { connectors } from "./index.ts";
 
@@ -134,7 +134,7 @@ interface Harness {
   /** approve as `user`; the review message's file id */
   approve(n: number, user: string): Promise<string>;
   ci(sha: string, s: CI): Promise<unknown>;
-  merge(n: number, user: string): Promise<unknown>;
+  merge(n: number, user: string, drop?: boolean): Promise<unknown>;
   /** a commit on the PR's branch, with the forge's event for it */
   pushPR(n: number, file: string, diff: string): Promise<Sent & { sha: string }>;
   /** a CI result on `sha`, in the shape that names the PR outright (GitLab: an MR pipeline, not a branch one) */
@@ -294,7 +294,7 @@ const H: Harness[] = [
     },
     // the failure as a branch pipeline (the connector finds the MR), the rerun as an MR pipeline
     ci: (sha, s) => gl.pipeline("g/sub/p", sha, s === "failure" ? "failed" : "running", { branch: s === "failure" }),
-    merge: (n, user) => gl.mergeMR("g/sub/p", n, user),
+    merge: (n, user, drop) => gl.mergeMR("g/sub/p", n, user, { drop: !!drop }),
     pushPR: (n, file, diff) => gl.pushMR("g/sub/p", n, { user: gl.self, file, diff }),
     result: (sha, s) => gl.pipeline("g/sub/p", sha, s === "failure" ? "failed" : "success"),
     mergeCall: (n, sha) => ({
@@ -354,7 +354,7 @@ const H: Harness[] = [
       return `review-acc-${user}`;
     },
     ci: (sha, s) => bb.status("w/r", sha, s === "failure" ? "FAILED" : "INPROGRESS"),
-    merge: (n, user) => bb.mergePR("w/r", n, user),
+    merge: (n, user, drop) => bb.mergePR("w/r", n, user, { drop: !!drop }),
     pushPR: (n, file, diff) => bb.pushPR("w/r", n, { user: bb.self, file, diff }),
     result: (sha, s) => bb.status("w/r", sha, s === "failure" ? "FAILED" : "SUCCESSFUL"),
     mergeCall: (n) => ({ method: "POST", path: `/2.0/repositories/w/r/pullrequests/${n}/merge`, body: "{}" }),
@@ -917,6 +917,30 @@ for (const h of H) {
     const c1 = (db.prepare("SELECT cursor FROM syncs WHERE dof = ? AND scope = ?").get(dof, P) as { cursor: string })
       .cursor;
     assert.ok(c1 >= c0);
+  });
+
+  test(`${dof}: a PR that ended with no hook to say so reaches the Planner as its end`, {
+    skip: dof === "github",
+  }, async () => {
+    const pr = await h.openPR("toshi", "Ended unseen", "hortus/unseen", "diff --git a/x b/x\n");
+    await until(() => fm(dof, `${D}/!${pr.n}/!${pr.n}.md`));
+    await gw.reconcile(dof, P);
+    await h.merge(pr.n, "toshi", true);
+    await gw.reconcile(dof, P);
+    const r = db
+      .prepare("SELECT summary, refs, consumed FROM events WHERE dof = ? AND key = ?")
+      .get(dof, `history:${D}/!${pr.n}/!${pr.n}.md:merged`) as
+      | { summary: string; refs: string; consumed: number }
+      | undefined;
+    assert.ok(r, "routed");
+    assert.match(r.summary, PR_TURN);
+    assert.deepEqual(JSON.parse(r.refs), [`${dof}:${P}:!${pr.n}`]);
+    assert.equal(r.consumed, 0);
+    await gw.reconcile(dof, P);
+    const n = db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE key LIKE ?")
+      .get(`history:${D}/!${pr.n}/!${pr.n}.md:merged`) as { n: number };
+    assert.equal(n.n, 1, "once");
   });
 
   test(`${dof}: projects() filtered by repos`, async () => {
