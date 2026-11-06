@@ -30,7 +30,7 @@ import { bus } from "./events.ts";
 import { parse } from "./html.ts";
 import { enrollPage } from "./pages/enroll.ts";
 import { loginPage } from "./pages/login.ts";
-import { handler, json, readBody, send } from "./server.ts";
+import { HEADERS, handler, json, readBody, send, type WebApp } from "./server.ts";
 
 export const COOKIE = "__Host-hortus";
 const MIN = 60_000;
@@ -199,9 +199,18 @@ const PUBLIC_STATIC = /^\/static\/(?:app\.css|webauthn\.js)$/;
 
 /**
  * Called for every remote request. Returns the session hash to go on with (`""` for the login page's static files),
- * or `undefined` when it has answered the request itself.
+ * or `undefined` when it has answered the request itself. With `web` (HORTUS_WEB=1), a request without a session gets
+ * no more than the new UI's shell: `index.html` at `/login` and at `/enroll` with a live code, each of its assets at
+ * exactly its own path (the raw request target, so no `..`, `//`, `%2F` or query string reaches a match), and a redirect
+ * to `/login` for any other GET or HEAD. POSTs and `/events/` answer as without it.
  */
-export async function gate(ctx: Ctx, req: IncomingMessage, res: ServerResponse, url: URL): Promise<string | undefined> {
+export async function gate(
+  ctx: Ctx,
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  web?: WebApp,
+): Promise<string | undefined> {
   const s = state;
   const path = url.pathname;
   if (!s) {
@@ -214,17 +223,33 @@ export async function gate(ctx: Ctx, req: IncomingMessage, res: ServerResponse, 
   }
   if (req.method === "GET" && path === "/enroll") {
     const code = url.searchParams.get("code") ?? "";
-    send(res, 200, "text/html", liveCode(ctx.db, code) ? enrollPage(s.host, code) : loginPage(s.host));
+    const live = liveCode(ctx.db, code);
+    // a bad, used or expired code: the same redirect, as it is the same login page without `web`
+    if (web && live) send(res, 200, "text/html", web.index);
+    else if (web) toLogin(res);
+    else send(res, 200, "text/html", live ? enrollPage(s.host, code) : loginPage(s.host));
     return undefined;
   }
   const session = lookup(ctx.db, req);
   if (session) return session;
-  if ((req.method === "GET" || req.method === "HEAD") && PUBLIC_STATIC.test(path)) return "";
+  const read = req.method === "GET" || req.method === "HEAD";
+  if (read && PUBLIC_STATIC.test(path)) return "";
+  if (web && read && !path.startsWith("/events/")) {
+    req.resume();
+    // "": handle() serves it from the same map, by `url.pathname`, which equals a raw target that is a key
+    if (web.assets.has(req.url ?? "")) return "";
+    if (req.url === "/login") send(res, 200, "text/html", web.index);
+    else toLogin(res);
+    return undefined;
+  }
   req.resume();
   const denied = req.method === "POST" || path.startsWith("/events/");
   send(res, denied ? 401 : 200, "text/html", loginPage(s.host));
   return undefined;
 }
+
+/** A fixed target: nothing of the request goes into it. */
+const toLogin = (res: ServerResponse) => res.writeHead(302, { ...HEADERS, Location: "/login" }).end();
 
 // ---------------------------------------------------------------------------------------------------------------------
 // WebAuthn

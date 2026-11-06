@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { request } from "node:https";
 import { join } from "node:path";
@@ -66,7 +66,7 @@ let rport: number;
 let origin: string;
 let cookie: string;
 let daemon: ChildProcess | undefined;
-let unit = "";
+const units: string[] = [];
 
 interface Res {
   status: number;
@@ -92,21 +92,10 @@ function raw(path: string, o: { method: string; body?: string; headers: Record<s
   });
 }
 
-/** A page load or an app.js call, as the phone's browser sends it. */
-function phone(path: string, body?: unknown): Promise<Res> {
-  const post = body !== undefined;
+/** One request as sent, its whole answer. */
+function ask(path: string, method: string, headers: Record<string, string>, body?: string): Promise<Res> {
   return new Promise((resolve, reject) => {
-    const r = raw(path, {
-      method: post ? "POST" : "GET",
-      headers: post
-        ? {
-            "x-hortus": "1",
-            "content-type": "application/json",
-            "sec-fetch-site": "same-origin",
-            origin,
-          }
-        : { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" },
-    });
+    const r = raw(path, { method, headers });
     r.on("response", (res) => {
       let b = "";
       res.setEncoding("utf8");
@@ -114,9 +103,16 @@ function phone(path: string, body?: unknown): Promise<Res> {
       res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: b }));
     });
     r.on("error", reject);
-    r.end(post ? JSON.stringify(body) : undefined);
+    r.end(body);
   });
 }
+
+const NAV = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" };
+const FETCH = { "x-hortus": "1", "content-type": "application/json", "sec-fetch-site": "same-origin" };
+
+/** A page load or an app.js call, as the phone's browser sends it. */
+const phone = (path: string, body?: unknown): Promise<Res> =>
+  body === undefined ? ask(path, "GET", NAV) : ask(path, "POST", { ...FETCH, origin }, JSON.stringify(body));
 
 const page200 = async (path: string) => {
   const r = await phone(path);
@@ -225,7 +221,13 @@ before(async () => {
     }),
     { mode: 0o600 },
   );
-  unit = `hortusd-3d-${process.pid}`;
+  await boot();
+});
+
+/** hortusd in its own scope on `home`; `web`: with HORTUS_WEB=1. Resolves once the remote listener answers. */
+async function boot(web = false): Promise<void> {
+  const unit = `hortusd-3d-${process.pid}${web ? "-web" : ""}`;
+  units.push(unit);
   daemon = spawn(
     "systemd-run",
     [
@@ -242,7 +244,13 @@ before(async () => {
       bin("hortusd"),
     ],
     {
-      env: { ...process.env, HORTUS_HOME: home, HORTUS_CONSOLE_PORT: String(port), HORTUS_NO_NET: "1" },
+      env: {
+        ...process.env,
+        HORTUS_HOME: home,
+        HORTUS_CONSOLE_PORT: String(port),
+        HORTUS_NO_NET: "1",
+        ...(web ? { HORTUS_WEB: "1" } : {}),
+      },
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
@@ -250,20 +258,20 @@ before(async () => {
   await until(
     () =>
       phone("/").then(
-        (r) => r.status === 200,
+        (r) => r.status === (web && !cookie ? 302 : 200),
         () => false,
       ),
     15_000,
     "the remote listener",
   );
-});
+}
 
 after(async () => {
   if (skip) return;
   if (daemon && daemon.exitCode === null) {
     await stopped(daemon);
   }
-  spawnSync("systemctl", ["--user", "stop", `${unit}.scope`], { stdio: "ignore" });
+  for (const u of units) spawnSync("systemctl", ["--user", "stop", `${u}.scope`], { stdio: "ignore" });
   await slack.close();
   rmSync(home, { recursive: true, force: true });
   if (!process.env.KEEP) rmSync(fake, { recursive: true, force: true });
@@ -597,4 +605,218 @@ test("app.js at 390 px: pick the project, send, watch the reply arrive, the task
   await wait(`document.querySelector("#a${entry.id}").textContent.includes("landed")`);
   await shot("landed");
   assert.equal(readFileSync(join(repo, "tapped.txt"), "utf8"), "hi\n");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// HORTUS_WEB=1: the new UI on the same home, its passkeys and sessions; before sign-in, its shell and nothing else
+
+const dist = new URL("../web/", import.meta.url);
+const enrollCode = async () => {
+  const rpc = rpcClient(paths.socket());
+  const { code } = (await rpc.call("enroll.code", {})) as { code: string };
+  rpc.close();
+  return code;
+};
+const toLogin = (r: Res, what: string) => {
+  assert.equal(r.status, 302, `${what}: ${r.status} ${r.body.slice(0, 80)}`);
+  assert.equal(r.headers.location, "/login", what);
+  assert.equal(r.body, "", what);
+};
+
+test("HORTUS_WEB=1 without a session: index.html at /login and a live /enroll, each asset at its exact path, the rest redirects or 401s", {
+  skip,
+}, async () => {
+  if (daemon) await stopped(daemon);
+  cookie = "";
+  await boot(true);
+  const index = readFileSync(new URL("index.html", dist), "utf8");
+  const files = readdirSync(new URL("assets/", dist));
+  assert.ok(files.length);
+
+  const login = await ask("/login", "GET", NAV);
+  assert.equal(login.status, 200);
+  assert.equal(login.body, index);
+  assert.match(String(login.headers["content-security-policy"]), /script-src 'self'/);
+  assert.equal((await ask("/login", "HEAD", NAV)).status, 200);
+  for (const f of files) {
+    const a = await ask(`/assets/${f}`, "GET", {});
+    assert.equal(a.status, 200, f);
+    assert.equal(a.body, readFileSync(new URL(`assets/${f}`, dist), "utf8"));
+    assert.equal((await ask(`/assets/${f}`, "HEAD", {})).status, 200);
+  }
+  // the old login page's own files, public as before
+  assert.equal((await ask("/static/webauthn.js", "GET", {})).status, 200);
+
+  const [f] = files as [string];
+  const redirected = [
+    "/",
+    "/tasks",
+    "/tasks/x/log",
+    "/approvals/1/diff",
+    "/approvals/1/login",
+    "/dof/slack/x.md",
+    "/settings",
+    "/api/task.list",
+    "/static/app.js",
+    "/index.html",
+    "/login?next=/tasks",
+    "/login/",
+    "//login",
+    "/LOGIN",
+    "/%6Cogin",
+    "/assets",
+    "/assets/",
+    "/assets/nope.js",
+    `/assets/${f}?v=1`,
+    `/assets/${f}/`,
+    `/assets/${f}%00`,
+    `//assets/${f}`,
+    `///assets/${f}`,
+    `/x/../assets/${f}`,
+    `/assets/./${f}`,
+    `/assets%2F${f}`,
+    `/assets/%2e%2e/index.html`,
+    "/assets/..%2F..%2Fhortusd.json",
+    "/enroll",
+    "/enroll?code=nope",
+  ];
+  for (const p of redirected) {
+    toLogin(await ask(p, "GET", NAV), `GET ${p}`);
+    toLogin(await ask(p, "HEAD", NAV), `HEAD ${p}`);
+  }
+  for (const p of ["/api/task.list", "/api/remote.status", "/login", `/assets/${f}`, "/tasks"]) {
+    const r = await ask(p, "POST", { ...FETCH, origin }, "{}");
+    assert.equal(r.status, 401, `POST ${p}`);
+    assert.ok(!r.body.includes('id="root"'), `POST ${p}`);
+  }
+  for (const p of ["/events/tasks,approvals,settings", "/events/login?id=1", "/events/chat?task=x"])
+    assert.equal(
+      (await ask(p, "GET", { accept: "text/event-stream", "sec-fetch-site": "same-origin" })).status,
+      401,
+      p,
+    );
+  // other methods: as without HORTUS_WEB (the old login page, no data, not the shell)
+  for (const m of ["PUT", "DELETE", "OPTIONS", "PATCH"]) {
+    const r = await ask("/login", m, {});
+    assert.ok(!r.body.includes('id="root"'), m);
+    assert.ok(r.body.includes("Sign in with passkey"), m);
+  }
+
+  // a live code gets the shell; a used one and a bad one the same redirect, and the same refusal from the RPC
+  const code = await enrollCode();
+  assert.equal((await ask(`/enroll?code=${code}`, "GET", NAV)).body, index);
+  const passkey = new SoftAuthenticator(origin);
+  const reg = JSON.parse((await phone("/webauthn/register/options", { code })).body);
+  assert.equal(
+    (await phone("/webauthn/register/verify", { code, device: "web", response: passkey.create(reg) })).status,
+    200,
+  );
+  const used = await ask(`/enroll?code=${code}`, "GET", NAV);
+  const bad = await ask("/enroll?code=nope", "GET", NAV);
+  toLogin(used, "a used code");
+  assert.deepEqual([used.status, used.headers.location, used.body], [bad.status, bad.headers.location, bad.body]);
+  const usedRpc = await phone("/webauthn/register/options", { code });
+  const badRpc = await phone("/webauthn/register/options", { code: "nope" });
+  assert.equal(usedRpc.status, 400);
+  assert.deepEqual([usedRpc.status, usedRpc.body], [badRpc.status, badRpc.body]);
+
+  // the session that enrolment made is not used here: sign in with the passkey, as the SignIn page does
+  const o = JSON.parse((await phone("/webauthn/login/options", {})).body);
+  const signed = await phone("/webauthn/login/verify", { response: passkey.get(o) });
+  assert.equal(signed.status, 200, signed.body);
+  assert.match(
+    signed.headers["set-cookie"]?.[0] ?? "",
+    /^__Host-hortus=[\w-]+; Secure; HttpOnly; SameSite=Strict; Path=\/; Max-Age=\d+$/,
+  );
+  cookie = setCookie(signed);
+  assert.equal((await phone("/tasks")).body, index);
+  assert.equal((await phone("/login")).body, index);
+});
+
+test("HORTUS_WEB=1 signed in: the old CSRF and Host guards, and enrolment refused over the remote listener", {
+  skip,
+}, async () => {
+  assert.deepEqual(await api("remote.status"), { remote: true, listening: true, url: origin, cert: "the hortus CA" });
+  await assert.rejects(api("enroll.code"), /made at the machine only/);
+  const post = (headers: Record<string, string>) => ask("/api/remote.status", "POST", headers, "{}");
+  assert.equal((await post({ ...FETCH, origin })).status, 200);
+  assert.equal((await post({ ...FETCH, "x-hortus": "" })).status, 403);
+  assert.equal((await post({ ...FETCH, "content-type": "text/plain" })).status, 403);
+  assert.equal((await post({ ...FETCH, "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await post({ ...FETCH, "sec-fetch-site": "same-site" })).status, 403);
+  assert.equal((await post({ ...FETCH, host: `evil.test:${rport}` })).status, 421);
+  assert.equal((await ask("/tasks", "GET", { ...NAV, host: "127.0.0.1" })).status, 421);
+});
+
+test("HORTUS_WEB=1 in Chromium: Enroll and SignIn with a virtual passkey; a revoked session's page goes to /login", {
+  skip: noBrowser,
+}, async (t) => {
+  const browser: Browser = await launch({
+    userDataDir: join(fake, "chromium-web"),
+    caCert: join(paths.ca(), "hosts", `${HOST}.crt`),
+    args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`],
+  });
+  t.after(() => browser.close());
+  const cdp: Cdp = await connect(browser);
+  t.after(() => cdp.close());
+  const session = await page(cdp);
+  for (const m of ["Page.enable", "Network.enable", "Runtime.enable", "WebAuthn.enable"])
+    await cdp.send(m, {}, session);
+  await cdp.send(
+    "WebAuthn.addVirtualAuthenticator",
+    {
+      options: {
+        protocol: "ctap2",
+        transport: "internal",
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    },
+    session,
+  );
+  const ev = async <T>(expression: string): Promise<T> => {
+    const r = await cdp.send<{ result: { value: T }; exceptionDetails?: unknown }>(
+      "Runtime.evaluate",
+      { expression, awaitPromise: true, returnByValue: true },
+      session,
+    );
+    assert.equal(r.exceptionDetails, undefined, expression);
+    return r.result.value;
+  };
+  const wait = async (expression: string, ms = 20_000) => {
+    for (let i = 0; i < ms; i += 50) {
+      if (await ev(expression).catch(() => false)) return;
+      await sleep(50);
+    }
+    assert.fail(`timed out: ${expression}; at ${await ev("location.href")}: ${await ev("document.body.innerText")}`);
+  };
+  const button = (text: string) =>
+    `[...document.querySelectorAll("button")].find((b) => b.textContent.includes(${JSON.stringify(text)}))`;
+  const at = (path: string) => `location.pathname === ${JSON.stringify(path)} && document.readyState === "complete"`;
+
+  // a bad code: the sign-in page
+  await cdp.send("Page.navigate", { url: `${origin}/enroll?code=nope` }, session);
+  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`);
+
+  const code = await enrollCode();
+  await cdp.send("Page.navigate", { url: `${origin}/enroll?code=${code}` }, session);
+  await wait(`${at("/enroll")} && !!${button("Create passkey")} && !${button("Create passkey")}.disabled`);
+  await ev(`${button("Create passkey")}.click()`);
+  await wait(`document.body.innerText.includes("This device can now sign in")`);
+
+  await cdp.send("Network.clearBrowserCookies", {}, session);
+  await cdp.send("Page.navigate", { url: `${origin}/tasks` }, session);
+  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`);
+  await ev(`${button("Sign in with a passkey")}.click()`);
+  await wait(`${at("/")} && !!document.querySelector("#main")`);
+  assert.ok(!(await ev<boolean>(`!!${button("Sign in with a passkey")}`)));
+
+  // the page's stream is cut with the session; its reopen gets a 401, the probe after it goes to sign-in
+  const rpc = rpcClient(paths.socket());
+  for (const s of (await rpc.call("session.list", {})) as { id: string; device: string }[])
+    if (s.device !== "web") await rpc.call("session.revoke", { id: s.id });
+  rpc.close();
+  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`, 15_000);
 });

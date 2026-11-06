@@ -49,7 +49,7 @@ export const routes: [RegExp, Page][] = [
   [/^\/schedules$/, schedules],
 ];
 
-const HEADERS = {
+export const HEADERS = {
   "Content-Security-Policy":
     "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'",
   "X-Frame-Options": "DENY",
@@ -70,7 +70,7 @@ const TYPES: Record<string, string> = {
 const webDir = new URL("../web/", import.meta.url);
 const ASSET_TYPES: Record<string, string> = { ".js": "text/javascript", ".css": "text/css" };
 
-interface WebApp {
+export interface WebApp {
   index: string;
   assets: Map<string, Buffer>;
 }
@@ -270,7 +270,7 @@ async function handle(
   }
   const caller: Caller = { role: "owner" };
   if (remote) {
-    const session = await gate(ctx, req, res, url);
+    const session = await gate(ctx, req, res, url, web);
     if (session === undefined) return;
     Object.assign(caller, { remote: true, session });
   }

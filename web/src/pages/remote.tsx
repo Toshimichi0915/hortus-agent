@@ -8,11 +8,13 @@ import { call, type Passkey, type RemoteSession, type RemoteStatus, useCall } fr
 import { type Draft, splitListen } from "../schema.ts";
 import {
   Button,
+  buttonVariants,
   Callout,
   Card,
   Choice,
   CopyButton,
   confirmAction,
+  errorText,
   Icon,
   Logo,
   NumberField,
@@ -22,7 +24,6 @@ import {
   Spinner,
   Switch,
   TextField,
-  toast,
   useAction,
   useTitle,
 } from "../ui.tsx";
@@ -345,10 +346,105 @@ export function Remote({ d }: { d: Draft }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Before sign-in (the remote listener only)
+// Before sign-in (the remote listener only): src/console/static/webauthn.js's flow. The server makes the options and
+// checks the answers (challenge, origin, RP ID, the code); this side only carries them between it and the authenticator.
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "X-Hortus": "1", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({ error: { message: `The server answered ${r.status}.` } }));
+  if (j.error) throw new Error(j.error.message);
+  return j as T;
+}
+
+const b64u = {
+  decode: (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)).buffer,
+  encode: (b: ArrayBuffer) =>
+    btoa(String.fromCharCode(...new Uint8Array(b)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, ""),
+};
+
+// biome-ignore lint/suspicious/noExplicitAny: the options' JSON, as the server sends it
+type Json = any;
+/** The JSON helpers newer browsers have (Chromium 129, Safari 18, Firefox 119); the fallbacks are for the rest. */
+const PKC = (globalThis as Json).PublicKeyCredential as Json;
+const ids = (l?: Json[]) => (l ?? []).map((c) => ({ ...c, id: b64u.decode(c.id) }));
+
+const creation = (o: Json): PublicKeyCredentialCreationOptions =>
+  PKC.parseCreationOptionsFromJSON?.(o) ?? {
+    ...o,
+    challenge: b64u.decode(o.challenge),
+    user: { ...o.user, id: b64u.decode(o.user.id) },
+    excludeCredentials: ids(o.excludeCredentials),
+  };
+
+const request = (o: Json): PublicKeyCredentialRequestOptions =>
+  PKC.parseRequestOptionsFromJSON?.(o) ?? {
+    ...o,
+    challenge: b64u.decode(o.challenge),
+    allowCredentials: ids(o.allowCredentials),
+  };
+
+function toJSON(c: Json): Json {
+  try {
+    if (c.toJSON) return c.toJSON();
+  } catch {}
+  const r = c.response;
+  const response: Json = { clientDataJSON: b64u.encode(r.clientDataJSON) };
+  if (r.attestationObject) {
+    response.attestationObject = b64u.encode(r.attestationObject);
+    response.transports = r.getTransports?.() ?? [];
+  } else {
+    response.authenticatorData = b64u.encode(r.authenticatorData);
+    response.signature = b64u.encode(r.signature);
+    if (r.userHandle) response.userHandle = b64u.encode(r.userHandle);
+  }
+  return {
+    id: c.id,
+    rawId: b64u.encode(c.rawId),
+    type: c.type,
+    response,
+    clientExtensionResults: c.getClientExtensionResults?.() ?? {},
+    authenticatorAttachment: c.authenticatorAttachment ?? undefined,
+  };
+}
+
+const NO_PKC = "This browser cannot use passkeys here (it needs HTTPS and WebAuthn).";
+const failure = (e: unknown) =>
+  e instanceof Error && e.name === "NotAllowedError"
+    ? "The passkey prompt was cancelled or timed out. Try again."
+    : errorText(e);
+
+function Problem({ text }: { text: string | null }) {
+  return text ? (
+    <div className="w-full text-left" role="status">
+      <Callout tone="danger">{text}</Callout>
+    </div>
+  ) : null;
+}
 
 export function SignIn() {
   useTitle("Sign in");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(PKC ? null : NO_PKC);
+  const signIn = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const o = await post("/webauthn/login/options", {});
+      const cred = await navigator.credentials.get({ publicKey: request(o) });
+      await post("/webauthn/login/verify", { response: toJSON(cred) });
+      location.replace("/");
+    } catch (e) {
+      setProblem(failure(e));
+      setBusy(false);
+    }
+  };
   return (
     <main className="grid min-h-dvh place-items-center px-4 py-6">
       <div className="flex w-full max-w-sm flex-col items-center gap-3.5 rounded-2xl bg-card px-7 py-9 text-center shadow-md ring-1 ring-foreground/10 [&_h1]:text-[22px] [&_h1]:font-semibold [&_form]:w-full [&_form]:text-left">
@@ -357,14 +453,10 @@ export function SignIn() {
         </span>
         <h1>Sign in to hortus</h1>
         <p className="text-muted-foreground">{location.host}</p>
-        <Button
-          variant="primary"
-          size="lg"
-          icon="key"
-          onClick={() => toast("Passkey sign-in starts working once the console API is connected", "info")}
-        >
+        <Button variant="primary" size="lg" icon="key" loading={busy} disabled={!PKC} onClick={signIn}>
           Sign in with a passkey
         </Button>
+        <Problem text={problem} />
         <p className="text-muted-foreground text-[13px]">
           No passkey on this device yet? On the machine running hortus, open Settings › Remote access and make an
           enrolment code.
@@ -392,6 +484,22 @@ const guess = (): string => {
 export function Enroll({ code }: { code: string | null }) {
   useTitle("Add this device");
   const [device, setDevice] = useState(guess);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [problem, setProblem] = useState<string | null>(PKC ? null : NO_PKC);
+  const enrol = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const o = await post("/webauthn/register/options", { code });
+      const cred = await navigator.credentials.create({ publicKey: creation(o) });
+      await post("/webauthn/register/verify", { code, device, response: toJSON(cred) });
+      setDone(true);
+    } catch (e) {
+      setProblem(failure(e));
+    }
+    setBusy(false);
+  };
   return (
     <main className="grid min-h-dvh place-items-center px-4 py-6">
       <div className="flex w-full max-w-sm flex-col items-center gap-3.5 rounded-2xl bg-card px-7 py-9 text-center shadow-md ring-1 ring-foreground/10 [&_h1]:text-[22px] [&_h1]:font-semibold [&_form]:w-full [&_form]:text-left">
@@ -402,12 +510,21 @@ export function Enroll({ code }: { code: string | null }) {
         <p className="text-muted-foreground">
           It gets a passkey for {location.host}, and signs in with it from then on.
         </p>
-        {code ? (
+        {done ? (
+          <div className="flex w-full flex-col gap-4 text-left" role="status">
+            <Callout tone="ok" title="This device can now sign in">
+              It is signed in already.
+            </Callout>
+            <a href="/" className={buttonVariants({ size: "lg" })}>
+              Open hortus
+            </a>
+          </div>
+        ) : code ? (
           <form
             className="flex flex-col gap-4 *:data-[slot=button]:self-start"
             onSubmit={(e) => {
               e.preventDefault();
-              toast("Creating the passkey starts working once the console API is connected", "info");
+              enrol();
             }}
           >
             <TextField
@@ -416,7 +533,14 @@ export function Enroll({ code }: { code: string | null }) {
               value={device}
               onChange={setDevice}
             />
-            <Button type="submit" variant="primary" size="lg" icon="key" disabled={!device.trim()}>
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              icon="key"
+              loading={busy}
+              disabled={!device.trim() || !PKC}
+            >
               Create passkey
             </Button>
           </form>
@@ -425,6 +549,7 @@ export function Enroll({ code }: { code: string | null }) {
             Make a new one on the machine running hortus: Settings › Remote access.
           </Callout>
         )}
+        <Problem text={problem} />
       </div>
     </main>
   );

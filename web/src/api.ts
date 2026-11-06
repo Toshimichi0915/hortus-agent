@@ -52,6 +52,8 @@ export async function call<T = unknown>(method: string, input: unknown = {}): Pr
   } catch {
     throw new ApiError("failed", "hortusd is not answering");
   }
+  // the remote listener without a live session: its sign-in page (which calls nothing here, so it cannot loop)
+  if (status === 401 && location.pathname !== "/login" && location.pathname !== "/enroll") location.replace("/login");
   // the guards in front of the router answer in plain text
   let body: { result?: T; error?: { code: ApiError["code"]; message: string; data?: unknown } } | undefined;
   try {
@@ -66,8 +68,12 @@ export async function call<T = unknown>(method: string, input: unknown = {}): Pr
 export const bus = new EventTarget();
 /** The page's stream is down, and retrying. */
 export const reconnecting = store(false);
-const watch =
-  import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), reconnecting.set);
+/** A stream that drops may be a 401 (EventSource cannot tell): one call finds out, and its 401 goes to sign-in. */
+const down = (d: boolean) => {
+  reconnecting.set(d);
+  if (d) call("remote.status").catch(() => {});
+};
+const watch = import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), down);
 
 /** Calls `f` on each event of `topics`. */
 export function subscribe(topics: string[], f: (e: Event) => void): () => void {
