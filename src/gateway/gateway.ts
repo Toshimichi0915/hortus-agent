@@ -25,7 +25,7 @@ import {
   RpcError,
 } from "../types.ts";
 
-import { deliveries, FORGE_TYPES, mirrorSize, missingCredentials } from "./sources.ts";
+import { deliveries, FORGE_TYPES, forgeHealth, mirrorSize, missingCredentials } from "./sources.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
 const HOUR = 3600_000;
@@ -385,7 +385,14 @@ export function createGateway(deps: GatewayDeps): Gateway {
           ...(error ? { error } : {}),
           scopes,
           missing: missingCredentials(dof, cfg.type),
-          ...(forge ? { deliveries_today: forge.today, last_delivery: forge.last, webhook: `/${dof}/webhook` } : {}),
+          ...(forge
+            ? {
+                deliveries_today: forge.today,
+                last_delivery: forge.last,
+                webhook: `/${dof}/webhook`,
+                ...forgeHealth(db, dof),
+              }
+            : {}),
         };
       });
     },

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config.ts";
 import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
+import { pageAt, pageWindow } from "../../src/console/forms.ts";
 import { liveStream } from "../../src/console/live.ts";
 import { errorText, store } from "./ui.tsx";
 
@@ -162,18 +163,20 @@ export function loginStream(
 
 /**
  * `method(input)`, again on each event of `topics`; `null` calls nothing. An answer to an older input never replaces
- * a newer one.
+ * a newer one; until the newer one's lands, `current` is false and `data` is the older input's.
  */
 export function useCall<T>(method: string | null, input: unknown = {}, topics: string[] = []) {
   const key = JSON.stringify(input);
-  const [state, setState] = useState<{ data?: T; error?: string; loading: boolean }>({ loading: !!method });
+  const [state, setState] = useState<{ data?: T; error?: string; loading: boolean; of?: string }>({
+    loading: !!method,
+  });
   const seq = useRef(0);
   const load = useCallback(async () => {
     const n = ++seq.current;
     if (!method) return setState({ loading: false });
     try {
       const data = await call<T>(method, JSON.parse(key));
-      if (n === seq.current) setState({ data, loading: false });
+      if (n === seq.current) setState({ data, loading: false, of: key });
     } catch (e) {
       if (n === seq.current) setState((s) => ({ ...s, error: errorText(e), loading: false }));
     }
@@ -184,7 +187,40 @@ export function useCall<T>(method: string | null, input: unknown = {}, topics: s
     load();
     return subscribe(topicKey ? topicKey.split(",") : [], load);
   }, [load, topicKey]);
-  return { ...state, reload: load };
+  return { ...state, current: state.of === key, reload: load };
+}
+
+/** Rows a list page shows. */
+export const PAGE = 50;
+
+/**
+ * Page `page` (from 0) of `task.list` or `approval.list`: their answer is newest-first lists one after the other (open
+ * then closed, pending then decided), each paged alike by `limit`/`skip`; `parts` tells a row's list. Past the first
+ * page each list holds still while rows land or leave above it (src/console/forms.ts › pageAt). `exact`: the whole
+ * list is in the answer, so its length is its count.
+ */
+export function usePaged<T, K extends string>(
+  method: string,
+  page: number,
+  topics: string[],
+  parts: Record<K, (r: T) => boolean>,
+  key: (r: T) => string | number,
+) {
+  const skip = page * PAGE;
+  const input = pageWindow(skip, PAGE);
+  const res = useCall<T[]>(method, input, topics);
+  const anchors = useRef<{ page: number; at: Partial<Record<K, string | number>> }>({ page, at: {} });
+  if (anchors.current.page !== page) anchors.current = { page, at: {} };
+  const ready = !!res.data && res.current;
+  const lists = {} as Record<K, { rows: T[]; more: boolean; exact: boolean }>;
+  for (const k of Object.keys(parts) as K[]) {
+    const all = ready ? (res.data ?? []).filter(parts[k]) : [];
+    const p = pageAt(all, skip, PAGE, key, anchors.current.at[k]);
+    // the row heading the page now heads it after the next reload too (or, gone, the row at `skip` does)
+    if (ready && p.rows[0] !== undefined) anchors.current.at[k] = key(p.rows[0]);
+    lists[k] = { ...p, exact: page === 0 && all.length < input.limit };
+  }
+  return { ...res, ready, lists };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -293,6 +329,12 @@ export interface Source {
   missing?: string[];
   /** forges: the path the service's webhook posts to, behind the owner's tunnel */
   webhook?: string;
+  /** a GitHub App's `App <id>, installation <id>` */
+  installation?: string;
+  /** a GitHub forge's last hourly redelivery check */
+  last_redelivery?: string;
+  /** that check found deliveries the tunnel dropped */
+  delivery_warning?: string;
 }
 
 export interface PlannerStatus {

@@ -24,7 +24,10 @@ type Project = Config["projects"][string];
 
 function Snapshots({ name }: { name: string }) {
   const list = useCall<Snapshot[]>("project.snapshots", { name }, ["settings"]);
-  const [restore] = useAction((sha: string) => call("project.restore", { name, sha }));
+  const [restore] = useAction(
+    (sha: string) => call("project.restore", { name, sha }),
+    `Restored ${name}; what changed since is in a newer snapshot`,
+  );
   if (!list.data?.length) return null;
   return (
     <details className="[&>summary]:cursor-pointer [&>summary]:text-[13px] [&>summary]:font-medium [&>summary]:text-foreground/80 [&[open]>summary]:mb-2 [&>pre]:max-h-72 [&>pre]:overflow-auto [&>pre]:rounded-md [&>pre]:border [&>pre]:bg-muted/50 [&>pre]:p-2.5 [&>pre]:text-xs [&>pre]:wrap-anywhere [&>pre]:whitespace-pre-wrap">
@@ -95,14 +98,14 @@ function ProjectDialog({
         : undefined;
   const pathError = p.path && !p.path.startsWith("/") ? "an absolute path, starting with /" : undefined;
   const [save, busy] = useAction(async () => {
-    const r = await call<{ message?: string }>("project.set", {
+    await call("project.set", {
       name,
       ...p,
       ...(p.exclude?.length ? {} : { exclude: undefined }),
       ...(p.origins?.length ? {} : { origins: undefined }),
     });
     onClose();
-    return r;
+    return { message: editing ? `Saved ${name}` : `Added ${name}; its origin is in sync` };
   });
   return (
     <Dialog
@@ -190,9 +193,12 @@ function ProjectDialog({
 }
 
 export function Projects({ d }: { d: Draft }) {
-  const status = useCall<Record<string, { git: boolean; synced?: string }>>("project.status", {}, ["settings"]);
+  const status = useCall<Record<string, { git: boolean }>>("project.status", {}, ["settings"]);
   const [dialog, setDialog] = useState<{ editing: string | null } | null>(null);
-  const [sync] = useAction((name: string) => call("project.sync", { name, force: true }));
+  const [sync] = useAction(
+    (name: string) => call<{ moved: boolean }>("project.sync", { name, force: true }),
+    (r) => (r.moved ? "The origin's main now matches your checkout" : "Already in sync"),
+  );
   const [remove] = useAction((name: string) => call("project.delete", { name }), "Removed");
   const list = Object.entries(d.saved.projects);
   return (
@@ -269,14 +275,6 @@ export function Projects({ d }: { d: Draft }) {
                     <dt>Tasks run</dt>
                     <dd>{p.runtime === "vm" ? "in their own VM" : "on this machine"}</dd>
                   </div>
-                  {st?.synced && (
-                    <div>
-                      <dt>Origin synced</dt>
-                      <dd>
-                        <RelTime iso={st.synced} />
-                      </dd>
-                    </div>
-                  )}
                   {!!p.origins?.length && (
                     <div>
                       <dt>Websites</dt>

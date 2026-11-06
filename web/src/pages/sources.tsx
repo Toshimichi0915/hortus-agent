@@ -14,6 +14,7 @@ import {
   confirmAction,
   cn,
   Dialog,
+  errorText,
   Empty,
   Icon,
   IconButton,
@@ -318,6 +319,11 @@ function SourceCard({
       ) : (
         s.error && <Callout tone="danger">{s.error}</Callout>
       )}
+      {s.delivery_warning && (
+        <Callout tone="warning" title="Webhook deliveries go missing">
+          {s.delivery_warning}
+        </Callout>
+      )}
       {s.notes?.map((n) => (
         <p key={n} className="text-muted-foreground text-[13px] flex flex-wrap items-center gap-2">
           <Icon name="info" size={14} /> {n}
@@ -328,7 +334,17 @@ function SourceCard({
           Last message <RelTime iso={s.lastEvent} empty="none yet" />
         </span>
         {s.size && <span>Mirror {s.size}</span>}
-        {s.deliveries_today !== undefined && <span>{s.deliveries_today} webhook deliveries today</span>}
+        {s.installation && <span>{s.installation}</span>}
+        {s.deliveries_today !== undefined && (
+          <span>
+            {s.deliveries_today} webhook deliveries today, the last <RelTime iso={s.last_delivery} empty="never" />
+          </span>
+        )}
+        {s.last_redelivery && (
+          <span>
+            Redelivery check <RelTime iso={s.last_redelivery} />
+          </span>
+        )}
       </div>
       {s.webhook && <Webhook dof={s.dof} path={s.webhook} />}
       {s.scopes.length > 0 && (
@@ -445,19 +461,35 @@ function SourceDialog({
       }))
     )
       return undefined;
-    for (const c of info.creds) {
-      if (!filled(c)) continue;
-      const v = values[credName(c)] ?? {};
-      await call("credential.set", {
-        name: credName(c),
-        type: c.type,
-        transform: type,
-        ...Object.fromEntries(
-          FIELDS[c.type].map((f) => [f, f === "appId" || f === "installationId" ? Number(v[f]) : v[f]]),
-        ),
-      });
-    }
+    // the values leave state now, whatever the vault answers: a retry types them again
+    const typed = info.creds.filter(filled).map((c) => ({ c, v: values[credName(c)] ?? {} }));
+    setValues({});
+    setReplace({});
     onClose();
+    const stored: string[] = [];
+    for (const { c, v } of typed) {
+      try {
+        await call("credential.set", {
+          name: credName(c),
+          type: c.type,
+          transform: type,
+          ...Object.fromEntries(
+            FIELDS[c.type].map((f) => [f, f === "appId" || f === "installationId" ? Number(v[f]) : v[f]]),
+          ),
+        });
+        stored.push(c.label);
+      } catch (e) {
+        // the error is the vault's (zod paths and rules, never the value); the source itself is saved
+        const left = typed.filter((x) => !stored.includes(x.c.label)).map((x) => x.c.label.toLowerCase());
+        toast(
+          `${editing ? `Saved ${name}` : `Added ${name}`} without its ${left.join(" and ")}: ${errorText(e)}. Add ${
+            left.length === 1 ? "it" : "them"
+          } from its card.`,
+          "error",
+        );
+        return undefined;
+      }
+    }
     const missing = info.creds.filter((c) => !has(c) && !filled(c));
     if (missing.length)
       toast(

@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { DatabaseSync } from "../db.ts";
 import { read } from "../vault/vault.ts";
+import { type ForgeState, forgeState } from "./webhooks.ts";
 
 export const FORGE_TYPES = ["github", "gitlab", "bitbucket"];
 
@@ -25,6 +26,33 @@ export function deliveries(db: DatabaseSync, dof: string): { today: number; last
     .prepare("SELECT sum(created >= ?) AS today, max(created) AS last FROM events WHERE dof = ?")
     .get(new Date().toISOString().slice(0, 10), dof) as { today: number | null; last: string | null };
   return { today: r.today ?? 0, last: r.last };
+}
+
+/**
+ * A forge's card lines beyond its deliveries: the GitHub App's installation, the hourly redelivery check, and the
+ * warning when that check is what brought deliveries in (the tunnel drops them).
+ */
+export function forgeHealth(
+  db: DatabaseSync,
+  dof: string,
+  st: ForgeState | undefined = forgeState(dof),
+): { installation?: string; last_redelivery?: string; delivery_warning?: string } {
+  const e = read()[dof];
+  const missed = st?.missed ?? 0;
+  let warning: string | undefined;
+  if (missed) {
+    const day = db
+      .prepare("SELECT count(*) AS n FROM events WHERE dof = ? AND created >= ?")
+      .get(dof, new Date(Date.now() - 86400_000).toISOString()) as { n: number };
+    warning = day.n
+      ? `${missed} deliveries arrived only through the redelivery check: check the tunnel`
+      : `no deliveries in 24 h while events were expected (${missed} found only in the delivery log)`;
+  }
+  return {
+    ...(e?.type === "github-app" ? { installation: `App ${e.appId}, installation ${e.installationId}` } : {}),
+    ...(st?.lastRedelivery ? { last_redelivery: st.lastRedelivery } : {}),
+    ...(warning ? { delivery_warning: warning } : {}),
+  };
 }
 
 const sizes = new Map<string, { at: number; text: string | undefined }>();

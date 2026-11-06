@@ -55,6 +55,51 @@ export function splitListen(listen: string): { address: string; port: number } {
   return { address: i < 0 ? "" : listen.slice(0, i).replace(/^\[|\]$/g, ""), port: Number(listen.slice(i + 1)) };
 }
 
+/** hortusd.json's top-level keys (config.ts › Config): settings.set keeps others, and says so. */
+export const KNOWN_KEYS: readonly string[] = [
+  "owner",
+  "dofs",
+  "planner",
+  "worker",
+  "origins",
+  "vm",
+  "chat",
+  "proxy",
+  "console",
+  "projects",
+  "policy",
+  "judge_notes",
+  "dev",
+];
+
+/** The paths the forms show an error at (`*`: one segment); settings.set's issues go to the one they fall under. */
+export const FIELDS = [
+  "owner.tz",
+  "owner.notify",
+  "dofs.*",
+  "projects.*",
+  "planner.batch_max",
+  "planner.daily_tokens",
+  "worker.context_window",
+  "worker.budget.tokens",
+  "worker.budget.hours",
+  "worker.plugins",
+  "vm.cpus",
+  "vm.mem_mb",
+  "vm.max_concurrent",
+  "vm.boot_timeout_s",
+  "proxy.https",
+  "proxy.http",
+  "proxy.dns",
+  "policy.read",
+  "policy.cache",
+  "policy.deny",
+  "origins",
+  "console.listen",
+  "console.host",
+  "console.tls",
+] as const;
+
 /** Field path → what is wrong, for every field the forms show. */
 export function validateConfig(c: Config): Record<string, string> {
   const e: Record<string, string> = {};

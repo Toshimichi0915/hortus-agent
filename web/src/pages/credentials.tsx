@@ -115,6 +115,7 @@ export function CredentialDialog({
     };
     for (const f of fields[type]) body[f] = f === "appId" || f === "installationId" ? Number(v[f]) : v[f];
     await call("credential.set", body);
+    setV({}); // write-only: the values leave the page once the vault has them
     onSaved?.(name);
     onClose();
     return { message: `Saved ${name}` };

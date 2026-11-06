@@ -7,6 +7,7 @@ import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from "@/compon
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { fieldErrors } from "../../../src/console/forms.ts";
 import { ApiError, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
 import {
   ALWAYS_ASKS,
@@ -16,6 +17,8 @@ import {
   DEFAULTS,
   type Draft,
   EFFORTS,
+  FIELDS,
+  KNOWN_KEYS,
   validateConfig,
 } from "../schema.ts";
 import {
@@ -132,10 +135,22 @@ export function Settings({ section }: { section: string }) {
   const [draft, setDraft] = useState<Config>();
   const [server, setServer] = useState<Record<string, string>>({});
   const base = useRef("");
-  // a newer copy from hortusd replaces an untouched draft; an edited one is kept
+  // a newer copy from hortusd replaces what the draft left untouched, key by key: a project added or a source removed
+  // (their own RPCs) while another section has edits must not be undone by the next Save
   useEffect(() => {
     if (!saved) return;
-    setDraft((d) => (!d || JSON.stringify(d) === base.current ? structuredClone(saved) : d));
+    const old = base.current ? (JSON.parse(base.current) as Record<string, unknown>) : undefined;
+    setDraft((d) => {
+      if (!d || !old) return structuredClone(saved);
+      const next = structuredClone(saved) as Record<string, unknown>;
+      const mine = d as Record<string, unknown>;
+      for (const k of new Set([...Object.keys(mine), ...Object.keys(old)]))
+        if (JSON.stringify(mine[k]) !== JSON.stringify(old[k])) {
+          if (k in mine) next[k] = mine[k];
+          else delete next[k];
+        }
+      return next as Config;
+    });
     base.current = JSON.stringify(saved);
   }, [saved]);
   const diff = useMemo(() => (draft && saved ? changed(draft, saved) : new Set<string>()), [draft, saved]);
@@ -172,12 +187,7 @@ export function Settings({ section }: { section: string }) {
         toast("Restart hortusd for the remote access and proxy changes: sudo systemctl restart hortusd", "info");
       return { message: r.message ?? "Saved. hortusd reloaded its settings." };
     } catch (e) {
-      if (e instanceof ApiError && Array.isArray(e.data))
-        setServer(
-          Object.fromEntries(
-            (e.data as { path: string[]; message: string }[]).map((i) => [i.path.join("."), i.message]),
-          ),
-        );
+      if (e instanceof ApiError) setServer(fieldErrors(e.data, FIELDS));
       throw e;
     }
   });
@@ -215,7 +225,8 @@ export function Settings({ section }: { section: string }) {
       toast(errorText(e), "error");
       return false;
     }
-    set(change);
+    // the draft takes it from hortusd's copy (the effect above), as zod wrote it, not in the form's key order
+    await cfg.reload();
     return true;
   };
   const d: Draft = { saved, draft, errors, set, commit };
@@ -1267,22 +1278,6 @@ function Vms({ d }: { d: Draft }) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Advanced: the file itself, development upstreams
 
-const KNOWN = [
-  "owner",
-  "dofs",
-  "planner",
-  "worker",
-  "origins",
-  "vm",
-  "chat",
-  "proxy",
-  "console",
-  "projects",
-  "policy",
-  "judge_notes",
-  "dev",
-];
-
 function Advanced({ d }: { d: Draft }) {
   const text = JSON.stringify(d.draft, null, 2);
   const [value, setValue] = useState(text);
@@ -1291,7 +1286,7 @@ function Advanced({ d }: { d: Draft }) {
   useEffect(() => {
     if (!editing.current) setValue(text);
   }, [text]);
-  const unknown = Object.keys(d.draft).filter((k) => !KNOWN.includes(k));
+  const unknown = Object.keys(d.draft).filter((k) => !KNOWN_KEYS.includes(k));
   const ups = Object.entries(d.draft.dev?.upstreams ?? {});
   const setUps = (rows: [string, string][]) =>
     d.set((x) => {

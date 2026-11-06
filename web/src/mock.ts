@@ -22,7 +22,7 @@ import {
   type TaskDetail,
   bus,
 } from "./api.ts";
-import { validateConfig } from "./schema.ts";
+import { KNOWN_KEYS, validateConfig } from "./schema.ts";
 
 const emit = (...topics: string[]) => {
   for (const t of topics) bus.dispatchEvent(new Event(t));
@@ -868,7 +868,9 @@ const status: Record<string, Omit<Source, "dof" | "type">> = {
     deliveries_today: 37,
     last_delivery: at(-6 * MIN),
     webhook: "/github/webhook",
-    notes: ["App 1234567, installation 89012345"],
+    installation: "App 1234567, installation 89012345",
+    last_redelivery: at(-40 * MIN),
+    delivery_warning: "2 deliveries arrived only through the redelivery check: check the tunnel",
     scopes: [
       { scope: "you/hortus-agent", last_sync: at(-8 * MIN) },
       { scope: "you/website", last_sync: at(-8 * MIN) },
@@ -1362,11 +1364,15 @@ export const handlers: Record<string, Handler> = {
     return { paused };
   },
 
-  "task.list": () =>
-    [...tasks.filter((t) => open(t.status)), ...tasks.filter((t) => !open(t.status))].map((t) => ({
-      ...t,
-      pending: pendingOf(t.id).length,
-    })),
+  // as hortusd pages (src/console/index.ts): the newest `limit` open (by updated), then closed (by closed), from `skip`
+  "task.list": ({ limit = 50, skip = 0 }: { limit?: number; skip?: number } = {}) => {
+    const by = (k: "updated" | "closed") => (a: Task, b: Task) => (b[k] ?? "").localeCompare(a[k] ?? "");
+    const page = (l: Task[]) => l.slice(skip, skip + limit);
+    return [
+      ...page(tasks.filter((t) => open(t.status)).sort(by("updated"))),
+      ...page(tasks.filter((t) => !open(t.status)).sort(by("closed"))),
+    ].map((t) => ({ ...t, pending: pendingOf(t.id).length }));
+  },
   "task.get": ({ id }: { id: string }): TaskDetail => {
     const t = get(id);
     return {
@@ -1472,13 +1478,18 @@ export const handlers: Record<string, Handler> = {
     return lines.join("\n");
   },
 
-  "approval.list": () => [
-    ...approvals.filter((a) => a.status === "pending").map(withTitle),
-    ...approvals
-      .filter((a) => a.status !== "pending")
-      .sort((a, b) => (b.decided_at ?? "").localeCompare(a.decided_at ?? ""))
-      .map(withTitle),
-  ],
+  // as hortusd pages (src/vault/index.ts): newest id first, pending then decided, each `limit` from `skip`
+  "approval.list": ({ limit = 50, skip = 0 }: { limit?: number; skip?: number } = {}) => {
+    const page = (l: Approval[]) =>
+      [...l]
+        .sort((a, b) => b.id - a.id)
+        .slice(skip, skip + limit)
+        .map(withTitle);
+    return [
+      ...page(approvals.filter((a) => a.status === "pending")),
+      ...page(approvals.filter((a) => a.status !== "pending")),
+    ];
+  },
   "approval.count": () => approvals.filter((a) => a.status === "pending").length,
   "approval.get": ({ id }: { id: number }) => {
     const a = approvals.find((x) => x.id === id);
@@ -1592,12 +1603,15 @@ export const handlers: Record<string, Handler> = {
     return ok();
   },
   "credential.delete": ({ name }: { name: string }) => {
+    // as hortusd answers (src/vault/index.ts)
+    if (!credentials.some((c) => c.name === name)) throw new ApiError("not_found", `no credential ${name}`);
     const users = [
-      config.worker.provider === name && "the Workers' model provider",
-      config.planner.provider === name && "the Planner's model provider",
-      name in config.dofs && `the source ${name}`,
+      config.worker.provider === name && "worker.provider",
+      config.planner.provider === name && "planner.provider",
+      name in config.dofs && `dofs.${name}`,
     ].filter(Boolean);
-    if (users.length) throw new ApiError("invalid", `${name} is in use by ${users.join(" and ")}: change that first`);
+    if (users.length)
+      throw new ApiError("invalid", `${name} is in use by ${users.join(", ")}: change that in Settings first`);
     credentials.splice(
       credentials.findIndex((c) => c.name === name),
       1,
@@ -1614,13 +1628,15 @@ export const handlers: Record<string, Handler> = {
 
   "settings.get": () => ({ config }),
   "settings.set": ({ config: next }: { config: Config }) => {
+    // as hortusd answers (src/console/index.ts): zod's issues, each `{ code, path, message }`, and its one-line message
     const e = validateConfig(next);
-    const issues = Object.entries(e).map(([path, message]) => ({ path: path.split("."), message }));
+    const issues = Object.entries(e).map(([path, message]) => ({ code: "custom", path: path.split("."), message }));
     if (issues.length)
       throw new ApiError("invalid", issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "), issues);
     config = next;
-    emit("settings", "tasks");
-    return ok();
+    emit("settings");
+    const unknown = Object.keys(next).filter((k) => !KNOWN_KEYS.includes(k));
+    return ok(unknown.length ? `saved; not settings hortusd knows: ${unknown.join(", ")}` : undefined);
   },
 
   "source.list": (): Source[] =>
@@ -1639,7 +1655,9 @@ export const handlers: Record<string, Handler> = {
         connected: false,
         error: missing.length ? "waiting for its credentials" : "connecting…",
         scopes: [],
-        ...(c.type === "github" || c.type === "gitlab" || c.type === "bitbucket" ? { webhook: `/${dof}/webhook` } : {}),
+        ...(c.type === "github" || c.type === "gitlab" || c.type === "bitbucket"
+          ? { webhook: `/${dof}/webhook`, deliveries_today: 0, last_delivery: null }
+          : {}),
       };
       return { dof, type: c.type, ...s, missing };
     }),
@@ -1662,7 +1680,7 @@ export const handlers: Record<string, Handler> = {
     if (!p.path.startsWith("/")) throw new ApiError("invalid", "path must be absolute");
     config = { ...config, projects: { ...config.projects, [name]: { main: "main", runtime: "host", ...p } } };
     emit("settings");
-    return ok(`Saved ${name}; its origin is in sync`);
+    return { main: "0".repeat(40), moved: true };
   },
   "project.delete": ({ name }: { name: string }) => {
     const { [name]: _, ...rest } = config.projects;
@@ -1670,11 +1688,11 @@ export const handlers: Record<string, Handler> = {
     emit("settings");
     return ok();
   },
-  "project.sync": ({ name }: { name: string }) => ok(`${name}: the origin's main now matches your checkout`),
-  "project.status": () =>
-    Object.fromEntries(Object.keys(config.projects).map((n) => [n, { git: !(n in snapshots), synced: at(-12 * MIN) }])),
+  // as hortusd answers (src/projects/origin.ts): the origin's main, and whether it moved
+  "project.sync": () => ({ main: "0".repeat(40), moved: false }),
+  "project.status": () => Object.fromEntries(Object.keys(config.projects).map((n) => [n, { git: !(n in snapshots) }])),
   "project.snapshots": ({ name }: { name: string }) => snapshots[name] ?? [],
-  "project.restore": ({ name, sha }: { name: string; sha: string }) => ok(`Restored ${name} to ${sha.slice(0, 7)}`),
+  "project.restore": ({ sha }: { sha: string }) => ({ sha, main: "0".repeat(40), moved: true }),
 
   "schedule.list": () => schedules,
   "schedule.unset": ({ id }: { id: number }) => {

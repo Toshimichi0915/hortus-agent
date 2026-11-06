@@ -14,7 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { button as buttonOf, modifiers, pagePoint } from "../../../src/console/login-input.ts";
-import { type Approval, type ApprovalStatus, bus, call, loginStream, useCall } from "../api.ts";
+import { type Approval, type ApprovalStatus, bus, call, loginStream, useCall, usePaged } from "../api.ts";
 import { CodeBlock } from "../markdown.tsx";
 import {
   buttonVariants,
@@ -27,6 +27,7 @@ import {
   type IconName,
   Link,
   Page,
+  Pager,
   Pill,
   RelTime,
   SecretField,
@@ -37,6 +38,9 @@ import {
   toast,
   useAction,
 } from "../ui.tsx";
+
+/** approval.list's two lists (src/vault/index.ts) */
+const PARTS = { pending: (a: Approval) => a.status === "pending", decided: (a: Approval) => a.status !== "pending" };
 
 const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 const credName = (cat: string) => (cat.startsWith("credential:") ? cat.slice("credential:".length) : cat);
@@ -640,12 +644,17 @@ function HistoryRow({ a }: { a: Approval }) {
 }
 
 export function Approvals() {
-  const list = useCall<Approval[]>("approval.list", {}, ["approvals"]);
+  const [page, setPage] = useState(0);
+  const list = usePaged<Approval, "pending" | "decided">("approval.list", page, ["approvals"], PARTS, (a) => a.id);
+  const count = useCall<number>("approval.count", {}, ["approvals"]);
   const [tab, setTab] = useState<"waiting" | "history">("waiting");
   const [judge, setJudge] = useState(true);
-  const all = list.data ?? [];
-  const waiting = all.filter((a) => a.status === "pending");
-  const decided = all.filter((a) => a.status !== "pending" && (judge || a.decided_by !== "judge"));
+  const waiting = list.lists.pending.rows;
+  // ponytail: the judge switch filters the page shown, not the whole history
+  const decided = list.lists.decided.rows.filter((a) => judge || a.decided_by !== "judge");
+  const pager = (
+    <Pager page={page} more={list.lists[tab === "waiting" ? "pending" : "decided"].more} onPage={setPage} />
+  );
   return (
     <Page
       title="Approvals"
@@ -654,13 +663,16 @@ export function Approvals() {
       <Tabs
         label="Approvals"
         value={tab}
-        onChange={setTab}
+        onChange={(v) => {
+          setTab(v);
+          setPage(0);
+        }}
         tabs={[
-          { value: "waiting", label: "Waiting", count: waiting.length },
+          { value: "waiting", label: "Waiting", count: count.data ?? waiting.length },
           { value: "history", label: "History" },
         ]}
       />
-      {!list.data ? (
+      {!list.ready ? (
         <div className="grid flex-1 place-items-center p-12 text-muted-foreground">
           <Spinner />
         </div>
@@ -670,7 +682,10 @@ export function Approvals() {
             {waiting.map((a) => (
               <ApprovalCard key={a.id} a={a} />
             ))}
+            {pager}
           </div>
+        ) : page ? (
+          pager
         ) : (
           <Empty icon="shield" title="Nothing waits for you">
             When a task needs your OK it shows up here, in its chat, and as a DM where you chose in Settings › General.
@@ -690,9 +705,9 @@ export function Approvals() {
                 <HistoryRow key={a.id} a={a} />
               ))}
             </ul>
-          ) : (
-            <Empty icon="clock" title="No decisions yet" />
-          )}
+          ) : null}
+          {pager}
+          {!decided.length && !page && <Empty icon="clock" title="No decisions yet" />}
         </>
       )}
     </Page>

@@ -2,7 +2,7 @@
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { useEffect, useState } from "react";
 import { GOES_ON } from "../../../src/types.ts";
-import { call, type Msg, type Row, streamRows, type Task, type TaskDetail, useCall } from "../api.ts";
+import { call, type Msg, type Row, streamRows, type Task, type TaskDetail, useCall, usePaged } from "../api.ts";
 import { Markdown } from "../markdown.tsx";
 import { Thread } from "../thread.tsx";
 import {
@@ -22,6 +22,7 @@ import {
   Meter,
   NumberField,
   Page,
+  Pager,
   Pill,
   RelTime,
   ServiceTile,
@@ -43,6 +44,9 @@ export const KIND: Record<string, { label: string; icon: IconName }> = {
 
 export const isOpen = (t: Pick<Task, "status">): boolean =>
   t.status === "queued" || t.status === "running" || t.status === "waiting";
+
+/** task.list's two lists (src/console/pages/tasks.ts › OPEN, CLOSED) */
+const PARTS = { open: isOpen, closed: (t: Task) => !isOpen(t) };
 
 /** The spend so far: usage is written when a session ends, the proxy's count (plus its runs') is live. */
 export const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0) + (t.usage?.runs ?? 0));
@@ -204,17 +208,17 @@ export const SessionLogDialog = ({ id, open, onClose }: { id: string; open: bool
 
 export function Tasks() {
   const { query } = useLocation();
-  const list = useCall<Task[]>("task.list", {}, ["tasks", "approvals"]);
+  const [page, setPage] = useState(0);
+  const list = usePaged<Task, "open" | "closed">("task.list", page, ["tasks", "approvals"], PARTS, (t) => t.id);
   const [show, setShow] = useState<"open" | "closed" | "all">("open");
   const [kind, setKind] = useState(query.get("kind") ?? "all");
   const [q, setQ] = useState("");
-  const all = list.data ?? [];
-  const rows = all.filter(
-    (t) =>
-      (show === "all" || (show === "open") === isOpen(t)) &&
-      (kind === "all" || t.kind === kind) &&
-      t.title.toLowerCase().includes(q.trim().toLowerCase()),
+  const { open, closed } = list.lists;
+  // ponytail: kind and title filter the page shown, not the whole list; a server-side filter once lists grow past it
+  const rows = [...(show === "closed" ? [] : open.rows), ...(show === "open" ? [] : closed.rows)].filter(
+    (t) => (kind === "all" || t.kind === kind) && t.title.toLowerCase().includes(q.trim().toLowerCase()),
   );
+  const more = (show !== "closed" && open.more) || (show !== "open" && closed.more);
   return (
     <Page
       title="Tasks"
@@ -229,9 +233,12 @@ export function Tasks() {
       <div className="flex flex-wrap items-center gap-2.5">
         <Choice
           value={show}
-          onChange={setShow}
+          onChange={(v) => {
+            setShow(v);
+            setPage(0);
+          }}
           options={[
-            { value: "open", label: `Open · ${all.filter(isOpen).length}` },
+            { value: "open", label: open.exact ? `Open · ${open.rows.length}` : "Open" },
             { value: "closed", label: "Closed" },
             { value: "all", label: "All" },
           ]}
@@ -252,16 +259,21 @@ export function Tasks() {
           />
         </label>
       </div>
-      {!list.data ? (
+      {!list.ready ? (
         <div className="grid flex-1 place-items-center p-12 text-muted-foreground">
           <Spinner />
         </div>
       ) : rows.length ? (
-        <ul className="divide-y overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
-          {rows.map((t) => (
-            <TaskRow key={t.id} task={t} />
-          ))}
-        </ul>
+        <>
+          <ul className="divide-y overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+            {rows.map((t) => (
+              <TaskRow key={t.id} task={t} />
+            ))}
+          </ul>
+          <Pager page={page} more={more} onPage={setPage} />
+        </>
+      ) : page ? (
+        <Pager page={page} more={more} onPage={setPage} />
       ) : (
         <Empty
           icon="tasks"

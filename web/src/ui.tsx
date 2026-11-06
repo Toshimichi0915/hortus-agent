@@ -399,6 +399,22 @@ export function useAction<A extends unknown[], R>(
   return [run, busy];
 }
 
+/** Newer and older pages of a list (api.ts › usePaged); nothing while both ends are in view. */
+export function Pager({ page, more, onPage }: { page: number; more: boolean; onPage: (p: number) => void }) {
+  if (!page && !more) return null;
+  return (
+    <nav className="flex items-center justify-end gap-2 text-[13px] text-muted-foreground" aria-label="Pages">
+      <span className="mr-auto">Page {page + 1}</span>
+      <Button size="sm" icon="arrowLeft" disabled={!page} onClick={() => onPage(page - 1)}>
+        Newer
+      </Button>
+      <Button size="sm" disabled={!more} onClick={() => onPage(page + 1)}>
+        Older <Icon name="arrowRight" size={14} />
+      </Button>
+    </nav>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Dialogs
 

@@ -13,7 +13,7 @@ import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Change, Connector, ConnectorFactory, Event, Heard, Incoming } from "../types.ts";
 import { createGateway, type GatewayDeps, summaryOf, timing } from "./gateway.ts";
-import { deliveries, mirrorSize, missingCredentials } from "./sources.ts";
+import { deliveries, forgeHealth, mirrorSize, missingCredentials } from "./sources.ts";
 
 test("summaryOf: an owner's long order keeps its last line, a stranger's is cut sooner, and a cut says so", () => {
   const order = `${"note\n".repeat(1000)}the first line must be X`;
@@ -206,6 +206,31 @@ test("a forge's source: its webhook path, today's deliveries, and the credential
   });
   assert.deepEqual(deliveries(db, "none"), { today: 0, last: null });
   assert.deepEqual(missingCredentials("nope", "slack"), ["nope", "nope-app"]);
+});
+
+test("forgeHealth: the App's installation, and the warning when only the redelivery check brought deliveries", () => {
+  const vault = join(home, "vault.json");
+  const before = readFileSync(vault, "utf8");
+  try {
+    writeFileSync(
+      vault,
+      JSON.stringify({
+        ...JSON.parse(before),
+        gh: { type: "github-app", appId: 12, installationId: 34, privateKey: "k" },
+      }),
+    );
+    assert.deepEqual(forgeHealth(db, "gh", undefined), { installation: "App 12, installation 34" });
+    const st = { missed: 3, lastRedelivery: "2026-01-01T00:00:00.000Z" };
+    assert.deepEqual(forgeHealth(db, "quiet", st), {
+      last_redelivery: st.lastRedelivery,
+      delivery_warning: "no deliveries in 24 h while events were expected (3 found only in the delivery log)",
+    });
+    db.prepare("INSERT INTO events(dof, key, created) VALUES ('gh', 'fresh', ?)").run(new Date().toISOString());
+    assert.match(forgeHealth(db, "gh", st).delivery_warning ?? "", /^3 deliveries arrived only through the redelivery/);
+    assert.deepEqual(forgeHealth(db, "gh", { missed: 0 }), { installation: "App 12, installation 34" });
+  } finally {
+    writeFileSync(vault, before);
+  }
 });
 
 test("mirrorSize: du's figure, nothing for a mirror that is not there", async () => {

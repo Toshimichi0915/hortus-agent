@@ -371,7 +371,8 @@ function App() {
         <SidebarInset id="main" tabIndex={-1} className="min-w-0 overflow-hidden outline-none">
           <TopBar />
           <PausedBanner />
-          <PageGuard key={path}>
+          {/* the Settings sections share one draft: moving between them must not remount it */}
+          <PageGuard key={path.startsWith("/settings/") ? "/settings" : path}>
             <Route path={path} />
           </PageGuard>
         </SidebarInset>
