@@ -852,7 +852,9 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     body,
     scrub: s,
     llmCall,
-    metered,
+    // charged only what can generate: a GET (core's model list at every session's start, ~5.4k by its bytes) cannot,
+    // and was charged to every quiet schedule run. Still refused past the budget above
+    metered: metered && template.method !== "GET" && template.method !== "HEAD",
     tokens,
   };
 }

@@ -936,6 +936,13 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     const n = row().metered;
     await send({ host: "api.gh.test", path: "/model/json" });
     assert.equal(row().metered, n);
+    // live 2026-11-06: core's contextWindow lists the models at every session's start, ~5.4k "tokens" by its bytes, so
+    // a quiet schedule run that called no model was charged that each firing and never deleted
+    const auth = { authorization: "Bearer hortus-secret-gh" };
+    const list = await send({ host: "api.gh.test", path: "/model/none", headers: auth });
+    assert.equal(list.status, 200);
+    await sleep(20);
+    assert.equal(row().metered, n, "a GET generates nothing");
     const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
     ctx.db.prepare("UPDATE tasks SET budget = ? WHERE id = 'T'").run(JSON.stringify({ tokens: 10, hours: 1 }));
     ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(10 + ctx.config.worker.context_window - 1);
