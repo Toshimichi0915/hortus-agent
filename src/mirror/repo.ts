@@ -44,7 +44,10 @@ function entries(z: string[]): DiffEntry[] {
 export async function recover(db: DatabaseSync, name: string): Promise<void> {
   const tree = paths.dof(name);
   if (!existsSync(join(tree, ".git"))) return;
-  rmSync(join(paths.dofRepo(name), "worktrees", basename(tree), "index.lock"), { force: true });
+  // and the ref locks of one killed inside its ref update: each later commit died on "cannot lock ref" (round 23)
+  const wt = join(paths.dofRepo(name), "worktrees", basename(tree));
+  for (const f of [join(wt, "index.lock"), join(wt, "HEAD.lock"), join(paths.dofRepo(name), "refs/heads/main.lock")])
+    rmSync(f, { force: true });
   const head = (await git(tree, "rev-parse", "HEAD")).trim();
   const from = (await git(tree, "rev-parse", "-q", "--verify", INDEXED).catch(() => "")).trim();
   if (from === head) return;

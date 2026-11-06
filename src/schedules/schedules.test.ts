@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
+import { jar } from "../browser/jar.ts";
 import { Config } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb, taint, taintOf } from "../db.ts";
@@ -17,7 +18,6 @@ import { recover } from "../runtime/recovery.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
 import type { Caller, OutboxMsg } from "../types.ts";
-import { jar } from "../browser/jar.ts";
 import { check, granted } from "../vault/gate.ts";
 import { bind as bindVault } from "../vault/vault.ts";
 import * as runs from "./runs.ts";
@@ -395,7 +395,8 @@ test("an empty result: the run is closed at once and leaves no logs entry; one t
   const spent = runs.start(row(id) as runs.ScheduleRow, new Date(T));
   ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":30}', status = 'waiting' WHERE id = ?`).run(spent.id);
   runs.onExit(tasks.get(spent.id), [{ seq: 1, type: "result", text: "", ts: "" }]);
-  await until(() => tasks.get(spent.id).status === "done", 3000, "the run closed");
+  // the row closes first now (round 23), so `done` alone is the start of the close: wait for its end
+  await until(() => tasks.get(spent.id).status === "done" && !existsSync(paths.task(spent.id)), 3000, "the run closed");
   assert.ok(!existsSync(join(paths.logs(), spent.id)));
   assert.equal(JSON.parse(tasks.get(p.id).usage ?? "").runs, 30);
 });

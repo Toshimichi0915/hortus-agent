@@ -253,17 +253,17 @@ export function stop(id: string): void {
   else hooks.stop(id);
 }
 
-/** End it (killing a running session first), publish the log, delete its directories; the row stays. */
+/** End it (the row first, then the running session), publish the log, delete its directories; the row stays. */
 export async function close(id: string, outcome: "done" | "failed"): Promise<void> {
   const t = get(id);
   if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is already ${t.status}`);
   closing.add(id);
   try {
-    // its schedules' runs end with it (a merged PR's task): one queued or at work would act, and ask, for a closed task
-    const runs = ctx().db.prepare("SELECT id FROM tasks WHERE parent = ? AND status NOT IN ('done', 'failed')").all(id);
-    for (const r of runs as { id: string }[]) await close(r.id, outcome);
-    await hooks.kill(id);
+    // closed before the wait: it is a session's teardown or its whole start (a clone, a VM's boot), and a restart in
+    // it found the row `running` and ran the task again (round 23). Its finish() sees a closed row: accounting only
     setStatus(id, outcome, { closed: now() });
+    await hooks.kill(id);
+    crashPoint("tasks.close.after-kill");
     await finishClose(id);
   } finally {
     closing.delete(id);
@@ -284,11 +284,21 @@ export async function finishClose(id: string): Promise<void> {
     )
     .run(now(), id);
   if (r.changes) bus.emit("approvals", { task: id });
+  // its schedules' runs end with it (a merged PR's task): one queued or at work would act, and ask, for a closed task.
+  // Here, not in close(): recovery finishes a close a crash cut after the row, and its runs with it
+  const runs = db.prepare("SELECT id FROM tasks WHERE parent = ? AND status NOT IN ('done', 'failed')").all(id);
+  for (const { id: run } of runs as { id: string }[]) await close(run, get(id).status as "done" | "failed");
   const t = get(id);
   crashPoint("tasks.close.after-status");
   await publishLog(id, t.title, t.status).catch((e) => ctx().log("tasks").error("publishLog failed", e, { id }));
   const schedules = db.prepare("SELECT id FROM schedules WHERE task_id = ?").all(id) as { id: number }[];
-  for (const dir of [paths.task(id), paths.clone(id), ...schedules.map((s) => paths.schedule(s.id))]) rmTree(dir);
+  for (const dir of [
+    paths.task(id),
+    paths.clone(id),
+    `${paths.clone(id)}.new`,
+    ...schedules.map((s) => paths.schedule(s.id)),
+  ])
+    rmTree(dir);
   db.prepare("DELETE FROM schedules WHERE task_id = ?").run(id);
 }
 /** ids being closed: the dispatcher does not start them */

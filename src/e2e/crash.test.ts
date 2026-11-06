@@ -112,7 +112,11 @@ before(async () => {
       proxy: { https: 0, http: 0, dns: 0 },
     }),
   );
-  writeFileSync(join(home, "vault.json"), JSON.stringify(fake.vault("slack")), { mode: 0o600 });
+  writeFileSync(
+    join(home, "vault.json"),
+    JSON.stringify({ ...fake.vault("slack"), fake: { type: "token", value: "x", transform: "fake" } }),
+    { mode: 0o600 },
+  );
 });
 
 afterEach(stop);
@@ -224,6 +228,51 @@ for (const point of ["merge.after-ff", "merge.after-update-ref"]) {
     await stop();
   });
 }
+
+test("projects: SIGKILL between a task's clone and its branch → the restart's clone is on hortus/<id>", async () => {
+  start();
+  await up();
+  await stop();
+  const t = new Date().toISOString();
+  run(
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, project, budget, usage, runtime, event_keys, created, updated,
+       hours) VALUES ('pc', 'unattended', 't', 'b', 'queued', ?, 'g', '{"tokens":1000000,"hours":1}', '{"tokens":0}',
+       'host', '[]', ?, ?, 0)`,
+    JSON.stringify({ credentials: [], repos: [], project: "g" }),
+    t,
+    t,
+  );
+  assert.equal(await exited(start("origin.after-clone")), "SIGKILL");
+  assert.ok(existsSync(`${paths.clone("pc")}.new`), "cloned before the kill");
+  start();
+  await up();
+  // the start after the restart gets past prepareClone (the session itself may fail here: no Worker plugin)
+  await until(
+    () => sql<{ status: string }>("SELECT status FROM tasks WHERE id = 'pc'")[0]?.status !== "queued",
+    20_000,
+  );
+  await until(
+    () => {
+      try {
+        return g(paths.clone("pc"), "symbolic-ref", "--short", "HEAD") === "hortus/pc";
+      } catch {
+        return false;
+      }
+    },
+    10_000,
+    `the clone's branch (${(() => {
+      try {
+        return g(paths.clone("pc"), "symbolic-ref", "--short", "HEAD");
+      } catch (e) {
+        return String(e);
+      }
+    })()})`,
+  ).catch((e) => {
+    throw new Error(`${e.message}; HEAD ${g(paths.clone("pc"), "symbolic-ref", "--short", "HEAD")}`);
+  });
+  await stop();
+  run("UPDATE tasks SET status = 'done' WHERE id = 'pc'");
+});
 
 test("schedules: SIGKILL right after a firing started its run → restart fires nothing twice", async () => {
   start();
@@ -366,6 +415,23 @@ test("tasks: SIGKILL inside a close → its requests already expired; restart pu
   assert.equal(existsSync(paths.task("ca")), false);
   assert.ok(existsSync(join(paths.logs(), "ca", "summary.md")));
   assert.deepEqual(await cardPending("ca"), []);
+  await stop();
+  rmSync(paths.paused(), { force: true });
+});
+
+test("tasks: SIGKILL while a close waits for its session to end → the restart finishes the close, starts nothing", async () => {
+  // the wait is a session's teardown, or its whole start (a big clone, a VM's boot): a restart then ran it again
+  writeFileSync(paths.paused(), "");
+  task("ck");
+  const d = start("tasks.close.after-kill");
+  await up();
+  await call("task.close", { id: "ck" }).catch(() => {});
+  assert.equal(await exited(d), "SIGKILL");
+  start();
+  await up();
+  await until(() => !existsSync(paths.task("ck")), 10_000, "the close finished").catch(() => {});
+  assert.equal(sql<{ status: string }>("SELECT status FROM tasks WHERE id = 'ck'")[0]?.status, "done");
+  assert.equal(existsSync(paths.task("ck")), false);
   await stop();
   rmSync(paths.paused(), { force: true });
 });

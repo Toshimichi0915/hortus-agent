@@ -4,12 +4,13 @@
  * `hortusd.internal/git/<name>`, and the owner's `project.*` RPCs. `main` moves only by `sync` and an approved merge.
  */
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { z } from "zod";
 import { type Config, PROJECT_NAME, PROJECT_NAME_HINT, ProjectConfig, save } from "../config.ts";
 import { bus } from "../console/events.ts";
+import { crashPoint } from "../crash.ts";
 import { replaceFile } from "../hostile.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
@@ -213,9 +214,15 @@ export async function prepareClone(
     const objects = join(p.path, ".git/objects");
     const ref =
       existsSync(objects) && !existsSync(join(objects, "info/alternates")) ? ["--reference", resolve(p.path)] : [];
-    await git(["clone", "-q", "--no-local", ...ref, paths.project(name), dir]);
-    await git(["-C", dir, "checkout", "-q", "-b", `hortus/${task.id}`]);
-    await git(["-C", dir, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);
+    // whole or not at all: a restart inside a clone left one on `main` with the origin's path as its remote, and as
+    // `dir` existed nothing finished it (round 23). No session has run in `.new`: hortusd's own to remove
+    const tmp = `${dir}.new`;
+    rmSync(tmp, { recursive: true, force: true });
+    await git(["clone", "-q", "--no-local", ...ref, paths.project(name), tmp]);
+    crashPoint("origin.after-clone");
+    await git(["-C", tmp, "checkout", "-q", "-b", `hortus/${task.id}`]);
+    await git(["-C", tmp, "remote", "set-url", "origin", task.clone_url ?? `https://hortusd.internal/git/${name}`]);
+    renameSync(tmp, dir);
   } else if (
     existsSync(join(dir, ".git/objects/info/alternates")) &&
     realpathSync(join(dir, ".git/objects/info")) === join(realpathSync(dir), ".git/objects/info")

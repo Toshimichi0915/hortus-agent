@@ -146,8 +146,15 @@ test("recover: a stale index.lock is dropped; commits made without indexing (a c
   await repo.commit(null, "rec", [{ op: "delete", path: "C1/T1/M2.md" }, msg("C1/T1/M1.md", "kept edit")], "x");
   const lock = join(paths.dofRepo("rec"), "worktrees", "rec", "index.lock");
   writeFileSync(lock, "");
+  // a git SIGKILLed with hortusd inside its ref update: every later commit died on "cannot lock ref" (round 23)
+  const refLocks = [
+    join(paths.dofRepo("rec"), "refs", "heads", "main.lock"),
+    join(paths.dofRepo("rec"), "worktrees", "rec", "HEAD.lock"),
+  ];
+  for (const l of refLocks) writeFileSync(l, "");
   await repo.recover(db, "rec");
   assert.equal(existsSync(lock), false);
+  for (const l of refLocks) assert.equal(existsSync(l), false, l);
   assert.deepEqual(
     fts.search(db, { q: "body", in: "rec" }).map((h) => h.path),
     ["C1/T1/M3.md"],
