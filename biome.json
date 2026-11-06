@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!**/dist", "!.claude", "!**/node_modules"]
+    "includes": ["**", "!**/dist", "!.claude", "!**/node_modules", "!web/src/components/ui"]
   },
   "formatter": {
     "enabled": true,
@@ -19,6 +19,9 @@
     "enabled": true,
     "rules": {
       "preset": "recommended"
+    },
+    "domains": {
+      "react": "none"
     }
   },
   "javascript": {
@@ -32,6 +35,41 @@
       "source": {
         "organizeImports": "on"
       }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["web/**"],
+      "linter": {
+        "domains": {
+          "react": "recommended"
+        },
+        "rules": {
+          "a11y": {
+            "noLabelWithoutControl": {
+              "level": "error",
+              "options": {
+                "inputComponents": ["Input", "NativeSelect"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["web/**/*.css"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "off"
+          }
+        }
+      }
+    }
+  ],
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   }
 }

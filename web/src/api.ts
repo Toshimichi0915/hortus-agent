@@ -1,0 +1,285 @@
+/**
+ * The console API as the pages use it. `call(method, input)` is `POST /api/<method>` (role owner, `X-Hortus: 1`);
+ * `subscribe(topics)` is the SSE stream (`/events/tasks,approvals`); `streamRows` is a chat's (`/events/chat?task=`).
+ * For now all three run against the in-memory mock in mock.ts: wiring the daemon replaces their bodies, not the pages.
+ *
+ * ponytail: what the pages read beyond today's RPCs, for the wiring step: `pause.get`; `task.get`'s `outbox`,
+ * `schedules`, `origin`, `tainted` and `console_log`; approvals' `task_title`; `credential.list`'s `enabled` (the
+ * durable grant); `project.status`; `source.list`'s `size`, `deliveries_today`, `last_delivery`, `missing`, `webhook`; `dof.file`; `login.frame` (the mock's stand-in for the `/events/login` frames);
+ * `remote.status`; `vm.image`; and the chat stream sending each row's JSON line instead of its HTML.
+ */
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Config } from "../../src/config.ts";
+import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
+import { bus, handlers } from "./mock.ts";
+import { errorText } from "./ui.tsx";
+
+export type { Config, CredentialType, SearchHit, TaskKind, TaskStatus };
+
+export class ApiError extends Error {
+  constructor(
+    public code: "not_found" | "forbidden" | "invalid" | "failed",
+    message: string,
+    /** `invalid` from settings.set: zod's issues, each with its `path` */
+    public data?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function call<T = unknown>(method: string, input: unknown = {}): Promise<T> {
+  await sleep(80 + Math.random() * 160);
+  const h = handlers[method] as ((i: unknown) => unknown) | undefined;
+  if (!h) throw new ApiError("not_found", `no method ${method}`);
+  return structuredClone(await h(input)) as T;
+}
+
+/** Calls `f` on each event of `topics` (`tasks`, `approvals`, `settings`, `chat:<id>`). */
+export function subscribe(topics: string[], f: () => void): () => void {
+  for (const t of topics) bus.addEventListener(t, f);
+  return () => {
+    for (const t of topics) bus.removeEventListener(t, f);
+  };
+}
+
+/**
+ * A chat's rows after `after`, then each new one as it lands (the SSE replay). One pull at a time, in order: events
+ * that arrive meanwhile ask for one more, so rows are never repeated or reordered.
+ */
+export function streamRows(id: string, after: number, onRows: (rows: Row[]) => void): () => void {
+  let last = after;
+  let live = true;
+  let busy = false;
+  let again = false;
+  const pull = async () => {
+    if (busy) {
+      again = true;
+      return;
+    }
+    busy = true;
+    try {
+      do {
+        again = false;
+        const rows = (await call<Row[]>("task.rows", { id, after: last })).filter((r) => r.seq > last);
+        if (!live) return;
+        const end = rows.at(-1);
+        if (end) {
+          last = end.seq;
+          onRows(rows);
+        }
+      } while (again);
+    } finally {
+      busy = false;
+    }
+  };
+  pull();
+  const off = subscribe([`chat:${id}`], pull);
+  return () => {
+    live = false;
+    off();
+  };
+}
+
+/**
+ * `method(input)`, again on each event of `topics`; `null` calls nothing. An answer to an older input never replaces
+ * a newer one.
+ */
+export function useCall<T>(method: string | null, input: unknown = {}, topics: string[] = []) {
+  const key = JSON.stringify(input);
+  const [state, setState] = useState<{ data?: T; error?: string; loading: boolean }>({ loading: !!method });
+  const seq = useRef(0);
+  const load = useCallback(async () => {
+    const n = ++seq.current;
+    if (!method) return setState({ loading: false });
+    try {
+      const data = await call<T>(method, JSON.parse(key));
+      if (n === seq.current) setState({ data, loading: false });
+    } catch (e) {
+      if (n === seq.current) setState((s) => ({ ...s, error: errorText(e), loading: false }));
+    }
+  }, [method, key]);
+  const topicKey = topics.join(",");
+  useEffect(() => {
+    setState((s) => ({ ...s, loading: true }));
+    load();
+    return subscribe(topicKey ? topicKey.split(",") : [], load);
+  }, [load, topicKey]);
+  return { ...state, reload: load };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// What the methods answer
+
+export interface Task {
+  id: string;
+  kind: TaskKind;
+  title: string;
+  status: TaskStatus;
+  project: string | null;
+  budget: { tokens: number; hours: number };
+  usage: { tokens: number; runs?: number } | null;
+  /** the proxy's count so far (usage is written when a session ends) */
+  metered?: number;
+  hours: number;
+  summary: string | null;
+  outcome: "done" | "failed" | null;
+  created: string;
+  updated: string;
+  closed: string | null;
+  cwd: string | null;
+  error: string | null;
+  runtime: "host" | "vm" | null;
+  started: string | null;
+  brief: string | null;
+  scope: { credentials: string[]; repos: string[]; project?: string; dofs?: string[] } | null;
+  /** pending approvals that wait on it */
+  pending?: number;
+}
+
+/** A `replies` row: the Worker's stdout line, or the owner's own words in a chat. */
+export type Line = StdoutLine | { type: "owner"; text: string };
+export interface Row {
+  seq: number;
+  body: Line;
+  created: string;
+}
+
+export interface Msg {
+  seq: number;
+  body: { from?: string; type?: string; text: string; author?: string; trusted?: boolean };
+  created: string;
+}
+
+export interface TaskDetail {
+  task: Task;
+  approvals: Approval[];
+  inbox: Msg[];
+  outbox: Msg[];
+  schedules: Schedule[];
+  origin?: { dof: string; channel: string; author: string | null; summary: string };
+  tainted: string[];
+  console_log?: string;
+}
+
+export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "landed" | "replaced";
+
+export interface Approval {
+  id: number;
+  kind: "request" | "login" | "grant";
+  /** `credential:<name>`, `merge`, `transforms`, `origin:<site>` */
+  category: string;
+  task_id: string | null;
+  task_title?: string;
+  summary: Record<string, unknown>;
+  status: ApprovalStatus;
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: "owner" | "judge" | null;
+  reason: string | null;
+  payload: { judge?: string; untrusted?: string[]; consequential?: boolean } | null;
+  grantable: boolean;
+}
+
+export interface Credential {
+  name: string;
+  type: CredentialType;
+  transform: string | null;
+  hosts: string[] | null;
+  last_use: string | null;
+  /** its durable grant is given: under `auto`, the judge may pass its routine requests */
+  enabled?: boolean;
+}
+
+export interface Captured {
+  origin: string;
+  cookies: number;
+  tokens: number;
+  last_use: string | null;
+}
+
+export interface Source {
+  dof: string;
+  type: string;
+  connected: boolean;
+  lastEvent?: string;
+  error?: string;
+  notes?: string[];
+  scopes: { scope: string; last_sync: string | null }[];
+  size?: string;
+  deliveries_today?: number;
+  last_delivery?: string | null;
+  /** credentials the connector needs that the vault lacks */
+  missing?: string[];
+  /** forges: the path the service's webhook posts to, behind the owner's tunnel */
+  webhook?: string;
+}
+
+export interface PlannerStatus {
+  last?: string;
+  routed: number;
+  tokens: number;
+  cap: number;
+}
+
+export interface Schedule {
+  id: number;
+  task_id: string;
+  title: string | null;
+  fire_at: string | null;
+  every_sec: number | null;
+  cron: string | null;
+  tz: string | null;
+  text: string;
+  last_run: string | null;
+  expires_at: string | null;
+  summary: string | null;
+}
+
+export interface Snapshot {
+  sha: string;
+  ts: string;
+  message: string;
+}
+
+export interface RemoteSession {
+  id: number;
+  device: string;
+  created: string;
+  last_seen: string;
+  address: string;
+  current: boolean;
+}
+
+export interface Passkey {
+  id: number;
+  device: string;
+  created: string;
+  last_use: string | null;
+}
+
+export interface RemoteStatus {
+  listening: boolean;
+  url?: string;
+  cert?: string;
+  /** this page came through the remote listener: enrolment codes are made at the machine */
+  remote: boolean;
+}
+
+export type LoginField = "email" | "password";
+
+/** The mock's stand-in for the login view's screencast frames (`/events/login?id=`). */
+export interface LoginFrame {
+  email: string;
+  /** masked, as the site's own field would show it */
+  password: string;
+  focus: LoginField | null;
+  signedIn: boolean;
+}
+
+export interface DofFile {
+  text: string;
+  size: number;
+  siblings: string[];
+}
