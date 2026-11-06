@@ -1024,7 +1024,7 @@ for (const h of H) {
     assert.equal(ciRows(file).length, 1, "once");
   });
 
-  test(`${dof}: a project empty at its first sync: the next pass routes what it missed, a CI result and an issue (cursor "")`, async () => {
+  test(`${dof}: a project empty at its first sync: the next pass routes what it missed (cursor "")`, async () => {
     const sha = await h.commit("hortus/ci-empty", "ci-empty.txt", "1\n");
     const pr = await h.openPR("toshi", "CI after an empty backfill", "hortus/ci-empty", "diff --git a/e b/e\n");
     const t = `!${pr.n}`;
