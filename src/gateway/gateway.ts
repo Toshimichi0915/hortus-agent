@@ -13,6 +13,7 @@ import { trusted } from "../connectors/trust.ts";
 import type { Module } from "../ctx.ts";
 import { type DatabaseSync, now } from "../db.ts";
 import { readCapped } from "../hostile.ts";
+import { parse } from "../mirror/render.ts";
 import { unsafe } from "../mirror/repo.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
@@ -114,7 +115,8 @@ export function createGateway(deps: GatewayDeps): Gateway {
   const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync, first) VALUES (?1, ?2, ?3, ?4, ?4)
     ON CONFLICT(dof, scope) DO UPDATE SET cursor = excluded.cursor, last_sync = excluded.last_sync`);
   const routed = db.prepare("SELECT 1 FROM events WHERE dof = ? AND key = ? AND created > ?");
-  const missedKey = (c: Change) => `history:${c.path}${c.frontmatter?.state ? `:${c.frontmatter.state}` : ""}`;
+  const missedKey = (c: Change) =>
+    `history:${c.path}${c.ci ? `:checks:${c.ci.sha}:${c.ci.result}` : c.frontmatter?.state ? `:${c.frontmatter.state}` : ""}`;
 
   /**
    * The objects of a history batch nobody heard of: no connection was up, and a service with no redelivery will not send
@@ -131,7 +133,12 @@ export function createGateway(deps: GatewayDeps): Gateway {
       const ts = h.ts ?? String(c.frontmatter?.ts ?? "");
       if (ts <= since) continue;
       const text = deps.mirrored?.(name, c.path);
-      if (text === undefined || (text !== null && !(h.state && !text.includes(`\nstate: ${h.state}\n`)))) continue;
+      if (text === undefined || text === "") continue;
+      // held: the file, its state, and for a CI result that result on that head
+      const fm = text === null ? null : parse(text).frontmatter;
+      const ci = c.ci;
+      const sha = String(fm?.head_sha ?? "").slice(0, 12);
+      if (fm && (!h.state || fm.state === h.state) && (!ci || (fm.checks === ci.result && sha === ci.sha))) continue;
       const a = h.author;
       const key = missedKey(c);
       const event = { dof: name, key, ts, payload: null, author: a, bot: false, summary: h.summary, refs: h.refs };

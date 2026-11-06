@@ -113,3 +113,5 @@ Edge cases: a message with an empty `text` and one file; `ts` with trailing zero
 - The fake's shape (`post`/`edit`/`delete`/`react`/`replay`/`disconnect`) is the template for the other fakes, so the same gateway tests run against each connector.
 
 **Round 22.** `history` sets `Change.heard` past the first sync; a reconcile routes an object the mirror lacks, newer than `syncs.first`, as `history:<path>[:state]` (`gateway.ts › missed`).
+
+**Round 23.** A CI result on a task's open GitLab or Bitbucket PR: a `patch` with `Change.ci` (`{ sha, result }`, success or failure only), keyed `history:<path>:checks:<sha12>:<result>`; the live CI patch carries the same `ci`, so whichever comes second wakes nothing.

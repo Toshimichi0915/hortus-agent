@@ -268,13 +268,30 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
   }
 
-  async function checksOf(p: string, sha: string): Promise<string | null> {
+  async function checksOf(p: string, sha: string): Promise<{ checks: string | null; at?: string }> {
     try {
-      return ci((await json<{ status: string }[]>(`${P(p)}/pipelines?sha=${sha}&per_page=1`))[0]?.status);
+      const [pl] = await json<{ status: string; updated_at?: string }[]>(`${P(p)}/pipelines?sha=${sha}&per_page=1`);
+      return { checks: ci(pl?.status), ...(pl?.updated_at ? { at: pl.updated_at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: pipelines of ${p}@${sha} failed`, e);
-      return null;
+      return { checks: null };
     }
+  }
+
+  /** What a reconcile routes of an open MR's CI result, should its pipeline event have been missed: a task's MR only, and
+   * only a result, as a live one on its head (`mirror` › pipeline). Key and check: `Change.ci`. */
+  function ciHeard(p: string, mr: MR, checks: string | null, when?: string): Change[] {
+    const thread = `!${mr.iid}`;
+    if ((checks !== "success" && checks !== "failure") || !deps.hasRef(ref(p, thread))) return [];
+    const heard = {
+      author: null,
+      bot: false,
+      summary: `pipeline ${p}${thread} by ?: ${checks} on ${mr.sha.slice(0, 7)}`,
+      refs: [ref(p, thread)],
+      ts: iso(when),
+    };
+    const ci = { sha: mr.sha.slice(0, 12), result: checks };
+    return [{ op: "patch", path: at(p, thread), frontmatter: { checks }, heard, ci }];
   }
 
   async function diffOf(p: string, iid: number): Promise<Change[]> {
@@ -289,9 +306,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  async function prTop(p: string, mr: MR, diff: boolean): Promise<Change[]> {
+  /** `heard`: a reconcile's, past the first sync, of an open MR */
+  async function prTop(p: string, mr: MR, diff: boolean, heard = false): Promise<Change[]> {
     const t = `!${mr.iid}`;
-    const checks = await checksOf(p, mr.sha);
+    const { checks, at: when } = await checksOf(p, mr.sha);
     const files = diff ? await diffOf(p, mr.iid) : [];
     const fm: Record<string, unknown> = {
       id: t,
@@ -308,7 +326,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
     if (checks) fm.checks = checks;
     if (files.length) fm.files = ["files/diff.patch"];
-    return [{ op: "put", path: at(p, t), frontmatter: fm, body: mr.description ?? "" }, ...files];
+    const top: Change = { op: "put", path: at(p, t), frontmatter: fm, body: mr.description ?? "" };
+    return [top, ...files, ...(heard ? ciHeard(p, mr, checks, when) : [])];
   }
 
   function noteChange(p: string, thread: string, n: Note, user: string): Change {
@@ -434,15 +453,13 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           const open = await Promise.all(mrs.map((n) => json<MR>(`${P(p)}/merge_requests/${n}`)));
           const onHead = (m: MR) => m.sha === a.sha || m.head_pipeline?.id === a.id;
           const changes = await Promise.all(
-            open.map(
-              async (m): Promise<Change> => ({
-                op: "patch",
-                path: at(p, `!${m.iid}`),
-                frontmatter: {
-                  checks: ci(onHead(m) ? a.status : m.head_pipeline?.status) ?? (await checksOf(p, m.sha)),
-                },
-              }),
-            ),
+            open.map(async (m): Promise<Change> => {
+              const checks = ci(onHead(m) ? a.status : m.head_pipeline?.status) ?? (await checksOf(p, m.sha)).checks;
+              // the key a reconcile would route this result under: whichever comes second wakes nothing
+              const heard = onHead(m) && (checks === "success" || checks === "failure");
+              const c: Change = { op: "patch", path: at(p, `!${m.iid}`), frontmatter: { checks } };
+              return heard ? { ...c, ci: { sha: m.sha.slice(0, 12), result: checks } } : c;
+            }),
           );
           // a result on an MR that ended asks nothing of its task
           const live = (m: MR) => m.state === "opened" && onHead(m);
@@ -474,7 +491,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         }
       };
       const prHeard = async (mr: MR): Promise<Change[]> => {
-        const out = await prTop(project, mr, mr.state === "opened");
+        const open = mr.state === "opened";
+        const out = await prTop(project, mr, open, !!cursor && open);
         const top = out[0];
         const s = state(mr.state);
         const by = s === "merged" ? (mr.merge_user ?? mr.merged_by) : s === "closed" ? mr.closed_by : mr.author;

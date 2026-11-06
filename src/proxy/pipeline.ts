@@ -1107,7 +1107,11 @@ function meterStream(p: Prepared, r: Readable): void {
   let input = 0;
   let output = 0;
   let seen = false;
+  // at least a token each: Anthropic's last `output_tokens` comes at the end, so a client that hangs up before it had the
+  // text and `message_start`'s 1
+  let deltas = 0;
   const line = (l: string) => {
+    if (l.includes('"delta"')) deltas++;
     if (!l.includes('"usage"')) return;
     try {
       const u = usageOf(JSON.parse(l.replace(/^data:\s*/, "")));
@@ -1125,7 +1129,7 @@ function meterStream(p: Prepared, r: Readable): void {
   });
   r.once("close", () => {
     line(carry);
-    charge(p, seen ? input + output : Math.ceil(bytes / 4));
+    charge(p, seen ? input + Math.max(output, deltas) : Math.ceil(bytes / 4));
   });
 }
 
@@ -1205,12 +1209,14 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
   // ponytail: over 16 MB (or still arriving after 30 s) skips response() and is scrubbed as a stream, not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
-  // no `usage`, no charge (an error, a model list): a provider that reports none is not stopped by this
-  if (p.metered && text !== undefined) {
+  // no `usage` it can read (an error, a model list, the same key on another API of the host: Ollama's native `/api/chat`
+  // streams NDJSON with `eval_count`): its bytes, as a silent stream, or that path would be a way round the count
+  if (p.metered) {
+    let u: ReturnType<typeof usageOf>;
     try {
-      const u = usageOf(JSON.parse(text));
-      if (u) charge(p, u.input + u.output);
-    } catch {} // not JSON: nothing to count
+      u = text === undefined ? undefined : usageOf(JSON.parse(text));
+    } catch {} // not JSON
+    charge(p, u ? u.input + u.output : Math.ceil(((p.raw.body?.length ?? 0) + r.buf.length) / 4));
   }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);

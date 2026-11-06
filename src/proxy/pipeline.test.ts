@@ -78,6 +78,10 @@ const fake = http.createServer((req, res) => {
       const kind = req.url.slice(7);
       if (kind === "json") return json({ usage: { prompt_tokens: 100, completion_tokens: 20 } });
       if (kind === "none") return json({ error: "nothing counted" });
+      if (kind === "ndjson") {
+        res.writeHead(200, { "content-type": "application/x-ndjson" });
+        return res.end(`${'{"message":{"content":"x"}}\n'.repeat(200)}{"done":true,"prompt_eval_count":900,"eval_count":200}\n`);
+      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       if (kind === "openai")
         res.write(
@@ -86,6 +90,10 @@ const fake = http.createServer((req, res) => {
       if (kind === "anthropic")
         res.write(
           'data: {"message":{"usage":{"input_tokens":5,"cache_read_input_tokens":50,"output_tokens":1}}}\n\ndata: {"usage":{"output_tokens":9}}\n\n',
+        );
+      if (kind === "cut")
+        res.write(
+          `data: {"type":"message_start","message":{"usage":{"input_tokens":5,"output_tokens":1}}}\n\n${'data: {"type":"content_block_delta","delta":{"text":"word"}}\n\n'.repeat(30)}`,
         );
       if (kind === "silent") res.write(`data: ${"x".repeat(4000)}\n\n`);
       return res.end();
@@ -896,7 +904,7 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
   const charged = async (kind: string) => {
     const before = row().metered;
     assert.equal((await model(kind)).status, 200);
-    await until(() => row().metered !== before || kind === "none", 2000, kind);
+    await until(() => row().metered !== before, 2000, kind);
     await sleep(20);
     return row().metered - before;
   };
@@ -904,7 +912,9 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     assert.equal(await charged("json"), 120, "as core adds them: input + output");
     assert.equal(await charged("openai"), 77);
     assert.equal(await charged("anthropic"), 64, "cache reads are input; output is the last, cumulative figure");
-    assert.equal(await charged("none"), 0, "no usage in a body: fails open");
+    assert.equal(await charged("cut"), 35, "a stream cut before its last usage: a token a delta at least");
+    assert.equal(await charged("none"), Math.ceil((2 + 29) / 4), "no usage in a body: its bytes, request and response");
+    assert.ok((await charged("ndjson")) >= 1300, "Ollama's native stream on the same key is counted too");
     assert.ok((await charged("silent")) >= 1000, "a stream that reports nothing is counted by its bytes");
     // another credential, or an uncredentialed call to the same host, is nobody's model spend
     const n = row().metered;
@@ -945,12 +955,16 @@ test("a model credential's manifest `consequential` is gated: fine-tuning, delet
       ["POST", "/v1/fine_tuning/jobs"],
       ["DELETE", "/v1/files/f1"],
       ["POST", "/v1/organization/admin_api_keys"],
+      // the same key on Ollama's or OpenRouter's own API: a model published to the owner's account, a key, a purchase
+      ["POST", "/api/push"],
+      ["POST", "/api/create"],
+      ["POST", "/api/v1/keys"],
     ] as const) {
       const r = await call(m, p);
       assert.equal(r.status, 403, `${m} ${p}`);
       assert.match(r.body, /approval/);
     }
-    assert.equal(approvals(), n + 3);
+    assert.equal(approvals(), n + 6);
   } finally {
     ctx.config = prev;
     writeVault(vault);

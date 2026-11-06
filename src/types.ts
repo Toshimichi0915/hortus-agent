@@ -47,6 +47,8 @@ export interface Change {
   bytes?: Buffer;
   /** history only: who this object is, should the live event for it have been missed (gateway › reconcile) */
   heard?: Heard;
+  /** a CI result on the PR's head, live or read back: the key both name, so one of the two routes it (gateway › missed) */
+  ci?: { sha: string; result: string };
 }
 
 /** What a reconcile routes for an object the mirror does not hold yet: the live event's fields, by the live rules. */

@@ -17,6 +17,13 @@
     "POST **/uploads",
     "POST **/batches",
     "POST **/fine_tuning/**",
-    "POST **/organization/**"
+    "POST **/organization/**",
+    "POST **/api/create",
+    "POST **/api/copy",
+    "POST **/api/push",
+    "POST **/api/blobs/**",
+    "POST **/keys",
+    "PATCH **/keys/**",
+    "POST **/credits/**"
   ]
 }

@@ -177,7 +177,7 @@ interface Project {
   issues: Map<number, Thing>;
   mrs: Map<number, Thing>;
   notes: Note[];
-  pipelines: { id: number; sha: string; ref: string; status: string }[];
+  pipelines: { id: number; sha: string; ref: string; status: string; updated_at: string }[];
 }
 
 /** unified diff → GitLab's `/changes` entries (header lines dropped, hunks kept) */
@@ -475,7 +475,7 @@ export class FakeGitLab {
   pipeline(path: string, sha: string, status: string, o: { branch?: boolean; result?: string } = {}, d?: DeliverOpts) {
     const p = this.get(path);
     const mr = [...p.mrs.values()].find((t) => t.mr?.shas.includes(sha));
-    const pl = { id: this.ids++, sha: o.result ?? sha, ref: mr?.mr?.source_branch ?? "main", status };
+    const pl = { id: this.ids++, sha: o.result ?? sha, ref: mr?.mr?.source_branch ?? "main", status, updated_at: this.ts() };
     p.pipelines.unshift(pl);
     if (mr?.mr?.sha === sha) mr.mr.head_pipeline = { id: pl.id, status };
     const merge_request = mr && !o.branch ? { iid: mr.iid } : null;

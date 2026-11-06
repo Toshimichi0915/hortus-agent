@@ -943,6 +943,66 @@ for (const h of H) {
     assert.equal(n.n, 1, "once");
   });
 
+  test(`${dof}: a CI result missed in an outage reaches its task once: a result, on a task's open PR, not twice`, {
+    skip: dof === "github",
+  }, async () => {
+    await h.commit("hortus/ci-unseen", "ci-unseen.txt", "1\n"); // its own head: a pipeline finds its MR by sha
+    const pr = await h.openPR("toshi", "CI unseen", "hortus/ci-unseen", "diff --git a/y b/y\n");
+    const t = `!${pr.n}`;
+    const file = `${D}/${t}/${t}.md`;
+    await until(() => fm(dof, file), 3000, "the PR");
+    await gw.reconcile(dof, P);
+    const ci = () =>
+      db.prepare("SELECT summary, refs, author, consumed FROM events WHERE dof = ? AND key LIKE ?").all(
+        dof,
+        `history:${file}:checks:%`,
+      ) as { summary: string; refs: string; author: string | null; consumed: number }[];
+    // not a task's PR: the mirror moves, nobody is woken (as live)
+    await h.result(pr.sha, "failure");
+    await until(() => fm(dof, file)?.frontmatter.checks === "failure", 3000, "live result");
+    db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:${t}`);
+    await gw.reconcile(dof, P);
+    assert.equal(ci().length, 0, "what the mirror holds is not routed");
+
+    // the outage: the result is never delivered
+    if (dof === "gitlab") await gl.pipeline("g/sub/p", pr.sha, "success", {}, { drop: true });
+    else await bb.status("w/r", pr.sha, "SUCCESSFUL", { drop: true });
+    const w = wakes;
+    await gw.reconcile(dof, P);
+    const [r, ...more] = ci();
+    assert.ok(r, "routed");
+    assert.equal(more.length, 0);
+    assert.equal(r.author, null, "nobody's words: CI taints nothing");
+    assert.equal(r.consumed, 0);
+    assert.match(r.summary, /success on /);
+    assert.deepEqual(JSON.parse(r.refs), [`${dof}:${P}:${t}`]);
+    assert.equal(wakes, w + 1);
+    assert.equal(fm(dof, file)?.frontmatter.checks, "success");
+    await gw.reconcile(dof, P);
+    assert.equal(ci().length, 1, "once");
+
+    // the hook, late: its result is the one routed, so it wakes nothing
+    const late = wakes;
+    const n0 = rows(dof);
+    if (dof === "gitlab") await gl.pipeline("g/sub/p", pr.sha, "success");
+    else await bb.status("w/r", pr.sha, "SUCCESSFUL");
+    const newest = db.prepare("SELECT consumed FROM events WHERE dof = ? ORDER BY id DESC LIMIT 1");
+    await until(() => rows(dof) > n0 && (newest.get(dof) as { consumed: number }).consumed !== -2, 3000, "settled");
+    await sleep(100);
+    assert.equal(wakes, late, "a late hook after the reconcile");
+
+    // a pending one is no result; an ended PR's result asks nothing
+    if (dof === "gitlab") await gl.pipeline("g/sub/p", pr.sha, "running", {}, { drop: true });
+    else await bb.status("w/r", pr.sha, "INPROGRESS", { drop: true });
+    await gw.reconcile(dof, P);
+    assert.equal(ci().length, 1, "pending");
+    await h.merge(pr.n, "toshi", true);
+    if (dof === "gitlab") await gl.pipeline("g/sub/p", pr.sha, "failed", {}, { drop: true });
+    else await bb.status("w/r", pr.sha, "FAILED", { drop: true });
+    await gw.reconcile(dof, P);
+    assert.equal(ci().length, 1, "an ended PR");
+  });
+
   test(`${dof}: projects() filtered by repos`, async () => {
     for (const [globs, want] of h.globs) {
       const conn = (await connectors[dof]?.({

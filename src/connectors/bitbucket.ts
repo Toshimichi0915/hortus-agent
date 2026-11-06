@@ -234,15 +234,32 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
   }
 
-  async function checksOf(p: string, sha: string | undefined): Promise<string | null> {
-    if (!sha) return null;
+  async function checksOf(p: string, sha: string | undefined): Promise<{ checks: string | null; at?: string }> {
+    if (!sha) return { checks: null };
     try {
-      const sts = await all<{ state: string }>(`${R(p)}/commit/${sha}/statuses?pagelen=100`, "values");
-      return worst(sts.map((s) => suite(s.state)));
+      const sts = await all<{ state: string; updated_on?: string }>(`${R(p)}/commit/${sha}/statuses?pagelen=100`, "values");
+      const at = sts.map((s) => s.updated_on ?? "").sort().at(-1);
+      return { checks: worst(sts.map((s) => suite(s.state))), ...(at ? { at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: statuses of ${p}@${sha} failed`, e);
-      return null;
+      return { checks: null };
     }
+  }
+
+  /** What a reconcile routes of an open PR's CI result, should its status event have been missed: a task's PR only, and
+   * only a result, as a live one (`mirror` › a status). Key and check: `Change.ci`; a PR names its head by 12 hex. */
+  function ciHeard(p: string, pr: Pull, sha: string, checks: string | null, when?: string): Change[] {
+    const thread = `!${pr.id}`;
+    if ((checks !== "success" && checks !== "failure") || !deps.hasRef(ref(p, thread))) return [];
+    const heard = {
+      author: null,
+      bot: false,
+      summary: `repo:commit_status_updated ${p}${thread} by ?: ${checks} on ${sha.slice(0, 7)}`,
+      refs: [ref(p, thread)],
+      ts: iso(when),
+    };
+    const ci = { sha: sha.slice(0, 12), result: checks };
+    return [{ op: "patch", path: at(p, thread), frontmatter: { checks }, heard, ci }];
   }
 
   async function diffOf(p: string, n: number): Promise<Change[]> {
@@ -256,10 +273,11 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  async function prTop(p: string, pr: Pull, diff: boolean): Promise<Change[]> {
+  /** `heard`: a reconcile's, past the first sync, of an open PR */
+  async function prTop(p: string, pr: Pull, diff: boolean, heard = false): Promise<Change[]> {
     const t = `!${pr.id}`;
     const sha = pr.source.commit?.hash;
-    const checks = await checksOf(p, sha);
+    const { checks, at: when } = await checksOf(p, sha);
     const files = diff ? await diffOf(p, pr.id) : [];
     const fm: Record<string, unknown> = {
       id: t,
@@ -274,7 +292,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
     if (checks) fm.checks = checks;
     if (files.length) fm.files = ["files/diff.patch"];
-    return [{ op: "put", path: at(p, t), frontmatter: fm, body: pr.description ?? "" }, ...files];
+    const top: Change = { op: "put", path: at(p, t), frontmatter: fm, body: pr.description ?? "" };
+    return [top, ...files, ...(heard && sha ? ciHeard(p, pr, sha, checks, when) : [])];
   }
 
   function commentChange(p: string, thread: string, c: Comment): Change {
@@ -366,8 +385,11 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       const none = { changes: [], wake: false };
       if (!thread) {
         if (!type.startsWith("repo:commit_status_") || !prs?.length) return none; // a push: the repo mirror's business
-        const checks = await checksOf(p, shaOf(b));
-        const changes: Change[] = prs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks } }));
+        const sha = shaOf(b) ?? "";
+        const { checks } = await checksOf(p, sha);
+        // the key a reconcile would route this result under (prs are those it is the head of): the second wakes nothing
+        const ci = checks === "success" || checks === "failure" ? { ci: { sha: sha.slice(0, 12), result: checks } } : {};
+        const changes: Change[] = prs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks }, ...ci }));
         return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
       }
       const action = type.slice(type.indexOf(":") + 1);
@@ -417,7 +439,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         }
       };
       const prHeard = async (pr: Pull): Promise<Change[]> => {
-        const out = await prTop(project, pr, pr.state === "OPEN");
+        const open = pr.state === "OPEN";
+        const out = await prTop(project, pr, open, !!cursor && open);
         const top = out[0];
         const s = pr.state.toLowerCase();
         const type = s === "open" ? "created" : s === "merged" ? "fulfilled" : "rejected";
