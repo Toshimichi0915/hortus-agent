@@ -774,19 +774,25 @@ test("task_close refuses a chat task, one on its timers, one at work, one whose 
   prTurn("tc-theirs", 1, "t1", 0, "pull_request.closed o/r!1 by mallory: (its text)");
   ins("tc-unheard", "unattended");
   prTurn("tc-unheard", 1, "u1", 0, "pull_request.closed o/r!1 by mallory: (its text)");
+  // live: the Planner closed a task stopped at its hours 4 s after the owner's "over budget" DM, deleting its work
+  ins("tc-spent", "unattended");
+  const spentWhy = "budget_exceeded: the session was stopped after 0.01 h (budget hours)";
+  db((d) => d.prepare("UPDATE tasks SET error = ? WHERE id = 'tc-spent'").run(spentWhy));
   db((d) =>
     d
       .prepare("INSERT INTO schedules(task_id, fire_at, text, created) VALUES ('tc-timer', ?, 'later', ?)")
       .run(new Date(Date.now() + 864e5).toISOString(), t),
   );
   planner(`export default ({ n }) => n === 0
-    ? { calls: ["tc-chat", "tc-timer", "tc-work", "tc-asks", "tc-moot", "tc-back", "tc-theirs", "tc-unheard"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
+    ? { calls: ["tc-chat", "tc-timer", "tc-work", "tc-asks", "tc-moot", "tc-back", "tc-theirs", "tc-unheard", "tc-spent"].map((id) => ({ name: "task_close", input: { task_id: id, outcome: "done" } })) }
     : { text: "ok" };`);
   const count = batches().length;
   slack.post("C1", { user: "U1", text: "close them" });
   const b = await nextBatch(count);
-  await until(() => toolResults(b).length === 8);
-  const [chat, timer, work, asked, moot, back, theirs, unheard] = toolResults(b);
+  await until(() => toolResults(b).length === 9);
+  const [chat, timer, work, asked, moot, back, theirs, unheard, spent] = toolResults(b);
+  assert.match(String(spent?.output), /invalid: task tc-spent stopped at its budget/);
+  assert.equal(taskRow("tc-spent")?.status, "waiting");
   assert.match(String(chat?.output), /not_found: no task tc-chat/);
   assert.match(String(timer?.output), /invalid: task tc-timer has 1 timer/);
   assert.equal(taskRow("tc-chat")?.status, "waiting");

@@ -206,7 +206,7 @@ define("task_close", {
   roles: planner,
   input: z.object({ task_id: z.string(), outcome: z.enum(["done", "failed"]) }),
   async run({ task_id, outcome }) {
-    const { status } = task(task_id);
+    const { status, error } = task(task_id);
     // it has work in hand: a close at a PR's merge killed the Worker with the owner's last line unanswered and its
     // "pushed to the PR" the last thing said (1 of 4 live). Its result comes here when it ends
     if (status === "running" || status === "queued")
@@ -236,6 +236,10 @@ define("task_close", {
       const on = mergeTarget(path ?? "");
       return !on || !moot.some((p) => p.ref.endsWith(`:${on}`));
     };
+    // the owner was just told it is over budget, and a raise on its card goes on: closed at once, its work was deleted
+    // seconds after that DM (live, round 23 pass D). The end of its every PR still ends it
+    if (error?.startsWith("budget_exceeded") && !(prs.length && over))
+      throw new RpcError("invalid", `task ${task_id} stopped at its budget: the owner decides, leave it open`);
     if (waiting.some((a) => live(a.path)))
       throw new RpcError("invalid", `task ${task_id} has a request waiting for the owner; leave it open`);
     // someone else's end, and the Worker is who tells the owner: with an `ended:` on the card the Planner closed at once,
