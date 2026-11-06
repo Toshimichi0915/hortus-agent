@@ -1,11 +1,12 @@
 /**
  * The console listener: guards, then pages (GET), `POST /api/<method>` (the RPC router, role owner), SSE under
- * `/events/<name>`, and `/static/*`. A method that streams (task.stream) answers 400 here: the web UI reads the same
- * rows over SSE (`/events/chat`), the CLI over the socket.
+ * `/events/<name>`, and `/static/*`; with `HORTUS_WEB=1`, the new UI in place of the pages. A method that streams
+ * (task.stream) answers 400 here: the web UI reads the same rows over SSE (`/events/chat`), the CLI over the socket.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { extname } from "node:path";
 import type { Ctx } from "../ctx.ts";
 import { logger } from "../log.ts";
 import { call, isStream } from "../rpc.ts";
@@ -66,7 +67,23 @@ const TYPES: Record<string, string> = {
   "webauthn.js": "text/javascript",
 };
 
-export function send(res: ServerResponse, status: number, type: string, body: string): void {
+const webDir = new URL("../web/", import.meta.url);
+const ASSET_TYPES: Record<string, string> = { ".js": "text/javascript", ".css": "text/css" };
+
+interface WebApp {
+  index: string;
+  assets: Map<string, Buffer>;
+}
+
+/** `HORTUS_WEB=1`: dist/web, read once here. A request only looks its path up in this list, so none reaches the disk. */
+function webApp(): WebApp | undefined {
+  if (process.env.HORTUS_WEB !== "1") return undefined;
+  const dir = new URL("assets/", webDir);
+  const files = readdirSync(dir).map((f): [string, Buffer] => [`/assets/${f}`, readFileSync(new URL(f, dir))]);
+  return { index: readFileSync(new URL("index.html", webDir), "utf8"), assets: new Map(files) };
+}
+
+export function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
   res.writeHead(status, { ...HEADERS, "Content-Type": `${type}; charset=utf-8` }).end(body);
 }
 
@@ -207,6 +224,7 @@ async function handle(
   ctx: Ctx,
   port: () => number,
   remote: boolean,
+  web: WebApp | undefined,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -265,6 +283,11 @@ async function handle(
     const r = await tryCall<string>("merge.diff", { id: Number(diffm[1]) });
     return r.ok ? send(res, 200, "text/plain", r.value) : send(res, 404, "text/plain", r.error);
   }
+  if (web && !/^\/(?:api|events)(?:\/|$)/.test(path)) {
+    const asset = web.assets.get(path);
+    if (!asset) return send(res, 200, "text/html", web.index);
+    return send(res, 200, ASSET_TYPES[extname(path)] ?? "application/octet-stream", asset);
+  }
   for (const [re, page] of routes) {
     const m = re.exec(path);
     if (m) return send(res, 200, "text/html", await page(ctx, { m: [...m], q: url.searchParams, caller }));
@@ -280,8 +303,9 @@ export interface Console {
 
 /** The request listener of both listeners; `remote` adds the cookie gate (remote.ts) and `console.host` as Host. */
 export function handler(ctx: Ctx, port: () => number, remote: boolean) {
+  const web = webApp();
   return (req: IncomingMessage, res: ServerResponse): void => {
-    handle(ctx, port, remote, req, res).catch((e) => {
+    handle(ctx, port, remote, web, req, res).catch((e) => {
       log.error("request failed", e, { url: req.url });
       if (!res.headersSent) send(res, 500, "text/plain", `error: ${e instanceof Error ? e.message : String(e)}`);
       else res.end();

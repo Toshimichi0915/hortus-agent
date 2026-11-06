@@ -8,4 +8,11 @@ export default defineConfig({
   plugins: [tailwindcss()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: { outDir: "../dist/web", emptyOutDir: true },
+  // changeOrigin: the daemon's Host check wants its own address
+  server: {
+    proxy: {
+      "/api": { target: "http://127.0.0.1:7700", changeOrigin: true },
+      "/events": { target: "http://127.0.0.1:7700", changeOrigin: true },
+    },
+  },
 });

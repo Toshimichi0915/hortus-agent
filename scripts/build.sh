@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build: TypeScript, the Landlock shim (when its source exists), shipped transforms and console static files into dist/.
+# Build: TypeScript, the web UI, the Landlock shim (when its source exists), transforms and console static files into dist/.
 set -e
 cd "$(dirname "$0")/.."
 # a failed tsc leaves dist/ without these, so a stale build is never mistaken for a fresh one
@@ -7,8 +7,9 @@ rm -rf dist/transforms dist/console/static
 # the build info sits outside dist/: without dist/ it would call an empty tree up to date
 [ -d dist ] || rm -f tsconfig.tsbuildinfo
 tsc -b
+vite build web --logLevel error
 # a deleted or renamed source leaves its compiled file behind (a stale test would keep running): drop it
-find dist -name '*.js' ! -path 'dist/transforms/*' ! -path 'dist/console/static/*' | while read -r f; do
+find dist -name '*.js' ! -path 'dist/transforms/*' ! -path 'dist/console/static/*' ! -path 'dist/web/*' | while read -r f; do
   s="src/${f#dist/}"
   [ -f "${s%.js}.ts" ] || rm -f "$f" "$f.map" "${f%.js}.d.ts" "${f%.js}.d.ts.map"
 done
