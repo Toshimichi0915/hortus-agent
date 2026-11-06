@@ -25,7 +25,9 @@ const s = (v: unknown): string => (v === undefined || v === null ? "" : typeof v
 function budget(t: Row): string {
   const b = (t.budget ?? {}) as Row;
   const u = (t.usage ?? {}) as Row;
-  return `${tokens(Number(u.tokens) || 0)}/${tokens(Number(b.tokens) || 0)} tok, ${Math.round(Number(t.hours ?? 0) * 10) / 10}/${s(b.hours) || 0} h`;
+  // usage is written when a session ends; the proxy's count (plus its runs') is the spend so far
+  const used = Math.max(Number(u.tokens) || 0, (Number(t.metered) || 0) + (Number(u.runs) || 0));
+  return `${tokens(used)}/${tokens(Number(b.tokens) || 0)} tok, ${Math.round(Number(t.hours ?? 0) * 10) / 10}/${s(b.hours) || 0} h`;
 }
 
 /** A stream event or a replies row (`{seq, body}`) as one printed line; null for lines the REPL does not show. */

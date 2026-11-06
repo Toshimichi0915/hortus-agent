@@ -83,11 +83,18 @@ export function tokens(n: number): string {
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /** `1.2M / 2.0M tokens, 0.5 / 4 h` from the tasks row's JSON columns. */
-export function budget(row: { budget?: string | null; usage?: string | null; hours?: number | null }): string {
+export function budget(row: {
+  budget?: string | null;
+  usage?: string | null;
+  hours?: number | null;
+  metered?: number | null;
+}): string {
   const b = parse<{ tokens?: number; hours?: number }>(row.budget) ?? {};
-  const u = parse<{ tokens?: number }>(row.usage) ?? {};
+  const u = parse<{ tokens?: number; runs?: number }>(row.usage) ?? {};
   const hrs = Math.round(num(row.hours) * 10) / 10;
-  return `${tokens(num(u.tokens))} / ${tokens(num(b.tokens))} tokens, ${hrs} / ${num(b.hours)} h`;
+  // usage is written when a session ends; the proxy's count (plus what its runs charged) is the spend so far
+  const used = Math.max(num(u.tokens), num(row.metered) + num(u.runs));
+  return `${tokens(used)} / ${tokens(num(b.tokens))} tokens, ${hrs} / ${num(b.hours)} h`;
 }
 
 export const OPEN = ["queued", "running", "waiting"];

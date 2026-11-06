@@ -362,6 +362,11 @@ test("500 tasks render under 200 ms, hostile titles and replies are escaped ever
   const page = await get("/");
   assert.ok(performance.now() - t0 < 200, "tasks page under 200 ms");
   assert.match(page.body, /1\.2M \/ 2\.0M tokens, 0\.5 \/ 4 h/);
+  // live: usage is written when a session ends, so a running one showed 0 (or its last session's) while the proxy had
+  // counted 500k; the proxy's count is what it has spent so far
+  ctx.db.prepare("UPDATE tasks SET metered = 1500000 WHERE id = 't1'").run();
+  assert.match((await get("/tasks/t1")).body, /1\.5M \/ 2\.0M tokens/);
+  ctx.db.prepare("UPDATE tasks SET metered = 0 WHERE id = 't1'").run();
   for (const path of [...ROUTES, "/tasks/t1", "/chat/t1"]) {
     const r = await get(path);
     clean(path, r.body);
