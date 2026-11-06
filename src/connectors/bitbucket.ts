@@ -414,6 +414,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     projects,
 
     async *history(project, cursor) {
+      // null is the first sync (history, not news); "" a later pass on a project that had nothing at its first
+      const later = cursor !== null;
       // BBQL datetimes are unquoted (a quoted value is a string); no `Z` in its grammar, and no offset means UTC
       const q = cursor ? `&q=${encodeURIComponent(`updated_on > ${cursor.replace(/Z$/, "")}`)}` : "";
       const changes: Change[] = [channelChange(await json<Repo>(R(project)))];
@@ -427,19 +429,19 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           if (c.deleted) continue;
           const x = commentChange(project, thread, c);
           const type = kind === "issues" ? "issue:comment_created" : "pullrequest:comment_created";
-          if (cursor) x.heard = await heard(project, thread, type, c.user, c.user, c.content?.raw ?? "", c.created_on);
+          if (later) x.heard = await heard(project, thread, type, c.user, c.user, c.content?.raw ?? "", c.created_on);
           changes.push(x);
         }
       };
       const prHeard = async (pr: Pull): Promise<Change[]> => {
         const open = pr.state === "OPEN";
-        const out = await prTop(project, pr, open, !!cursor && open);
+        const out = await prTop(project, pr, open, later && open);
         const top = out[0];
         const s = pr.state.toLowerCase();
         const type = s === "open" ? "created" : s === "merged" ? "fulfilled" : "rejected";
         const said = [pr.title, pr.description].filter(Boolean).join("\n\n");
         const by = s === "open" ? pr.author : (pr.closed_by ?? pr.author);
-        if (cursor && top)
+        if (later && top)
           top.heard = await heard(project, `!${pr.id}`, `pullrequest:${type}`, by, pr.author, said, pr.updated_on, s);
         return out;
       };
@@ -454,7 +456,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         seen(i.updated_on);
         const top = issueTop(project, i);
         const said = [i.title, i.content?.raw].filter(Boolean).join("\n\n");
-        if (cursor)
+        if (later)
           top.heard = await heard(project, `#${i.id}`, "issue:created", i.reporter, i.reporter, said, i.created_on);
         changes.push(top);
         await comments("issues", i.id, `#${i.id}`);
@@ -476,7 +478,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           const ts = x.participated_on ?? pr.updated_on;
           const c = reviewChange(project, `!${pr.id}`, x.user, ts, x.approved ? "approved" : "changes_requested");
           const type = x.approved ? "pullrequest:approved" : "pullrequest:changes_request_created";
-          if (cursor) c.heard = await heard(project, `!${pr.id}`, type, x.user, undefined, "", ts);
+          if (later) c.heard = await heard(project, `!${pr.id}`, type, x.user, undefined, "", ts);
           changes.push(c);
         }
       }

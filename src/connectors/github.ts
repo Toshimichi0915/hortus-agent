@@ -404,6 +404,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     projects,
 
     async *history(project, cursor) {
+      // null is the first sync (history, not news); "" a later pass on a project that had nothing at its first
+      const later = cursor !== null;
       const since = cursor ? `&since=${encodeURIComponent(cursor)}` : "";
       const changes: Change[] = [channelChange(await json<Repo>(`/repos/${project}`))];
       let max = cursor ?? "";
@@ -424,7 +426,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       // open PRs whole: state, checks, diff, reviews and review comments (CI moves without touching updated_at)
       for (const pr of await all<Pull>(`/repos/${project}/pulls?state=open&per_page=100`)) {
         const t = `!${pr.number}`;
-        changes.push(...(await prTop(project, pr, true, !!cursor)));
+        changes.push(...(await prTop(project, pr, true, later)));
         for (const r of await all<Review>(`/repos/${project}/pulls/${pr.number}/reviews?per_page=100`))
           changes.push(reviewChange(project, t, r));
         for (const c of await all<Comment>(`/repos/${project}/pulls/${pr.number}/comments?per_page=100`))

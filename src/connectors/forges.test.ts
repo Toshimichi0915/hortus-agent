@@ -1024,6 +1024,29 @@ for (const h of H) {
     assert.equal(ciRows(file).length, 1, "once");
   });
 
+  test(`${dof}: a project empty at its first sync: the next pass routes what it missed, a CI result and an issue (cursor "")`, async () => {
+    const sha = await h.commit("hortus/ci-empty", "ci-empty.txt", "1\n");
+    const pr = await h.openPR("toshi", "CI after an empty backfill", "hortus/ci-empty", "diff --git a/e b/e\n");
+    const t = `!${pr.n}`;
+    const file = `${D}/${t}/${t}.md`;
+    await until(() => fm(dof, file), 3000, "the PR");
+    db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:${t}`);
+    // live 2026-11-06: the backfill found nothing, so the cursor is "", and the next pass took itself for a first sync
+    db.prepare("UPDATE syncs SET cursor = '' WHERE dof = ? AND scope = ?").run(dof, P);
+    await unseen(sha, "failure");
+    // and the owner's issue a dropped hook lost: mirrored by that pass unrouted, the next pass found it known, for good
+    const lost = await h.openIssue("toshi", "Dropped after an empty backfill", "lost", true);
+    await gw.reconcile(dof, P);
+    assert.equal(ciRows(file).length, 1, "routed");
+    if (dof !== "github") {
+      await gw.reconcile(dof, P);
+      const r = db
+        .prepare("SELECT 1 FROM events WHERE dof = ? AND key LIKE ?")
+        .get(dof, `history:${D}/#${lost.n}/#${lost.n}.md:%`);
+      assert.ok(r, "the issue routed");
+    }
+  });
+
   test(`${dof}: projects() filtered by repos`, async () => {
     for (const [globs, want] of h.globs) {
       const conn = (await connectors[dof]?.({

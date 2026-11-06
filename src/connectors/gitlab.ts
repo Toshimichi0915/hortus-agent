@@ -462,6 +462,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     projects,
 
     async *history(project, cursor) {
+      // null is the first sync (history, not news); "" a later pass on a project that had nothing at its first
+      const later = cursor !== null;
       const after = cursor ? `&updated_after=${encodeURIComponent(cursor)}` : "";
       const changes: Change[] = [channelChange(await json<Project>(P(project)))];
       let max = cursor ?? "";
@@ -473,20 +475,20 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         for (const n of await all<Note>(`${P(project)}/${kind}/${iid}/notes?per_page=100`)) {
           const c = noteChange(project, thread, n, n.author?.username ?? "");
           // a system note is the forge's own line: no hook sends one
-          if (cursor && !n.system)
+          if (later && !n.system)
             c.heard = await heard(project, thread, "note", n.author, n.author, n.body ?? n.note ?? "", n.created_at);
           changes.push(c);
         }
       };
       const prHeard = async (mr: MR): Promise<Change[]> => {
         const open = mr.state === "opened";
-        const out = await prTop(project, mr, open, !!cursor && open);
+        const out = await prTop(project, mr, open, later && open);
         const top = out[0];
         const s = state(mr.state);
         const by = s === "merged" ? (mr.merge_user ?? mr.merged_by) : s === "closed" ? mr.closed_by : mr.author;
         const act = s === "merged" ? "merge" : s === "closed" ? "close" : "open";
         const said = [mr.title, mr.description].filter(Boolean).join("\n\n");
-        if (cursor && top)
+        if (later && top)
           top.heard = await heard(project, `!${mr.iid}`, `merge_request.${act}`, by, mr.author, said, mr.updated_at, s);
         return out;
       };
@@ -494,7 +496,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         seen(i.updated_at);
         const top = issueTop(project, i);
         const said = [i.title, i.description].filter(Boolean).join("\n\n");
-        if (cursor) top.heard = await heard(project, `#${i.iid}`, "issue.open", i.author, i.author, said, i.created_at);
+        if (later) top.heard = await heard(project, `#${i.iid}`, "issue.open", i.author, i.author, said, i.created_at);
         changes.push(top);
         await notes("issues", i.iid, `#${i.iid}`);
       }
@@ -508,7 +510,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       for (const mr of await all<MR>(`${P(project)}/merge_requests?state=opened&per_page=100`)) {
         changes.push(...(await prHeard(mr)));
         await notes("merge_requests", mr.iid, `!${mr.iid}`);
-        changes.push(...(await approvals(project, mr, !!cursor)));
+        changes.push(...(await approvals(project, mr, later)));
       }
       yield { changes, cursor: max };
     },
