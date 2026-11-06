@@ -1,5 +1,5 @@
 #!/bin/sh
-# The Worker VM image (docs/design/13-worker-vm.md): $HORTUS_HOME/images/{agent.ext4,initramfs.img,vmlinuz}.
+# The Worker VM image: $HORTUS_HOME/images/{agent.ext4,initramfs.img,vmlinuz}.
 # Run as root (`sudo hortus image build [--no-browser]`). Idempotent: every run rebuilds from scratch in a temp dir and
 # replaces the three files at the end. Needs a built tree (`pnpm build`) and the hortus CA ($HORTUS_HOME/ca/ca.crt).
 set -eu

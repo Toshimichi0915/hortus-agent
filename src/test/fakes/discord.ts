@@ -1,5 +1,5 @@
 /**
- * Fake Discord (16-discord-telegram.md › Fakes): the REST routes the connector uses under `/api/v10`, attachment
+ * Fake Discord: the REST routes the connector uses under `/api/v10`, attachment
  * downloads, and the gateway WebSocket at `/gateway` (HELLO, heartbeat ACK, IDENTIFY with a token check, READY and
  * GUILD_CREATE, dispatches with increasing `s` per session, RESUME replaying what the session missed, INVALID_SESSION).
  * The test handle mirrors the Slack fake's (`post`, `edit`, `delete`, `react`, `join`, `replay`, `disconnect`).

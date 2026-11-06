@@ -49,7 +49,7 @@ export function search(q: SearchQuery, only?: string[]): SearchHit[] {
 }
 
 /**
- * The hits a Worker must not read as the owner's (v7 › Review round 6), as `<dof>:<author> (untrusted)`: a connector
+ * The hits a Worker must not read as the owner's, as `<dof>:<author> (untrusted)`: a connector
  * DOF's author its trust rule does not trust (no author, a bot's file, a stranger), a session log of a tainted task.
  * `transforms` is the owner's (approved code), a `channel.md` hortusd's rendering (`channelMeta`). ponytail: a `members` DOF trusts an author only if an event of theirs was
  * from a member (the index keeps no membership); the trust rule is the gateway's.

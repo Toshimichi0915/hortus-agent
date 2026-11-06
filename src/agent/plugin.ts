@@ -1,6 +1,6 @@
 /**
  * The task plugin: what a Worker is (its prompt and tools). How a run is observed (session, stdout, aborts) is the
- * loop's own plugin, shared with the planner kind (15-planner.md), which swaps only this one.
+ * loop's own plugin, shared with the planner kind, which swaps only this one.
  */
 import type { Plugin } from "@hortus/core";
 import type { TaskJson } from "../types.ts";

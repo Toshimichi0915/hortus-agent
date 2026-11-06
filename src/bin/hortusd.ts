@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     wake: wakePlanner,
   });
   // a non-chat Worker's result or budget_exceeded is Planner input
-  // (an empty `done("")` reports nothing: v7 › Schedules › Empty result)
+  // (an empty `done("")` reports nothing)
   exitHooks.onResult = (t, m) => {
     if (t.kind !== "chat" && m.text) wakePlanner();
   };

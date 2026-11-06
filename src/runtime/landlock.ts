@@ -1,5 +1,5 @@
 /**
- * Landlock profile builder (docs/design/04-host-sandbox.md, hortus_v7.md › Security). Output is the line protocol the
+ * Landlock profile builder. Output is the line protocol the
  * shim (native/landlock.c) reads on fd 3. Landlock has no deny rule, so the domain is built by granting every entry
  * along the way to a denied path except the denied one: what is created later under a walked directory is unreachable.
  */
@@ -60,7 +60,7 @@ function resolve(p: string): string {
 const under = (p: string, d: string): boolean => p === d || p.startsWith(d === "/" ? "/" : `${d}/`);
 
 /** ponytail: a chat has the owner's reach and a list of stores cannot be complete (an unattended session is shown what is
- * listed instead: `HOME_READ`). These are the common ones: agents, wallets, app profiles, histories (v7 › Round 16). */
+ * listed instead: `HOME_READ`). These are the common ones: agents, wallets, app profiles, histories. */
 const STORES =
   `.claude .claude.json .codex .gemini .copilot .1password .electrum .electrum-ravencoin .bitcoin .monero Monero
   .thunderbird .pulumi .terraform.d .vault-token .s3cfg .boto .config/rclone .config/op .config/1Password .config/Claude
@@ -68,7 +68,8 @@ const STORES =
   .config/google-chrome-beta .config/microsoft-edge .config/vivaldi .bash_history .zsh_history .psql_history .mysql_history
   .local/share/fish/fish_history .mariadb_history .python_history .node_repl_history`.split(/\s+/);
 
-/** The deny set: v7's list, the real ~/.hortus, HORTUS_HOME, and `policy.deny`, as resolved absolute paths. */
+/** The deny set: the credential stores below, the real ~/.hortus, HORTUS_HOME, and `policy.deny`,
+ * as resolved absolute paths. */
 export function denySet(config: Pick<Config, "policy">): string[] {
   const h = homedir();
   const uid = process.getuid?.() ?? 0;
@@ -92,7 +93,7 @@ export function denySet(config: Pick<Config, "policy">): string[] {
     "/var/run/docker.sock",
     "/run/libvirt", // the `libvirt` group is root, as `docker` is
     "/sys/fs/cgroup",
-    // v7 lists bus and keyring; the whole runtime dir also hides systemd/private (systemd-run --user = escape),
+    // bus and keyring are listed; the whole runtime dir also hides systemd/private (systemd-run --user = escape),
     // gnupg and ssh-agent sockets, which a session could otherwise connect to.
     `/run/user/${uid}`,
     ...(config.policy.deny ?? []),
@@ -142,7 +143,7 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   }
 }
 
-/** All an unattended session sees of `$HOME`: where toolchains install, none a credential store (v7 › Review round 16).
+/** All an unattended session sees of `$HOME`: where toolchains install, none a credential store.
  * Not `.gitconfig`: git takes a hidden one silently, but dies on a shown one's `include` of a hidden file. */
 export const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/mise .local/share/fnm .local/share/pipx
   .local/share/uv/python .local/share/uv/tools .nvm .fnm .volta .asdf .tool-versions .pyenv .rbenv .rustup .cargo/bin
@@ -189,7 +190,7 @@ export function profile(
   if (kind === "unattended") {
     for (const p of [own, process.execPath, ...HOME_READ.map((e) => join(home, e)), ...(config.policy.read ?? [])])
       if (p && existsSync(p)) grant(resolve(p), "ro", [...deny, ...others], out);
-    // ponytail: no /tmp (v7 › Host): what a session writes there any other can read and nothing removes, so TMPDIR is
+    // ponytail: no /tmp: what a session writes there any other can read and nothing removes, so TMPDIR is
     // out/tmp and a tool that hardcodes /tmp gets EACCES; `policy.cache: ["/tmp"]` gives it back, with the leak
     for (const p of [...RW_DEV, ...(config.policy.cache ?? [])])
       if (existsSync(p)) grant(resolve(p), "rn", denyRw, out);

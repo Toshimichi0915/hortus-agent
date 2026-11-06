@@ -1,4 +1,4 @@
-/** The Worker's stdout: one JSON line per StdoutLine (v7 Chat). hortusd relays chat ones, logs the rest. */
+/** The Worker's stdout: one JSON line per StdoutLine. hortusd relays chat ones, logs the rest. */
 import type { Message } from "@hortus/core";
 import type { StdoutLine } from "../types.ts";
 

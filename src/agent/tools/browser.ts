@@ -1,4 +1,4 @@
-/** The `browser` feature (14-browser.md): seven CDP tools and `browser_login`, over one BrowserSession per process. */
+/** The `browser` feature: seven CDP tools and `browser_login`, over one BrowserSession per process. */
 import { join } from "node:path";
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";

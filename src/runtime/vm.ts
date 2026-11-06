@@ -1,5 +1,5 @@
 /**
- * A VM task (docs/design/13-worker-vm.md): QEMU microvm with the host kernel, `images/agent.ext4` under `-snapshot`,
+ * A VM task: QEMU microvm with the host kernel, `images/agent.ext4` under `-snapshot`,
  * one virtiofsd per share, a tap link to the proxy. QEMU and the virtiofsds live in the task's cgroup; `kill()` is
  * `cgroup.kill`. `HORTUS_NO_NET=1` swaps the tap for `-netdev user` (boot-only: no proxy, no rules, no links row).
  */
@@ -95,7 +95,7 @@ export function vmTaskJson(task: TaskJson): TaskJson {
 }
 
 /**
- * The virtiofsd command for a share. A share with `only` (the DOF root, v7 › Review round 7) shares `view` instead: one
+ * The virtiofsd command for a share. A share with `only` (the DOF root) shares `view` instead: one
  * empty directory per readable DOF, each the DOF's worktree bind-mounted read-only inside an unprivileged user and mount
  * namespace (the host never sees the mounts), then a nested user namespace gives virtiofsd back the owner's uid, so it
  * runs as an unwrapped one does. microvm has 8 virtio-mmio slots and 7 are taken: one share per DOF does not fit.

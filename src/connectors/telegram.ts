@@ -1,5 +1,5 @@
 /**
- * Telegram: `getUpdates` long poll, no history (16-discord-telegram.md). The token rides as a path segment,
+ * Telegram: `getUpdates` long poll, no history. The token rides as a path segment,
  * `/bothortus-secret-<name>/…`, which the `telegram` transform maps to `path:/bot{}/`; this module never sees it.
  */
 import type { Change, Connector, ConnectorDeps, ConnectorStatus, Event, Mirrored } from "../types.ts";

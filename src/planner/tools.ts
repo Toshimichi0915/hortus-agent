@@ -1,5 +1,5 @@
 /**
- * The Planner's verdicts as RPCs (15-planner.md › RPC handlers), role `planner` only: the proxy stamps the role from
+ * The Planner's verdicts as RPCs, role `planner` only: the proxy stamps the role from
  * the session's link, so a Worker calling these gets `forbidden`. A new verdict is one `define()` here and a line in
  * the planner plugin's prompt.
  */
@@ -39,7 +39,7 @@ function task(id: string): tasks.TaskRow {
 }
 
 /**
- * Why the calling batch is tainted for the tasks it writes to (v7 › Review round 6): its untrusted events, its results
+ * Why the calling batch is tainted for the tasks it writes to: its untrusted events, its results
  * from tainted tasks. A brief or note is the Planner's own text, so a stranger's instruction in the same batch may be
  * in it; undefined: the batch held owner-vouched input only (the open-task list aside, data in the prompt).
  */
@@ -117,7 +117,7 @@ define("task_create", {
     const names = new Set(Object.keys(readVault()));
     for (const n of scope.credentials ?? [])
       if (!names.has(n)) throw new RpcError("invalid", `unknown credential ${n}`);
-    // v7: without the image a project-less task runs on the host only when the owner said so, and the dispatcher does
+    // without the image a project-less task runs on the host only when the owner said so, and the dispatcher does
     // that per start, so the same task boots a VM once the image is built
     if (project === undefined && missingImage() && c.vm.fallback_host !== true)
       throw new RpcError("failed", NO_IMAGE);
@@ -130,7 +130,7 @@ define("task_create", {
       scope: {
         ...(scope.credentials ? { credentials: scope.credentials } : {}),
         repos,
-        // v7 › Review round 7: none unless the Planner asks (the brief carries the events)
+        // none unless the Planner asks (the brief carries the events)
         dofs: scope.dofs ?? [],
       },
       ...(project !== undefined ? { project } : {}),
@@ -150,7 +150,7 @@ define("task_attach", {
   run({ task_id, event_ids }) {
     const evs = events(event_ids);
     // a reply in a thread a chat posted in is routed to it (v6 › Chat), and starts it with nobody watching, on the
-    // owner's files: so not a stranger's (v7 › Review round 22)
+    // owner's files: so not a stranger's
     if (tasks.get(task_id).kind === "chat") {
       const other = evs.find((e) => !e.trusted);
       if (other) throw new RpcError("forbidden", `untrusted event e${other.id}: a chat takes trusted events only`);

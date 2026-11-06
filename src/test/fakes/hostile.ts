@@ -131,7 +131,7 @@ function get(
         method: o.method ?? "GET",
         path: o.path ?? "/",
         // not the global agent: its SO_KEEPALIVE at 1 s, 10 probes, on 2,640 sockets dropped its own probes on a loaded
-        // loopback and the kernel ended a search with ETIMEDOUT (v7 › Review round 12 — the runs)
+        // loopback and the kernel ended a search with ETIMEDOUT
         agent: false,
       },
       (res) => {

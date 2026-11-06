@@ -1,5 +1,5 @@
 /**
- * The step-6 forge flow, parameterized by forge (18-gitlab-bitbucket.md › Functional tests), against the fake GitHub,
+ * The step-6 forge flow, parameterized by forge, against the fake GitHub,
  * GitLab and Bitbucket at once: one gateway, one webhook listener, the real mirror writer, vault and proxy pipeline
  * (HORTUS_NO_NET=1, ephemeral ports). Workers are loopback clients: 127.0.0.2 (REST) and 127.0.0.5 (git, reached
  * through `http.curloptResolve`). GitHub-only behaviour (installation tokens, the delivery log) is in github.test.ts.
@@ -831,7 +831,7 @@ for (const h of H) {
     await until(() => onHead(D2.sha), 3000, "a push after the approval");
     const landed = await merge();
     if (!h.pinned) {
-      // the recorded ceiling (v7 › Review round 10 — flows): the owner was told
+      // the recorded ceiling: the owner was told
       assert.equal(landed.status, 200);
       return;
     }

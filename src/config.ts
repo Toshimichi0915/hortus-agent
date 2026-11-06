@@ -1,5 +1,5 @@
 /**
- * hortusd.json (hortus_v6.md › Config, hortus_v7.md › Config additions). Every object is loose: keys this version does
+ * hortusd.json (hortus_v6.md › Config). Every object is loose: keys this version does
  * not know survive a load/save round trip. A new key is one line here with a default.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import * as paths from "./paths.ts";
 
-// ponytail: copy of @hortus/core's EFFORTS, so hortusd never imports core (core reads homedir() at import, v7 › Process)
+// ponytail: copy of @hortus/core's EFFORTS, so hortusd never imports core (core reads homedir() at import)
 const Effort = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 const Mode = z.enum(["human", "auto"]);
 const Strings = z.array(z.string());
@@ -71,7 +71,7 @@ export const Config = z.looseObject({
       effort: Effort.default("low"),
       batch_max: z.number().int().positive().default(50),
       daily_tokens: z.number().int().nonnegative().default(5e6),
-      /** unset: a VM once the image is there, the host until then (v7 › Config) */
+      /** unset: a VM once the image is there, the host until then */
       runtime: z.enum(["host", "vm"]).optional(),
     })
     .prefault({}),
@@ -95,14 +95,14 @@ export const Config = z.looseObject({
       cpus: z.number().int().positive().default(2),
       mem_mb: z.number().int().positive().default(4096),
       max_concurrent: z.number().int().positive().default(4),
-      /** the guest's hortus-agent must write out/booted this long after QEMU starts, else the VM is killed (v7) */
+      /** the guest's hortus-agent must write out/booted this long after QEMU starts, else the VM is killed */
       boot_timeout_s: z.number().positive().default(120),
-      /** image missing: run VM-destined tasks as unattended host sessions (true) or keep them queued (v7) */
+      /** image missing: run VM-destined tasks as unattended host sessions (true) or keep them queued */
       fallback_host: z.boolean().default(true),
     })
     .prefault({}),
   chat: z.looseObject({ allow: Strings.default([]) }).prefault({}),
-  /** the proxy's listener ports on every address; nftables DNATs 443/80/53 to them (v7 › Security › Network) */
+  /** the proxy's listener ports on every address; nftables DNATs 443/80/53 to them */
   proxy: z
     .looseObject({
       https: z.number().int().min(0).max(65535).default(8443),
@@ -119,7 +119,7 @@ export const Config = z.looseObject({
     .optional(),
   projects: z.record(z.string().regex(PROJECT_NAME, PROJECT_NAME_HINT), ProjectConfig).default({}),
   /** category (`credential:<name>`, `*`, …) → `human` | `auto`, plus the Landlock extensions `deny`, `cache` and `read`
-   * (absolute paths, v7 › Security). Read per request: a Settings edit applies to the next one. */
+   * (absolute paths). Read per request: a Settings edit applies to the next one. */
   policy: z
     .object({ deny: Paths.optional(), cache: Paths.optional(), read: Paths.optional() })
     .catchall(Mode)

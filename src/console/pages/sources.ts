@@ -11,7 +11,7 @@ import { button, error, h, layout, type Page, type Raw, time, tryCall } from "..
 /** Where the webhook listener is: its bound port, else the one it will try (webhooks.ts). */
 const hook = () => `http://127.0.0.1:${localWebhook.port || Number(process.env.HORTUS_WEBHOOK_PORT ?? 7701)}`;
 
-/** A forge's rows (17-github.md): installation, deliveries, the redelivery check, the URL to give the App. */
+/** A forge's rows: installation, deliveries, the redelivery check, the URL to give the App. */
 function forgeRows(ctx: Ctx, name: string): Raw {
   const e = readVault()[name];
   const inst =
@@ -34,7 +34,7 @@ function forgeRows(ctx: Ctx, name: string): Raw {
   }`;
 }
 
-/** GitLab and Bitbucket (18-gitlab-bitbucket.md): where the token is made and which header carries the secret. */
+/** GitLab and Bitbucket: where the token is made and which header carries the secret. */
 const STATIC_FORGES: Record<string, { token: string; header: string; host?: string }> = {
   gitlab: {
     token: "project access token (or group access token), scope api, role Developer",

@@ -1,5 +1,5 @@
 /*
- * hortus-landlock: hortus-landlock -- <cmd> [args...] with a profile on fd 3 (docs/design/04-host-sandbox.md).
+ * hortus-landlock: hortus-landlock -- <cmd> [args...] with a profile on fd 3.
  *   cgroup <dir>                 write our pid to <dir>/cgroup.procs (before the domain hides /sys/fs/cgroup)
  *   ro <path> | rw <path>        grant read / read+write beneath <path> (missing path: skipped)
  *   rn <path>                    read+write without RESOLVE_UNIX: shared trees (/tmp) hold other daemons' sockets

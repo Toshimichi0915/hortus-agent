@@ -29,7 +29,7 @@ export async function taskRpc<T>(base: string, method: string, input: unknown): 
 
 /**
  * HORTUS_NO_NET=1 (tests): no DNS or DNAT for hortusd.internal, so the request goes to the proxy's plain listener on
- * 127.0.0.1 from the session's loopback alias, which is how the proxy knows the task (v7 › Security › HORTUS_NO_NET).
+ * 127.0.0.1 from the session's loopback alias, which is how the proxy knows the task.
  */
 function loopback(
   url: string,

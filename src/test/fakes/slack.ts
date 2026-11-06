@@ -1,5 +1,5 @@
 /**
- * Fake Slack (02-slack-gateway.md › Fake Slack): the Web API methods the connector uses, file downloads and Socket
+ * Fake Slack: the Web API methods the connector uses, file downloads and Socket
  * Mode on one port, in-memory state. The test handle (`post`, `edit`, `delete`, `react`, `join`, `replay`,
  * `disconnect`) mutates state and emits the matching event; it is the template for the other fakes.
  */

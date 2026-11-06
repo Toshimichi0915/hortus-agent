@@ -2,8 +2,8 @@
 import { read as readVault } from "./vault.ts";
 
 /**
- * A vault credential's transform → core's provider type and the API base on the credential's host (v7 › Secret Vault ›
- * Worker provider). Any other transform name is used as the type itself with no endpoint (tests: `fake`).
+ * A vault credential's transform → core's provider type and the API base on the credential's host.
+ * Any other transform name is used as the type itself with no endpoint (tests: `fake`).
  */
 const PROVIDERS: Record<string, { type: string; host: string; path: string }> = {
   anthropic: { type: "anthropic", host: "api.anthropic.com", path: "" },

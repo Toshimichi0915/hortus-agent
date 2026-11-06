@@ -1,5 +1,5 @@
 /**
- * Step 2 done-when (docs/build-order.md, 03-vault-proxy.md › Functional tests): the connector syncs through the
+ * Step 2 done-when: the connector syncs through the
  * pipeline as role core with placeholders only; a client at a session address is refused a raw token, and a
  * placeholder request waits for the owner's decision on the console, passes once, then waits again.
  *

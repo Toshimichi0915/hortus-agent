@@ -1,5 +1,5 @@
 /**
- * The two tool-less calls (v7 Process): the summary after the loop and the handoff note when the context fills.
+ * The two tool-less calls: the summary after the loop and the handoff note when the context fills.
  * Direct `provider.complete` with `tools: []`, because core's `run` always passes every tool.
  */
 

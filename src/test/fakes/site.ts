@@ -1,5 +1,5 @@
 /**
- * A fake website for the browser tests (14-browser.md › Functional tests), plain HTTP, reached through `dev.upstreams`
+ * A fake website for the browser tests, plain HTTP, reached through `dev.upstreams`
  * under any host name. `/set` sets `session=secret123`; `/login` is a form whose password is hashed in page JS before
  * it is posted (so a placeholder in the field cannot work: the login view is the only way in); `/me` says who is signed
  * in; `/echo` puts the request's Cookie header into the page; `/api/token` returns a bearer token in a JSON body that

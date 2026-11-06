@@ -1,5 +1,5 @@
 /**
- * Second visits on a real daemon (HORTUS_NO_NET=1, user scope; v7 › Review round 17): what round 16 only read. A chat
+ * Second visits on a real daemon (HORTUS_NO_NET=1, user scope): what round 16 only read. A chat
  * reopened after a restart, also mid-turn; a project moved, renamed, removed and re-added with an open task; a transform
  * resubmitted while an older version is pending. The fake provider plays directive lines as in projects.test.ts.
  */

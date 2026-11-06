@@ -1,5 +1,5 @@
 /**
- * Step 4 (15-planner.md › Functional tests, the parts that need no live model): the real daemon (HORTUS_NO_NET=1) in
+ * Step 4 (the parts that need no live model): the real daemon (HORTUS_NO_NET=1) in
  * a delegated user scope like step3.test.ts, the fake Slack behind `dev.upstreams`, and a fake provider shipped
  * through `worker.plugins`. Workers act on directive lines (`!done <summary>`, as in step 3); a Planner batch
  * (`planner-<n>`) calls `<fake>/planner.mjs`'s default export, re-imported per call, so each test scripts the
@@ -659,7 +659,7 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
     );
     assert.equal(taskRow(over)?.status, "waiting");
 
-    // a run's done(""): an empty result is no Planner input (v7 › Schedules › Empty result)
+    // a run's done(""): an empty result is no Planner input
     db((d) =>
       d
         .prepare("INSERT INTO outbox(task_id, seq, body, created) VALUES (?, 99, ?, ?)")
@@ -938,7 +938,7 @@ test("no project and no VM image: task_create fails with the doc's message; the 
     if (n === 1 && results[0].isError) return { calls: [{ name: "event_ignore", input: { event_ids: [events[0].id], reason: results[0].output } }] };
     return { text: "ok" };
   };`);
-  // the v7 default runs image-less tasks on the host; this test wants the refusal
+  // the default runs image-less tasks on the host; this test wants the refusal
   await configure((c) => {
     c.vm = { ...(c.vm ?? {}), fallback_host: false };
   });

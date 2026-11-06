@@ -1,5 +1,5 @@
 /**
- * Step 4b's done-when, "the step-4 flow runs on each" (16-discord-telegram.md › Functional tests): one real daemon
+ * Step 4b's done-when, "the step-4 flow runs on each": one real daemon
  * (HORTUS_NO_NET=1, delegated user scope, as step4.test.ts) with both connectors on fakes behind `dev.upstreams`
  * (Discord's gateway through the `ws:text` relay) and a fake provider through `worker.plugins`. Each test runs on each
  * messenger: the Planner is scripted by `<fake>/planner.mjs`; a Worker's reply is `!bash sh <fake>/<dof>.sh …`, a curl

@@ -1,9 +1,9 @@
 /**
- * Forge repo mirrors (17-github.md, v6 › Projects › Forge origin): one bare read cache per project at
+ * Forge repo mirrors (v6 › Projects › Forge origin): one bare read cache per project at
  * `repos/<dof>/<owner__repo>.git`, fetched on push events and the 10-min poll, never pruned, `gc.auto 0`. Workers
  * clone with `--reference` to it; it is never a push target.
  *
- * hortusd's own `git fetch` goes through the pipeline as role core like every other upstream call (v7 › Projects):
+ * hortusd's own `git fetch` goes through the pipeline as role core like every other upstream call:
  * git talks plain HTTP to a one-shot loopback relay that hands each request to `coreFetch` as
  * `https://<host>/<project>.git/…`, so the placeholder in the URL becomes the read-only core installation token in
  * the same place as for a Worker. The relay answers only requests carrying its random token (a header from git's environment) and only this project's upload-pack paths.

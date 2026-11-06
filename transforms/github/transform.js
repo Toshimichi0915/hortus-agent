@@ -1,4 +1,4 @@
-// GitHub (17-github.md): the placeholder `hortus-secret-<name>` rides as `Authorization: Bearer|token …` (REST) or as
+// GitHub: the placeholder `hortus-secret-<name>` rides as `Authorization: Bearer|token …` (REST) or as
 // the Basic password (git over HTTPS, through insteadOf); both become an installation token hortusd mints for the
 // caller's repos. The delivery log (`GET /app/hook/deliveries`) is the one App-JWT endpoint.
 const PH = /^hortus-secret-([a-z0-9][a-z0-9_-]*)$/;

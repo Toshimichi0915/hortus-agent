@@ -1,5 +1,5 @@
 /**
- * Fake Telegram Bot API (16-discord-telegram.md › Fakes): `/bot<token>/<method>` and `/file/bot<token>/<path>`, a
+ * Fake Telegram Bot API: `/bot<token>/<method>` and `/file/bot<token>/<path>`, a
  * `getUpdates` long poll whose `offset` confirms (drops) earlier updates, `sendMessage` (a private chat only after its
  * user has messaged the bot), `getChatMember`, `getFile` (≤ 20 MB). The test handle mirrors the Slack fake's (`post`,
  * `edit`, `delete`, `react`, `join`, `replay`, `disconnect`). Like the real API, the bot's own messages are not updates.

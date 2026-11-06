@@ -59,7 +59,7 @@ export async function load(
 
 /**
  * Forge manifests: `{host}`/`{api}` in hosts, `scope` and `consequential` become one entry per DOF of the manifest's
- * type (its `host`, its `api` or `vars.host_api` for that host), else `vars` (v7 › Secret Vault). Hosts keep the host.
+ * type (its `host`, its `api` or `vars.host_api` for that host), else `vars`. Hosts keep the host.
  */
 function expand(m: Manifest): Manifest {
   const vars = m.vars;

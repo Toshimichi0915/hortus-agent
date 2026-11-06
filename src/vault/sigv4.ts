@@ -1,5 +1,5 @@
 /**
- * AWS Signature Version 4 as built-in operations (12-transforms-dof.md): `{sign:aws-sigv4({"name":…,"region":…,
+ * AWS Signature Version 4 as built-in operations: `{sign:aws-sigv4({"name":…,"region":…,
  * "service":…})}` as the `Authorization` value and `{sign:aws-date("<name>")}` for `x-amz-date`. The signature is
  * computed here over the final request, so the secret never enters the sandbox.
  */

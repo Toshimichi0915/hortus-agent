@@ -1,5 +1,5 @@
 /**
- * The remote console listener (10-remote-console.md): HTTPS on `console.listen` with `console.tls` or a leaf minted
+ * The remote console listener: HTTPS on `console.listen` with `console.tls` or a leaf minted
  * from the hortus CA for `console.host`, the same pages behind a passkey login. `gate()` runs inside the shared
  * request handler (server.ts) after the Host and Sec-Fetch-Site guards; it answers the login, enrolment and WebAuthn
  * requests itself and lets a request through only with a live `__Host-hortus` session.

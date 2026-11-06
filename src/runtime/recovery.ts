@@ -1,5 +1,5 @@
 /**
- * Recovery at start (07-step3-runtime.md › Recovery): processes and tasks left by a crash, stale session links and
+ * Recovery at start: processes and tasks left by a crash, stale session links and
  * cgroups. Stale `hortus:` nftables rules, taps and addresses are flushed by the runtime module (net.flushStale);
  * pending approvals stay; the gateway's reconcile runs at its own start.
  */

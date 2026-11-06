@@ -1,5 +1,5 @@
 /**
- * Step 1 done-when (docs/build-order.md): a Slack message is a file on `main` within seconds and `dof search` finds it.
+ * Step 1 done-when: a Slack message is a file on `main` within seconds and `dof search` finds it.
  * Runs the real daemon (HORTUS_NO_NET=1) and the fake Slack through the pipeline (`dev.upstreams`).
  */
 import assert from "node:assert/strict";

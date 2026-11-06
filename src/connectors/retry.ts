@@ -1,4 +1,4 @@
-/** Reconnect backoff shared by connectors and the gateway: 1 s doubling to 60 s (hortus_v7.md › Gateway and Connectors). */
+/** Reconnect backoff shared by connectors and the gateway: 1 s doubling to 60 s. */
 import { setTimeout as wait } from "node:timers/promises";
 
 export const backoff = (attempt: number): number => Math.min(1000 * 2 ** attempt, 60_000);

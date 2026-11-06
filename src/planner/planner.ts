@@ -1,5 +1,5 @@
 /**
- * The Planner's batch loop (docs/design/15-planner.md): `wake()` (gateway, a non-chat result, recovery, unpause) →
+ * The Planner's batch loop: `wake()` (gateway, a non-chat result, recovery, unpause) →
  * after 2 s one batch of unconsumed events and results, marked consumed before the run, rendered by `renderBatch` as
  * the one user message of a one-shot `planner` session (`tasks/planner-<n>/`, deleted after the run). Guards: PAUSED,
  * `planner.daily_tokens`. The verdicts come back as RPCs (tools.ts).
@@ -98,7 +98,7 @@ const anything = (): boolean =>
     )
     .get() !== undefined;
 
-/** v6: a fresh VM per batch; the host until the image is there, or when the owner says so (v7 › Config). */
+/** v6: a fresh VM per batch; the host until the image is there, or when the owner says so. */
 export const plannerRuntime = (c: Config, missing: string | null = missingImage()): "host" | "vm" =>
   c.planner.runtime ?? (missing ? "host" : "vm");
 
@@ -149,7 +149,7 @@ interface PrEnd {
   trusted: number;
 }
 
-/** The batch's one user message (15-planner.md › Input). The fixed system prompt is the planner plugin's. */
+/** The batch's one user message. The fixed system prompt is the planner plugin's. */
 /** Each PR/MR of a task (a `!<n>` in its refs) and its end, if its last turn is one (a reopening undoes it). A ref the
  * task only commented on counts too, and its PR may stay open: then the task reads as not ended, the safe side.
  * ponytail: a scan of `events` per PR of an open task, each batch; an index on `refs` if open PRs ever number hundreds. */
@@ -281,7 +281,7 @@ async function batch(): Promise<boolean> {
        ORDER BY o.created`,
     )
     .all() as unknown as (ResultRow & { seq: number })[];
-  // v7 › Review round 8: a tainted task's result taints every task the batch creates (tools.ts › batchTaint), and on
+  // a tainted task's result taints every task the batch creates (tools.ts › batchTaint), and on
   // a busy day nearly every batch carries one; so with events waiting, those results get the next batch of their own
   // (events wait for it, so a steady stream of events cannot hold results back for more than one batch). Not when a
   // stranger's event taints these events anyway: a second batch would keep nothing clean and spend daily_tokens
@@ -369,7 +369,7 @@ async function batch(): Promise<boolean> {
 /**
  * What a dead batch left without a verdict goes back in the queue: a provider's blip or a restart during its half a
  * minute took an order with it, and nothing reads an event again. RETRIES bounds it: a batch that dies on what it holds
- * must not run for ever (v7 › Review round 22).
+ * must not run for ever.
  */
 function release(c: Ctx, n: number): void {
   c.db.prepare("UPDATE events SET consumed = 0 WHERE consumed = ? AND task_id IS NULL AND ignored IS NULL").run(n);

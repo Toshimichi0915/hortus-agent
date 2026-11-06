@@ -1,4 +1,4 @@
-// The browser layer (14-browser.md): runs for every host without a credential transform and for site manifests (a
+// The browser layer: runs for every host without a credential transform and for site manifests (a
 // manifest with `captures`). Placeholders `hortus-secret-c-<id>` in `Cookie` and `Authorization: Bearer` become
 // handles; `Set-Cookie` values (and the body tokens a site's `captures` name) are captured, so the browser only ever
 // holds placeholders. The pipeline names the rows `c-<id>`; `name` here is the cookie's or token's own name.

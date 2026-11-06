@@ -1,5 +1,5 @@
 /**
- * A Worker adds a transform (12-transforms-dof.md): `transforms.submit` validates the files, runs their tests in the
+ * A Worker adds a transform: `transforms.submit` validates the files, runs their tests in the
  * sandbox and opens a `transforms` approval holding the files; `approveTransform` (from `approval.decide`) stores the
  * entered credentials, installs the files into the transforms DOF and scopes the credentials to the requesting task.
  */

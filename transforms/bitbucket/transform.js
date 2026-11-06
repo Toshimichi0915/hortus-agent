@@ -1,4 +1,4 @@
-// Bitbucket Cloud (18-gitlab-bitbucket.md): a static repository access token. The placeholder `hortus-secret-<name>`
+// Bitbucket Cloud: a static repository access token. The placeholder `hortus-secret-<name>`
 // rides as `Authorization: Bearer …` (REST) and as the Basic password (git over HTTPS, through insteadOf); the user
 // git sends is replaced by `x-token-auth`, the one Bitbucket requires for access tokens.
 const PH = /^hortus-secret-([a-z0-9][a-z0-9_-]*)$/;
@@ -97,7 +97,7 @@ export function render(t) {
       return undefined;
     }
   }
-  // ponytail: Bitbucket's merge call takes no commit to pin (v7 › Review round 10 — flows)
+  // ponytail: Bitbucket's merge call takes no commit to pin
   const merge = p.match(/^\/2\.0\/repositories\/([^/]+\/[^/]+)\/pullrequests\/(\d+)\/merge$/);
   if (merge && t.method === "POST")
     return `merge PR ${merge[1]}!${merge[2]}: Bitbucket cannot pin a commit, lands whatever the head is by then`;

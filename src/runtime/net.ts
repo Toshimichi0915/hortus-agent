@@ -1,5 +1,5 @@
 /**
- * Every `ip` and `nft` call hortusd makes (docs/design/03-vault-proxy.md › net, 04-host-sandbox.md, 13-worker-vm.md).
+ * Every `ip` and `nft` call hortusd makes.
  * hortusd has CAP_NET_ADMIN from its unit; nothing here uses sudo. Every call is idempotent: `ip -j` / `nft -j list`
  * first. `HORTUS_NO_NET=1` turns every export into a logged no-op.
  *
@@ -22,7 +22,7 @@ import { depth, relative } from "./cgroup.ts";
 export const names = { table: "hortus", iface: "hortus0", tap: "hortus-t" };
 
 /** The proxy's listener ports (config `proxy`; the runtime module copies them in at start). Root-held *:80/*:443
- * elsewhere on the host is why the proxy binds high ports and nftables DNATs the standard ones (v7 › Network). */
+ * elsewhere on the host is why the proxy binds high ports and nftables DNATs the standard ones. */
 export const ports = { https: 8443, http: 8080, dns: 8053 };
 
 export const PROXY = "10.77.0.1";

@@ -1,5 +1,5 @@
 /**
- * ctl/inbox/<seq>.json → user messages (v7 Chat). Files are never deleted; each message starts with `[inbox <seq>]`, so
+ * ctl/inbox/<seq>.json → user messages. Files are never deleted; each message starts with `[inbox <seq>]`, so
  * the highest marker in the sessions is the cursor. Owner text is plain; everything else is quoted data.
  */
 import { randomBytes } from "node:crypto";

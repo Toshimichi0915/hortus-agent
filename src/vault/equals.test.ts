@@ -1,4 +1,4 @@
-/** `equals` (18-gitlab-bitbucket.md): constant-time comparison against a webhook-secret credential. */
+/** `equals`: constant-time comparison against a webhook-secret credential. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { tempDir } from "../test/until.ts";

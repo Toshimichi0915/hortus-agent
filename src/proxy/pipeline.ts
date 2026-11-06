@@ -1,6 +1,6 @@
 /**
  * One pipeline for every client (TLS listener, plain listener, in-process `coreFetch`, WebSocket handshakes):
- * 03-vault-proxy.md › pipeline, steps 1–11. Requests carry placeholders; the template carries handles; only the bytes
+ * The proxy pipeline. Requests carry placeholders; the template carries handles; only the bytes
  * sent upstream carry secrets, and every response is scrubbed back to placeholders.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -606,7 +606,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const raw: Req = { method: req.method.toUpperCase(), url, headers, body: text, stream };
 
   // the session's own model credential is how it thinks, not an act: no grant, no gate, and the body (the
-  // conversation, which quotes placeholders and handles) is neither checked nor resolved (v7 › Secret Vault); core's
+  // conversation, which quotes placeholders and handles) is neither checked nor resolved; core's
   // model is the Planner's (the gate's judge, whose prompt quotes the request's handles)
   const cfg = ctx().config;
   const llm =
@@ -707,7 +707,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     if (name.startsWith("c-")) {
       const row = captured(name);
       if (!row) return refuse(403, `unknown credential ${name}`, { host });
-      // `origin` is the registrable domain as this code reckons it, so tenants of a shared suffix have one (v7 › Browser)
+      // `origin` is the registrable domain as this code reckons it, so tenants of a shared suffix have one
       if (row.only ? host !== row.only : host !== row.origin && !host.endsWith(`.${row.origin}`))
         return refuse(403, `destination: ${name} does not go to ${host}`, { host });
       // a cookie rides in Cookie, a bearer token in Authorization, or where the site manifest says
@@ -1162,7 +1162,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     return { status, headers, body: "" };
   }
   // a web page (any HTML response, credentialed or not: the browser's loads, a forge's issue page) taints the task for
-  // good (v7 › Review round 6). ponytail: HTML only; a stranger's text in JSON, plain text or an API response is not
+  // good. ponytail: HTML only; a stranger's text in JSON, plain text or an API response is not
   // tracked (npm, PyPI and Go would taint every build); add types if that bites. A messenger's history is: the prompt no
   // longer sends Workers there (round 18), so what reads it means to. A forge's issues through its API stay a ceiling: the
   // forge prompt needs them, and tainting them is `auto` meaning `human`

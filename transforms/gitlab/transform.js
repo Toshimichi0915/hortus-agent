@@ -1,4 +1,4 @@
-// GitLab (18-gitlab-bitbucket.md): a static project/group access token. The placeholder `hortus-secret-<name>` rides
+// GitLab: a static project/group access token. The placeholder `hortus-secret-<name>` rides
 // in `PRIVATE-TOKEN` or as `Authorization: Bearer …` (REST) and as the Basic password (git over HTTPS, through
 // insteadOf); the user git sends is replaced by `oauth2`, which GitLab accepts for every token kind.
 const PH = /^hortus-secret-([a-z0-9][a-z0-9_-]*)$/;

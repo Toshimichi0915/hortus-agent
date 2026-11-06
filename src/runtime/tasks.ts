@@ -1,5 +1,5 @@
 /**
- * Task lifecycle (07-step3-runtime.md): rows, directories, inbox writes, stop, close, budget, and the task.json a start
+ * Task lifecycle: rows, directories, inbox writes, stop, close, budget, and the task.json a start
  * writes. Statuses: queued → running → waiting → (queued → running …) → done | failed. The dispatcher starts and ends
  * sessions; this file never spawns anything. The owner's RPCs (task.open, task.send, …) are defined at the bottom.
  */
@@ -485,7 +485,7 @@ export function projectFor(c: Config, cwd: string | undefined): string | undefin
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// RPCs (06-console.md › RPC methods), role owner
+// RPCs, role owner
 
 const owner = ["owner"] as const;
 const Id = z.object({ id: z.string() });
@@ -589,7 +589,7 @@ define("task.log", {
 
 /**
  * Replies rows after `after`, then every new one as it lands; ends when the task is closed. The CLI keeps one stream
- * across turns, so it does not end when a turn does (v7 › Chat).
+ * across turns, so it does not end when a turn does.
  */
 define("task.stream", {
   roles: [...owner],

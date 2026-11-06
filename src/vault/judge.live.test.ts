@@ -1,7 +1,7 @@
 /**
  * The judge against a real model (HORTUS_TEST_LLM=1): `ollama-cloud` copied from the owner's ~/.hortus/secrets.json
  * into the temp vault as transform `ollama` (the only read of that file, test-only), called through `coreFetch`.
- * The three scenarios of 11-auto-gate.md › Live are soft: verdicts are logged, not asserted; only that the model was
+ * The three live scenarios are soft: verdicts are logged, not asserted; only that the model was
  * reached (tokens counted) is.
  */
 import assert from "node:assert/strict";

@@ -1,11 +1,11 @@
 /**
- * Cross-module contracts. Every design doc under docs/design refers to these names; modules import them from here and
+ * Cross-module contracts. Modules import them from here and
  * never redefine them. Config shapes live in config.ts (zod), everything else here.
  */
 import type { Effort } from "@hortus/core";
 
 // ---------------------------------------------------------------------------------------------------------------------
-// RPC (00-foundation.md)
+// RPC
 
 export type Role = "owner" | "core" | "worker" | "planner" | "login";
 
@@ -13,7 +13,7 @@ export type Role = "owner" | "core" | "worker" | "planner" | "login";
 export interface Caller {
   role: Role;
   task?: string;
-  /** console: the request came through the remote listener (10-remote-console.md); `session` is its row's hash */
+  /** console: the request came through the remote listener; `session` is its row's hash */
   remote?: boolean;
   session?: string;
 }
@@ -31,7 +31,7 @@ export class RpcError extends Error {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Mirror (01-mirror-search.md)
+// Mirror
 
 /**
  * One file-level change in a DOF, relative to the DOF root (`<channel>/channel.md`, `<channel>/<thread>/<message>.md`,
@@ -88,7 +88,7 @@ export interface SearchHit {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Connectors (02-slack-gateway.md, 17-github.md)
+// Connectors
 
 export interface Author {
   user: string;
@@ -186,7 +186,7 @@ export interface Log {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Tasks (05-agent.md, 07-step3-runtime.md)
+// Tasks
 
 export type TaskKind = "chat" | "unattended" | "run" | "planner";
 export type TaskStatus = "queued" | "running" | "waiting" | "done" | "failed";
@@ -198,7 +198,7 @@ export interface TaskScope {
   /** a project from `projects` */
   project?: string;
   /**
-   * The DOFs the task can read (mounted, searchable; v7 › Review round 7). Unset in the row: every DOF (chats, Planner
+   * The DOFs the task can read (mounted, searchable). Unset in the row: every DOF (chats, Planner
    * batches). Always set in task.json.
    */
   dofs?: string[];
@@ -291,7 +291,7 @@ export type StdoutLine =
   | { type: "error"; message: string };
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Vault and transforms (03-vault-proxy.md)
+// Vault and transforms
 
 export type CredentialType = "token" | "github-app" | "webhook-secret" | "aws";
 
@@ -301,7 +301,7 @@ export type Credential =
   | { type: "webhook-secret"; value: string }
   | { type: "aws"; keyId: string; secret: string };
 
-/** One vault.json entry. `hosts` overrides the manifest's (v7). */
+/** One vault.json entry. `hosts` overrides the manifest's. */
 export type VaultEntry = Credential & { transform?: string; hosts?: string[]; last_use?: string };
 
 /** Where a raw secret may appear in a request. */
@@ -322,7 +322,7 @@ export interface Manifest {
   consequential?: string[];
   /** 3h: what a site transform captures from responses */
   captures?: unknown[];
-  /** forges: defaults for `{host}`/`{api}` in hosts and patterns (`host_api`: the api of a configured `host`), v7 */
+  /** forges: defaults for `{host}`/`{api}` in hosts and patterns (`host_api`: the api of a configured `host`) */
   vars?: { host: string; api: string; host_api?: string };
 }
 

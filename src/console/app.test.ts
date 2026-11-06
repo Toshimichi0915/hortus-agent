@@ -1,5 +1,5 @@
 /**
- * app.js in a headless Chromium (06-console.md › UI/UX, keyboard and feedback): an action is busy while in flight (a
+ * app.js in a headless Chromium (keyboard and feedback): an action is busy while in flight (a
  * second click sends nothing), Esc disarms a confirm, a re-render keeps keyboard focus, phone-width cells carry their
  * column name, the chat shows its stream's connection state. Skipped without Chromium.
  */
@@ -199,7 +199,7 @@ test("200 approvals in a burst: the open Approvals page re-renders a few times, 
   assert.ok(ms < 500, `${ms} ms`);
 });
 
-test("a schedule's next fire stays relative (09-schedules.md › UI/UX); a date never wraps at 390 px", {
+test("a schedule's next fire stays relative; a date never wraps at 390 px", {
   skip,
 }, async () => {
   const now = Date.now();

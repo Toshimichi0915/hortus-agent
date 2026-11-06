@@ -1,5 +1,5 @@
 /**
- * Step 3c with real Workers (09-schedules.md › Functional tests): the daemon (HORTUS_NO_NET=1) in a delegated user
+ * Step 3c with real Workers: the daemon (HORTUS_NO_NET=1) in a delegated user
  * scope as in step3.test.ts, its schedule tick every 300 ms (HORTUS_SCHEDULE_TICK_MS), and the clock advanced by
  * moving a row's `fire_at` into the past. The fake provider acts on directive lines in the last user message:
  * `!call <tool> <json input>`, `!done <summary>`; it records every request to `<fake>/<task>.jsonl`.

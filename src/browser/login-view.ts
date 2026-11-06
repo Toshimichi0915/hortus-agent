@@ -1,5 +1,5 @@
 /**
- * `browser.login` and the console's login view (14-browser.md › Login view). A `login` entry's view is hortusd's own
+ * `browser.login` and the console's login view. A `login` entry's view is hortusd's own
  * headless Chromium, started when the owner opens the entry: in a cgroup `tasks/<task>-login` with a session address
  * (role `login`, the task's id) routed through the proxy, so what the site sets is captured like any browser's. The
  * page is streamed as `Page.startScreencast` JPEG frames over SSE; the owner's mouse and keys come back as

@@ -1,5 +1,5 @@
 /**
- * The planner plugin (15-planner.md › Planner plugin): what a Planner batch is. Its tools are the five verdict RPCs
+ * The planner plugin: what a Planner batch is. Its tools are the five verdict RPCs
  * through `hortusd.internal` (role `planner` is stamped by the proxy) plus core's `bash` and `read`; core's `edit` and
  * `write` are overridden by name with tools that refuse (core: later plugins override same-named tools), and the
  * task plugin's `send`/`done` are never loaded. The system prompt is fixed text, byte-identical across batches.

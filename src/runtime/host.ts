@@ -75,7 +75,7 @@ const sessionPath = (): string => {
   ].join(":");
 };
 
-/** The sandbox environment (04-host-sandbox.md › host.ts); nothing else of hortusd's environment leaks in. */
+/** The sandbox environment; nothing else of hortusd's environment leaks in. */
 export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback): Record<string, string> {
   const ctl = paths.ctl(task.id);
   const m2 = join(homedir(), ".m2", "repository");
@@ -120,7 +120,7 @@ export function sandboxEnv(task: TaskJson, config?: Config, loopback?: Loopback)
     ["filter.lfs.process", "git-lfs filter-process"],
   ];
   // plain `git clone https://<host>/o/r.git` carries the forge's placeholder as the Basic password (v6 › Projects),
-  // under the user each forge expects (18-gitlab-bitbucket.md)
+  // under the user each forge expects
   for (const [name, d] of Object.entries(config?.dofs ?? {})) {
     const g = gitOf(d);
     if (!g) continue;

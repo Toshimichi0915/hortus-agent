@@ -1,4 +1,4 @@
-/** Whether an event's author is trusted (02-slack-gateway.md › trust). Bots and authorless events never are. */
+/** Whether an event's author is trusted. Bots and authorless events never are. */
 import type { Event } from "../types.ts";
 
 export function trusted(e: Pick<Event, "author" | "bot">, cfg: { owner?: string; trust?: unknown }): boolean {

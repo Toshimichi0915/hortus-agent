@@ -1,4 +1,4 @@
-/** The console module (06-console.md): the web UI listener and the RPCs it owns. */
+/** The console module: the web UI listener and the RPCs it owns. */
 import { rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { Config, oneLine, save } from "../config.ts";

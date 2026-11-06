@@ -1,5 +1,5 @@
 /**
- * Schedules (09-schedules.md): the `schedules` rows a Worker sets with `schedule.set`, and the one-minute tick that
+ * Schedules: the `schedules` rows a Worker sets with `schedule.set`, and the one-minute tick that
  * fires them. A due row is advanced (or, one-shot, deleted) before it acts, so a firing happens at most once: a one-shot
  * row without a script writes its task's inbox, every other row starts a run (runs.ts). A new trigger kind is a column
  * and a case in `advance`; runs and expiry are untouched.

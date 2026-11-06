@@ -1,5 +1,5 @@
 /**
- * Fake Bitbucket Cloud (18-gitlab-bitbucket.md › Fakes): the REST 2.0 subset the connector and Workers use behind a
+ * Fake Bitbucket Cloud: the REST 2.0 subset the connector and Workers use behind a
  * repository access token (bearer), issues, PRs with `/diff` (a redirect, as Bitbucket answers), comments, approvals,
  * commit statuses, workspace members; `X-Hub-Signature` webhook deliveries to `hook`; git over HTTP (Basic
  * `x-token-auth:<token>`). One port for `api.bitbucket.org` and `bitbucket.org`.

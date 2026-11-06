@@ -16,8 +16,7 @@ except for consequential requests, merges, new transforms, logins, and tainted t
 message, a web page or an untrusted search hit, or can read a DOF holding one (a stranger's message, hortus's own
 replies); the Planner gives a task only the DOFs it needs, `scope.dofs`, usually none; "Approve, and
 allow … for this task" (`hortus approvals approve --grant <id>`) on a tainted task's routine request lets its later
-ones through, consequential ones still ask). The design is `hortus_v6.md` (in the owner's vault); `hortus_v7.md`
-here records every decision made while building it.
+ones through, consequential ones still ask). The design is `hortus_v6.md` (in the owner's vault).
 
 ## Install
 
@@ -113,7 +112,7 @@ messenger, one forge and the Planner's (and Workers') model:
 - `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on, also when raised while it runs. A schedule's runs spend the budget of the task that set it. A task stopped at its budget waits for you: the Planner does not close it unless its every PR/MR ended.
 - A message posted while `hortusd` or its connection is down is read back by the 10-minute reconcile and reaches the Planner as if it had come live, and so does a CI result on a task's open PR that no event brought (missed, or done before the PR existed); what the first sync of a source backfills does not.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
-  `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.
+  `proxy` ports) has defaults; the schema with them is `src/config.ts`.
 
 The Settings page edits this file (validated, then reloaded); so does any editor, followed by a restart.
 
@@ -186,7 +185,4 @@ Opt-in suites, skipped otherwise:
 
 ## Where things are
 
-- `AGENTS.md`: conventions and the source layout.
-- `docs/build-order.md`: the build steps, what each one's done-when is, and their status.
-- `docs/design/*.md`: one design per step (implementation, functional tests, UI/UX checklist).
-- `hortus_v7.md`: the decisions v6 left open, as built, and each review round's findings.
+- `AGENTS.md`: conventions, the source layout and the terminology.

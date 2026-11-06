@@ -1,5 +1,5 @@
 /**
- * The gateway (docs/design/02, v6 › Gateway): one runner per `dofs` entry whose type has a connector. Events:
+ * The gateway (v6 › Gateway): one runner per `dofs` entry whose type has a connector. Events:
  * trust → insert (dedupe) → ack → mirror → commit → wake. Reconcile: at start and every 10 min, `history` per scope
  * from its `syncs` cursor. Nothing here names a service.
  */
@@ -52,7 +52,7 @@ export interface GatewayDeps {
   fetch(name: string): ConnectorDeps["fetch"];
   /** the WebSocket opener (the proxy's `coreSocket`); unset: the connector's own */
   ws?: ConnectorDeps["ws"];
-  /** the mirror writer (01-mirror-search.md) */
+  /** the mirror writer */
   commit(dof: string, changes: Change[], message: string): Promise<unknown>;
   /** the mirror file's text, null when there is none; unset: a reconcile routes nothing */
   mirrored?(dof: string, path: string): string | null;
@@ -102,7 +102,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function createGateway(deps: GatewayDeps): Gateway {
   const { db, log } = deps;
   const runners = new Map<string, Runner>();
-  // a bot's event is consumed (-1) at insert: the Planner never sees it (loop guard, 15-planner.md). Any other is held
+  // a bot's event is consumed (-1) at insert: the Planner never sees it (loop guard). Any other is held
   // (-2) until mirror() says if it wakes: a batch running meanwhile took a stranger's reaction or a delete and tainted
   // every task it made (review round 9). A crash in between: it goes to the Planner, as an unmirrored event always did
   const insert = db.prepare(`INSERT INTO events(dof, key, ts, author, member, trusted, bot, payload, created, summary,
@@ -406,7 +406,7 @@ define("source.resync", {
   },
 });
 
-/** owner.notify (15-planner.md): the DM is the bot's own message, mirrored and never waking the Planner. */
+/** owner.notify: the DM is the bot's own message, mirrored and never waking the Planner. */
 export function ownerDm(dof: string, text: string): Promise<void> {
   if (!current) return Promise.reject(new Error("the gateway is not running"));
   return current.dm(dof, text);

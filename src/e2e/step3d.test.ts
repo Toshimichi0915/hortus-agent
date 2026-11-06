@@ -1,5 +1,5 @@
 /**
- * v6 step 3d's last done-when (10-remote-console.md, v6 › Projects › Chat): "a chat opened from the phone edits a
+ * v6 step 3d's last done-when (v6 › Projects › Chat): "a chat opened from the phone edits a
  * project in place like one opened at the machine". The real daemon (HORTUS_NO_NET=1, delegated user scope) with
  * `console.listen` on; the only things done at the machine are the enrolment code (socket) and reading the disk.
  * Everything else goes through the TLS listener with the phone's cookie and `Host`: the requests app.js makes, then

@@ -1,5 +1,5 @@
 /**
- * Worker VMs under failure (13-worker-vm.md), the real daemon and the real image (HORTUS_TEST_VM=1; the image in
+ * Worker VMs under failure, the real daemon and the real image (HORTUS_TEST_VM=1; the image in
  * `$HORTUS_TEST_IMAGES`, /dev/kvm). Without HORTUS_TEST_NET the daemon runs under HORTUS_NO_NET=1 in a delegated user
  * scope (VMs on `-netdev user`: the fake provider plugin answers inside the guest, the Worker's `done` is an outbox
  * file): SIGKILL during a VM start and during a run, the hours deadline across a restart, `vm.max_concurrent`, a kernel

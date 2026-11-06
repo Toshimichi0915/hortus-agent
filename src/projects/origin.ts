@@ -1,5 +1,5 @@
 /**
- * The local origin (08-projects.md › origin.ts): `projects/<name>.git` bare, its `pre-receive` hook, `sync` from the
+ * The local origin: `projects/<name>.git` bare, its `pre-receive` hook, `sync` from the
  * owner's checkout (git) or the shadow (non-git), the pre-clone of an unattended task, `git http-backend` on
  * `hortusd.internal/git/<name>`, and the owner's `project.*` RPCs. `main` moves only by `sync` and an approved merge.
  */
@@ -56,7 +56,7 @@ export async function ensure(name: string): Promise<string> {
   if (!existsSync(join(dir, "HEAD"))) {
     await git(["init", "-q", "--bare", "-b", p.main, dir]);
     // receive.denyNonFastForwards is not set: it applies to every ref, so a Worker's rebased force-push of its own
-    // branch would be refused; main is guarded by the hook (no Worker ref but hortus/<task>) and update-ref (v7)
+    // branch would be refused; main is guarded by the hook (no Worker ref but hortus/<task>) and update-ref
     for (const kv of [
       "receive.denyDeletes=true",
       "gc.auto=0",
@@ -194,7 +194,7 @@ export async function startSync(name: string, note: (text: string) => void): Pro
 
 /**
  * Before an unattended host task on a project starts (the Landlock profile grants rw on `clones/<id>` only if it
- * exists, so hortusd pre-clones; v7): sync, then on first start `git clone --no-local --reference <checkout>` of the
+ * exists, so hortusd pre-clones): sync, then on first start `git clone --no-local --reference <checkout>` of the
  * origin on `hortus/<id>`, `origin` set to `clone_url`. `loopback` (HORTUS_NO_NET only): the session's alias, given
  * its own listener so git reaches hortusd.internal with the task's identity.
  */

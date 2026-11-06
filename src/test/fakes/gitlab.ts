@@ -1,5 +1,5 @@
 /**
- * Fake GitLab (18-gitlab-bitbucket.md › Fakes): the REST v4 subset the connector and Workers use behind a static
+ * Fake GitLab: the REST v4 subset the connector and Workers use behind a static
  * token (`PRIVATE-TOKEN` or bearer), projects addressed URL-encoded (`g%2Fsub%2Fp`), issues, MRs with `/changes`,
  * notes, approvals, pipelines, members; `X-Gitlab-Token` webhook deliveries to `hook`; git over HTTP (`git
  * http-backend`, Basic password = the token, any user). One port for API and git.

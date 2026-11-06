@@ -1,5 +1,5 @@
 /**
- * The placeholder cookie jar (14-browser.md › captures): which `captured` rows a task's browser may hold. hortusd only
+ * The placeholder cookie jar: which `captured` rows a task's browser may hold. hortusd only
  * (task.json at start, inbox `cookies` after a login or an origin grant); the browser never sees a real value.
  */
 import { type DatabaseSync, family } from "../db.ts";

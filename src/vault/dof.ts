@@ -1,5 +1,5 @@
 /**
- * The `transforms` DOF (12-transforms-dof.md): a repo written only by hortusd through the mirror. Shipped transforms are
+ * The `transforms` DOF: a repo written only by hortusd through the mirror. Shipped transforms are
  * copied in once (`ship: <names>`); `transforms(name, hash, enabled_at)` binds each enabled name to the content the owner
  * approved, and `load()` serves only worktree files whose hash still matches (a hand-edited file disables its transform).
  */

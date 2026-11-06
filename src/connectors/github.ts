@@ -1,5 +1,5 @@
 /**
- * GitHub (17-github.md): App webhooks through the tunnel (verified with `<name>-webhook`), REST history, the delivery
+ * GitHub: App webhooks through the tunnel (verified with `<name>-webhook`), REST history, the delivery
  * log. Every request carries the placeholder `hortus-secret-<name>` through `deps.fetch` (the pipeline as role core,
  * where the transform turns it into a read-only installation token); this module never sees a token.
  */

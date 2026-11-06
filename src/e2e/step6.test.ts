@@ -1,5 +1,5 @@
 /**
- * Step 6 done-when with the Planner (17-github.md › Functional tests): the real daemon (HORTUS_NO_NET=1) in a delegated
+ * Step 6 done-when with the Planner: the real daemon (HORTUS_NO_NET=1) in a delegated
  * user scope like step4.test.ts, the fake GitHub behind `dev.upstreams`, webhooks posted to the listener on an
  * ephemeral `HORTUS_WEBHOOK_PORT`. The fake provider scripts both the Planner (`<fake>/planner.mjs`, as in step 4) and
  * the Worker (directive lines; a tool result carrying `!done <summary>` calls `done`). The Worker's REST calls go

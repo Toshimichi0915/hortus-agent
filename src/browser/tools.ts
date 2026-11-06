@@ -1,5 +1,5 @@
 /**
- * The Worker's browser (14-browser.md › Worker tools): one headless Chromium per task process, started on first use
+ * The Worker's browser: one headless Chromium per task process, started on first use
  * with `out/work/chrome` as its profile, one tab, driven over CDP. It holds placeholders only: the jar from
  * `task.json.cookies` at launch, and each inbox `cookies` message (a finished login) before the next action.
  */

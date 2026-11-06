@@ -98,7 +98,7 @@ export function family(db: DatabaseSync, task: string): string[] {
 }
 
 /**
- * Marks the task tainted (v7 › Review round 6): from now on the owner decides its gated requests, never the judge.
+ * Marks the task tainted: from now on the owner decides its gated requests, never the judge.
  * At most TAINT_MAX distinct reasons are kept; the first ones say enough.
  */
 export function taint(db: DatabaseSync, task: string, reason: string): void {
@@ -183,7 +183,7 @@ function mounted(c: Pick<Config, "dofs">, scope: string | null): string[] {
 export const dofNames = (c: Pick<Config, "dofs">): string[] => ["logs", "transforms", ...Object.keys(c.dofs)];
 
 /**
- * The DOFs a task can read (v7 › Review round 7): its `scope.dofs` (the Planner's choice) that still exist, plus
+ * The DOFs a task can read: its `scope.dofs` (the Planner's choice) that still exist, plus
  * `transforms` (the owner's approved code, the examples a new transform starts from); every DOF when unset (chats,
  * Planner batches, rows from before the field).
  */
@@ -200,7 +200,7 @@ export function readableOf(db: DatabaseSync, c: Pick<Config, "dofs">, task: stri
 }
 
 /**
- * `<channel>/channel.md`, hortusd's rendering of the service's channel or repo record (v7 › Review round 9): the one
+ * `<channel>/channel.md`, hortusd's rendering of the service's channel or repo record: the one
  * authorless file that does not taint, or every connector DOF would. ponytail: its free text (a topic, a repo
  * description, display names) is set by whoever the service lets, a stranger included, and is read as the owner's;
  * upgrade: record who set it per connector (Slack's `topic.creator`; forges have nothing comparable).
@@ -208,7 +208,7 @@ export function readableOf(db: DatabaseSync, c: Pick<Config, "dofs">, task: stri
 export const channelMeta = (path: string): boolean => /^[^/]+\/channel\.md$/.test(path);
 
 /**
- * A reason per readable DOF holding text from an author its trust rule does not trust (v7 › Review round 7): a Worker
+ * A reason per readable DOF holding text from an author its trust rule does not trust: a Worker
  * can `cat` any file it can read, so the whole DOF counts, checked at every gate decision (a stranger posting later
  * taints too). `transforms` is the owner's; `logs` counts once it holds another task's log (sessions quote what they
  * read). Each file's author is judged as a `dof.search` hit is (mirror/index.ts › untrustedHits): an authorless file

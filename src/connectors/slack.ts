@@ -1,5 +1,5 @@
 /**
- * Slack: Socket Mode events, Web API history (02-slack-gateway.md). Every request carries a placeholder
+ * Slack: Socket Mode events, Web API history. Every request carries a placeholder
  * (`hortus-secret-<name>`, `-app` for Socket Mode) through `deps.fetch`; this module never sees a real token.
  */
 import type { Change, Connector, ConnectorDeps, ConnectorStatus, Event, Incoming, Mirrored } from "../types.ts";

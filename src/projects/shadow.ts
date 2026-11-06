@@ -1,5 +1,5 @@
 /**
- * Shadow repos for non-git projects (08-projects.md › shadow.ts): `shadow/<name>.git` with the project directory as its
+ * Shadow repos for non-git projects: `shadow/<name>.git` with the project directory as its
  * work tree and `exclude` in `info/exclude`. A snapshot is `add -A` + commit on the shadow's `main`; the origin fetches
  * it like any checkout. `restore` and `snapshot` are the only operations.
  */

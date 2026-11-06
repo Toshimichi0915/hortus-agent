@@ -123,7 +123,7 @@ export async function request(input: CheckInput): Promise<"pass" | { pending: nu
     )
     .get(input.hash, task);
   if (open) return check(input);
-  // a tainted task (v7 › Review round 6: untrusted messages, a web page, a stranger's search hit, a tainted batch):
+  // a tainted task (untrusted messages, a web page, a stranger's search hit, a tainted batch):
   // the judge sees only the brief and the request, so the owner decides, once per task if they grant the category
   // to it (round 7: a task grant taken while the entry showed the taint)
   const tainted = taintOf(c.db, task, c.config);

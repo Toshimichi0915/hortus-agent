@@ -1,5 +1,5 @@
 /**
- * The Worker loop (v6 Worker, 05-agent.md › Loop), shared by every kind: the kind's plugin says what the agent is, the
+ * The Worker loop (v6 Worker), shared by every kind: the kind's plugin says what the agent is, the
  * observer here keeps the session, stdout and the abort conditions.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";

@@ -1,5 +1,5 @@
 /**
- * A minimal CDP client (14-browser.md › CDP client) over Chromium's DevTools pipe (fds 3/4): `launch` a headless Chromium,
+ * A minimal CDP client over Chromium's DevTools pipe (fds 3/4): `launch` a headless Chromium,
  * `connect` to it, `send` commands (with a flat session id), `on` events, `page()` attaches to the first tab. Used by
  * the Worker's browser tools and by hortusd's login view.
  */

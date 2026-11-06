@@ -1,6 +1,6 @@
 #!/bin/sh
-# Start a development copy of hortusd as a transient system unit with the capabilities the real unit has
-# (hortus_v7.md › Process › Dev run). Needs passwordless sudo.
+# Start a development copy of hortusd as a transient system unit with the capabilities the real unit has.
+# Needs passwordless sudo.
 #   scripts/dev-run.sh <name> <HORTUS_HOME> [env=value ...]
 # Stop with: sudo systemctl stop hortusd-<name>; logs: journalctl -u hortusd-<name> -f
 set -e

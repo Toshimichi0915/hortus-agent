@@ -1,5 +1,5 @@
 /**
- * Runs (09-schedules.md › runs.ts): a firing of a recurring or scripted row is a new `run` task under the row's task.
+ * Runs: a firing of a recurring or scripted row is a new `run` task under the row's task.
  * At each exit of a run its tokens are charged to the parent, its summary becomes the row's `last-summary.md`, and an
  * empty `result` closes it at once without a `logs` entry (and deletes it when it never reached the model).
  */

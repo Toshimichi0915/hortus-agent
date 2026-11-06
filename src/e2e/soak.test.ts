@@ -337,7 +337,7 @@ test(`soak: ${MINUTES} min of churn (${[...ONLY].join(",")}), bounded growth`, {
   // and at most a schedule run in flight remain
   const left = readdirSync(join(home, "tasks"));
   assert.ok(left.length <= 2 && left.includes(parent), `tasks/: ${left}`);
-  // the bound (v7 › Review round 7 — soak): under 1 MB per 100 tasks after warm-up; the short run, still warming up,
+  // the bound: under 1 MB per 100 tasks after warm-up; the short run, still warming up,
   // under 10 (round 4's growth from 20 spawns in one turn was ~13)
   // and the short run does not count the JS heap: with the CPUs full no major GC finishes inside its minute (heap 34 →
   // 84 MB, rss +19 MB/100 tasks; 6 min under the same load: heap flat, round 10); the long run does. What V8's peak in the

@@ -1,4 +1,4 @@
-/** `/approvals/<id>/login`: the live view of a `login` entry (14-browser.md › Login view); app.js drives the canvas. */
+/** `/approvals/<id>/login`: the live view of a `login` entry; app.js drives the canvas. */
 import { h, layout, type Page, parse } from "../html.ts";
 import type { ApprovalRow } from "./approvals.ts";
 

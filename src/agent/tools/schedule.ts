@@ -1,4 +1,4 @@
-/** Feature `schedule` (09-schedules.md): `schedule` and `unschedule` over `schedule.set|unset`; hortusd validates. */
+/** Feature `schedule`: `schedule` and `unschedule` over `schedule.set|unset`; hortusd validates. */
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";
 import type { TaskJson } from "../../types.ts";

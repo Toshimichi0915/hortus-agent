@@ -1,5 +1,5 @@
 /**
- * GitLab (18-gitlab-bitbucket.md): project or group webhooks through the tunnel (`X-Gitlab-Token` checked with `equals`
+ * GitLab: project or group webhooks through the tunnel (`X-Gitlab-Token` checked with `equals`
  * against `<name>-webhook`), REST v4 history. A static project/group access token: every request carries the
  * placeholder `hortus-secret-<name>` in `PRIVATE-TOKEN` through `deps.fetch` (the pipeline as role core). Project ids
  * are `group/…/project`, URL-encoded in API paths; their channel directory is `group__…__project`.

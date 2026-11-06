@@ -83,7 +83,7 @@ export function resolvable(h: Handle, s: Secret): string | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// github-app and webhook-secret (17-github.md)
+// github-app and webhook-secret
 
 type GithubApp = Extract<VaultEntry, { type: "github-app" }>;
 

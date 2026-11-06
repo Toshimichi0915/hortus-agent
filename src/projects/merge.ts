@@ -1,5 +1,5 @@
 /**
- * `merge()` and the landing (08-projects.md › merge.ts): a Worker asks for `hortus/<task>` → `main`, the gate opens a
+ * `merge()` and the landing: a Worker asks for `hortus/<task>` → `main`, the gate opens a
  * `merge` entry hashed on (project, sha, main_sha); on approval the checkout fast-forwards, then the origin's `main`
  * (`update-ref` with the old sha). Nothing moves unless both can; the reason goes on the entry and to the inbox.
  */

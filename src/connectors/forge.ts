@@ -1,5 +1,5 @@
 /**
- * What every forge connector shares (17-github.md): the in-process event queue the webhook listener fills, the
+ * What every forge connector shares: the in-process event queue the webhook listener fills, the
  * project → directory rule, and the `repos` glob filter.
  */
 import type { Change, ConnectorDeps, Event, Incoming } from "../types.ts";
@@ -59,10 +59,10 @@ export function eventQueue(): { push(e: Event): Promise<void>; events(signal: Ab
   };
 }
 
-/** A channel id with `/` would nest in the mirror: `owner/repo` lives in `owner__repo/` (v7 › DOF). */
+/** A channel id with `/` would nest in the mirror: `owner/repo` lives in `owner__repo/`. */
 export const dirOf = (project: string): string => project.replace(/\//g, "__");
 
-/** git over HTTPS per forge type: the Basic user it wants and its host (18-gitlab-bitbucket.md); Bitbucket is cloud only. */
+/** git over HTTPS per forge type: the Basic user it wants and its host; Bitbucket is cloud only. */
 export function gitOf(d: { type: string; host?: string | undefined }): { user: string; host: string } | undefined {
   if (d.type === "github") return { user: "x-access-token", host: d.host ?? "github.com" };
   if (d.type === "gitlab") return { user: "oauth2", host: d.host ?? "gitlab.com" };
@@ -91,7 +91,7 @@ export function worst(suites: { status: string; conclusion: string | null }[]): 
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// shared by the static-token forges (18-gitlab-bitbucket.md)
+// shared by the static-token forges
 
 /** An HTTP error with its status (a member lookup's 404 is an answer, not a failure). */
 export class HttpError extends Error {

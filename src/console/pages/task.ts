@@ -76,7 +76,7 @@ export const task: Page = (ctx, { m, q }) => {
   const timers = ctx.db
     .prepare("SELECT * FROM schedules WHERE task_id = ? ORDER BY fire_at")
     .all(id) as unknown as ScheduleListRow[];
-  // a Planner-created task: the event it came from (15-planner.md › UI/UX)
+  // a Planner-created task: the event it came from
   const origin = ctx.db
     .prepare("SELECT dof, author, refs, summary FROM events WHERE task_id = ? ORDER BY id LIMIT 1")
     .get(id) as { dof: string; author: string | null; refs: string | null; summary: string | null } | undefined;

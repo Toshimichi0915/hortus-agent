@@ -31,7 +31,7 @@ ${remote(ctx, p)}
   );
 };
 
-/** Settings › Remote (10-remote-console.md): listener, enrolment code + QR (loopback only), sessions. */
+/** Settings › Remote: listener, enrolment code + QR (loopback only), sessions. */
 function remote(ctx: Ctx, p: Params) {
   const c = ctx.config.console;
   if (!c?.listen)

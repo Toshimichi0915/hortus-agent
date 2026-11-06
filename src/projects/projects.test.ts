@@ -1,5 +1,5 @@
 /**
- * 3b at the module level (08-projects.md › Functional tests): the origin's hook through `hortusd.internal/git/<name>`
+ * 3b at the module level: the origin's hook through `hortusd.internal/git/<name>`
  * (the in-process router behind a test listener whose client is set by the test, as a link would), sync, shadow
  * snapshots and restores, `merge` → approve → land, and the refusals. Real git in temp dirs; no daemon.
  */

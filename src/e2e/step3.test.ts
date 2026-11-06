@@ -1,5 +1,5 @@
 /**
- * Step 3 (07-step3-runtime.md › Functional tests, the parts that need no network): the real daemon (HORTUS_NO_NET=1)
+ * Step 3 (the parts that need no network): the real daemon (HORTUS_NO_NET=1)
  * in a delegated user scope (`systemd-run --user --scope -p Delegate=yes`, so sessions get cgroups), real sandboxed
  * Workers (Landlock) and a fake provider plugin shipped through `worker.plugins`. The fake "model" acts on directive
  * lines in the last user message (`!bash <cmd>`, `!done <summary>`, `!send <text>`, `!fail`), answers a tool result

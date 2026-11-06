@@ -1,4 +1,4 @@
-/** ctl/task.json (05-agent.md › Directory protocol), validated: hortusd writes it, but a bad file must fail loudly. */
+/** ctl/task.json, validated: hortusd writes it, but a bad file must fail loudly. */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";

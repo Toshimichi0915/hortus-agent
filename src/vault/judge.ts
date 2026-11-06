@@ -1,5 +1,5 @@
 /**
- * The `auto` judge (11-auto-gate.md › Judge): one chat-completions call to the Planner's provider and model through
+ * The `auto` judge: one chat-completions call to the Planner's provider and model through
  * `coreFetch` (role core: the pipeline inserts the LLM credential). It can only allow an already-granted,
  * non-consequential request or escalate it; every failure escalates.
  */

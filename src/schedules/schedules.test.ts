@@ -1,5 +1,5 @@
 /**
- * Schedules without a Worker (09-schedules.md › Functional tests): validation, DST, expiry, overlap, budget, run
+ * Schedules without a Worker: validation, DST, expiry, overlap, budget, run
  * accounting, unschedule rights, recovery and PAUSED, against the real tables with a fake clock and `tick()` called
  * directly. The Worker-driven cases (the v6 done-when, scripts, `/schedule` persistence) are in e2e/step3c.test.ts.
  */

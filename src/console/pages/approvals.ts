@@ -178,7 +178,7 @@ ${
         )}</div>`
       : a.status === "pending"
         ? h`<div class="actions">${button("Approve", "approval.decide", { id: a.id, decision: "approve" }, { cls: "ok" })}${
-            // a tainted task's routine request: one click instead of one per request (v7 › Review round 7)
+            // a tainted task's routine request: one click instead of one per request
             grantable(a)
               ? button(
                   `Approve, and allow ${grantName(a.category, {})} for this task`,

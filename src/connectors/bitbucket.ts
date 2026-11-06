@@ -1,5 +1,5 @@
 /**
- * Bitbucket Cloud (18-gitlab-bitbucket.md): repository webhooks through the tunnel (`X-Hub-Signature` verified with
+ * Bitbucket Cloud: repository webhooks through the tunnel (`X-Hub-Signature` verified with
  * `hmac-verify` against `<name>-webhook`), REST 2.0 history. A static repository access token: every request carries
  * the placeholder `hortus-secret-<name>` as the bearer through `deps.fetch` (the pipeline as role core).
  *

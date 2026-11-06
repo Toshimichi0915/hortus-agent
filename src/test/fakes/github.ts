@@ -1,5 +1,5 @@
 /**
- * Fake GitHub (17-github.md › Fake GitHub): the REST subset the connector and Workers use (installation tokens minted
+ * Fake GitHub: the REST subset the connector and Workers use (installation tokens minted
  * only for a JWT that verifies against the App's public key, repos, issues, comments, PRs with their diff, reviews,
  * check suites, the delivery log), HMAC-signed webhook deliveries to `hook`, and git over HTTP (`git http-backend`
  * over bare repos, Basic auth = a minted token). One port; the `/api/v3` prefix (Enterprise) is accepted everywhere.

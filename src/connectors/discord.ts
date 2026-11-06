@@ -1,5 +1,5 @@
 /**
- * Discord: gateway WebSocket events, REST history (16-discord-telegram.md). REST carries `Authorization: Bot
+ * Discord: gateway WebSocket events, REST history. REST carries `Authorization: Bot
  * hortus-secret-<name>` through `deps.fetch`; IDENTIFY/RESUME carry `hortus-secret-<name>` in the frame and the proxy's
  * `ws:text` relay swaps it. This module never sees a real token.
  */

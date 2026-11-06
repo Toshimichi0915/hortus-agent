@@ -1,8 +1,8 @@
 /**
- * Step 3b's done-when (08-projects.md › Functional tests): the real daemon (HORTUS_NO_NET=1, delegated user scope as
+ * Step 3b's done-when: the real daemon (HORTUS_NO_NET=1, delegated user scope as
  * in step3.test.ts) runs an unattended host Worker under Landlock on a non-git project. The fake provider plays the
  * model from directive lines (`!bash <cmd>`, `!merge`, `!done`): the Worker commits CHANGELOG.md in its pre-clone,
- * pushes `hortus/<id>` through hortusd.internal (the session's loopback alias, v7 › Projects), and calls `merge()`.
+ * pushes `hortus/<id>` through hortusd.internal (the session's loopback alias), and calls `merge()`.
  * An owner edit before approval sends it back to rebase; the second request lands in the directory.
  */
 import assert from "node:assert/strict";

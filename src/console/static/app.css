@@ -282,7 +282,7 @@ form.composer {
   background: var(--bg);
   padding: 0.4rem 0;
 }
-/* login view (14-browser.md): the canvas keeps the page's aspect ratio and fits the screen */
+/* login view: the canvas keeps the page's aspect ratio and fits the screen */
 a.button {
   border: 1px solid var(--line);
   border-radius: 3px;

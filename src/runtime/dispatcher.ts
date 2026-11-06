@@ -1,8 +1,8 @@
 /**
- * The dispatcher (07-step3-runtime.md): every second and on `wake()`, start each `queued` host task unless `PAUSED`;
+ * The dispatcher: every second and on `wake()`, start each `queued` host task unless `PAUSED`;
  * relay a session's stdout into `replies`; on exit read `out/` as hostile input and move the status on. A new kind is a
  * row in KINDS; a runtime is a `start` (`host.spawnSandboxed`, `vm.startVm`), picked by the task's `runtime` column.
- * VM tasks start below `vm.max_concurrent`; with the image missing they run on the host (`vm.fallback_host`, v7) or
+ * VM tasks start below `vm.max_concurrent`; with the image missing they run on the host (`vm.fallback_host`) or
  * stay queued with the reason in `error`.
  */
 import { existsSync } from "node:fs";
@@ -215,7 +215,7 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         return;
       }
       const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
-      // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn; v7)
+      // 3b: sync the origin and pre-clone clones/<id> (Landlock grants rw on it only if it exists at spawn)
       await prepareClone(task, env.HORTUS_RPC_LOCAL, say);
       if (kind.chat) reply(row.id, { type: "status", text: "started" });
       // the Landlock profile walk and the spawn are ~8 ms of hortusd's thread each: 20 chats opened at once ran them
@@ -428,7 +428,7 @@ async function finish(
   for (const m of msgs) if (m.type !== "reply") exitHooks.onResult(tasks.get(id), m);
 }
 
-/** Where a Planner batch runs (`planner.runtime`, 15-planner.md); a Worker VM (3g) is the same `vm` row. */
+/** Where a Planner batch runs (`planner.runtime`); a Worker VM (3g) is the same `vm` row. */
 export const HOST_GRACE = { ms: 60_000 };
 
 const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => void) => Promise<Child>> = {
@@ -448,8 +448,8 @@ const RUNTIMES: Record<"host" | "vm", (task: TaskJson, onStdout: (l: string) => 
   vm: (task) => startVm({ task, config: ctx?.config as Config, deadlineMs: task.budget.hours * 3.6e6 }),
 };
 
-/** Not a task, so no Planner row (a batch that dies on its own failure would be fed it again); its events stay consumed
- * (15-planner.md › Wake and batch), so the owner's message may have gone unanswered: the DM is what says so. */
+/** Not a task, so no Planner row (a batch that dies on its own failure would be fed it again); its events stay consumed,
+ * so the owner's message may have gone unanswered: the DM is what says so. */
 /**
  * One Planner batch: `row` (kind planner, inserted `running` by the planner module, which deletes it and its directory
  * afterwards) runs to its exit as role `planner`; returns the tokens its session used. Stdout goes to console.log only.
