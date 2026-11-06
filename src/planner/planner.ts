@@ -410,6 +410,8 @@ export const plannerModule: Module = {
     ctx = c;
     // a batch killed with hortusd: what it left goes back in the queue; the dispatcher never starts this kind
     for (const { id } of c.db.prepare("SELECT id FROM tasks WHERE kind = 'planner'").all() as { id: string }[]) {
+      // its directory before its row: no row, nothing left (step4's recovery test read between the two, round 24)
+      rmSync(paths.task(id), { recursive: true, force: true });
       c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
       release(c, Number(id.slice("planner-".length)));
     }
