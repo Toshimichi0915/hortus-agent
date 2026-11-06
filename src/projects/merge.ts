@@ -45,6 +45,13 @@ export async function request(taskId: string): Promise<{ approval: number; url: 
   const p = project(name);
   // non-git: a snapshot at each request, so an owner edit since the task started sends this one to rebase first
   await sync(name).catch((e) => log.error("sync before merge failed", e, { task: taskId }));
+  // on the project's sync chain: another task's landing between reading main and the entry left this one on the old main,
+  // pending, where its approval could only fail ("checkout is at …") and nobody was told to rebase
+  return serialized(name, () => entry(taskId, name, p));
+}
+
+async function entry(taskId: string, name: string, p: ReturnType<typeof project>): Promise<{ approval: number; url: string }> {
+  const db = ctx().db;
   const dir = paths.project(name);
   const branch = `hortus/${taskId}`;
   const sha = await revParse(dir, `refs/heads/${branch}`);

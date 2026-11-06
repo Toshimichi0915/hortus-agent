@@ -439,6 +439,36 @@ test("scopes that fail (a forge started before its credential) are retried soon,
   await H.gw.stop();
 });
 
+test("a resync pressed during a pass starts from nothing: the pass under way does not hand it its cursor", async () => {
+  const cfg = Config.parse({ dofs: { rs: { type: "stub" } } });
+  const seen: (string | null)[] = [];
+  let go: () => void = () => {};
+  const held = new Promise<void>((r) => (go = r));
+  const H = harness(() => cfg, {
+    stub: async (d) =>
+      stub(d.name, {
+        scopes: async () => ["s"],
+        async *history(_scope, cursor) {
+          seen.push(cursor);
+          yield { changes: [], cursor: "1" };
+          if (seen.length === 1) await held; // the first pass, mid-way, when the owner presses Resync
+          yield { changes: [], cursor: "2" };
+        },
+      }),
+  });
+  H.gw.start();
+  await until(() => seen.length === 1);
+  await until(() => db.prepare("SELECT 1 FROM syncs WHERE dof = 'rs'").get() !== undefined);
+  try {
+    const resync = H.gw.resync("rs");
+    go();
+    await resync;
+    assert.deepEqual(seen, [null, null], "the resync's pass read history from the start");
+  } finally {
+    await H.gw.stop();
+  }
+});
+
 test("a stop during a backfill ends between its batches, the cursor at the last one", async () => {
   const cfg = Config.parse({ dofs: { long: { type: "stub" } } });
   let batches = 0;

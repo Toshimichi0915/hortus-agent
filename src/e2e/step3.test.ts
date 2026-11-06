@@ -333,6 +333,23 @@ test("over budget with an undrained message: waiting, no restart loop", { skip }
   );
 });
 
+test("a raise while the session runs on the old budget: the stop at the old limit goes on", { skip }, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "spend" });
+  await waitStatus(id, "waiting");
+  // one more model call passes the limit; the raise lands during its tool
+  await api("task.budget", { id, tokens: 16 });
+  await api("task.send", { id, text: "!bash sleep 3" });
+  await until(() => reqs(id).length >= 2, 15_000, "the call");
+  await api("task.budget", { id, tokens: 1e6 });
+  await until(
+    async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3,
+    20_000,
+    "it goes on",
+  );
+  await waitStatus(id, "waiting");
+  assert.equal((await card(id)).task.error, null);
+});
+
 test("the proxy's count of a task's model calls: past it the task is over budget, and never added to the session's", {
   skip,
 }, async () => {

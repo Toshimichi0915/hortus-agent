@@ -351,10 +351,14 @@ async function finish(
   // (tasks.ts › restarts)
   // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
   const b = tasks.get(id);
-  const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number };
+  const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number; hours?: number };
   const metered = b.metered + tasks.runsOf(b);
   const overdrawnBy = limit.tokens !== undefined && metered >= overdrawn(limit.tokens, ctx?.config as Config);
-  const error =
+  // the session ran on its start's budget (task.json): a raise meanwhile found it running, so task.budget sent nothing,
+  // and the stop at the old limit sat waiting with `budget_exceeded` on the card the owner had just raised
+  const was = JSON.parse(row.budget ?? "{}") as { tokens?: number; hours?: number };
+  const raised = (limit.tokens ?? 0) > (was.tokens ?? 0) || (limit.hours ?? 0) > (was.hours ?? 0);
+  let error =
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
@@ -366,6 +370,8 @@ async function finish(
             : spent !== undefined
               ? `budget_exceeded: ${spent.slice(0, 2000)}`
               : (gaveUp?.slice(0, 2000) ?? null);
+  const goOn = raised && !!error?.startsWith("budget_exceeded");
+  if (goOn) error = null;
   const fresh = tasks.get(id);
   // what reached the inbox during this session: an older message a clean exit left behind is the Worker's choice (it
   // drains at its start), and re-queueing on it let a hostile one boot again for its whole `hours`, a Planner batch each
@@ -396,7 +402,7 @@ async function finish(
       overdrawnBy ||
       msgs.some((m) => m.type === "budget_exceeded") ||
       existsSync(join(paths.ctl(id), "STOP"));
-    tasks.setStatus(id, exit.code === 0 && inbox > cursor && !halted ? "queued" : "waiting", extra);
+    tasks.setStatus(id, goOn || (exit.code === 0 && inbox > cursor && !halted) ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
   // `error` is this session's, so once per failure, and no restart re-reads it. A chat's owner is at the keyboard and

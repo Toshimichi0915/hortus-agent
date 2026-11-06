@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -30,7 +31,7 @@ import { internal } from "../proxy/internal.ts";
 import { writeOut } from "../proxy/server.ts";
 import { call } from "../rpc.ts";
 import { type TaskRow, taskJson } from "../runtime/tasks.ts";
-import { tempDir } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { gate } from "../vault/index.ts";
 import { bind } from "../vault/vault.ts";
@@ -396,6 +397,40 @@ test("merge: two tasks on one project → one lands, the other is replaced and t
   assert.equal(entry(b2).status, "landed");
   assert.ok(existsSync(join(checkout, "fa.txt")) && existsSync(join(checkout, "fb.txt")));
   assert.ok(wa);
+});
+
+test("merge: another task's landing while this one's entry is being made → it is replaced and told to rebase", async () => {
+  await sync("g");
+  inbox.length = 0;
+  await deliver("ta", "g", "ra.txt", "a\n");
+  await deliver("tb", "g", "rb.txt", "b\n");
+  const a = (await mergeAs("ta")).approval;
+  // tb's request stops inside its diff (an external diff that waits for a flag), after it read main
+  const origin = paths.project("g");
+  const flag = join(root, "diff-go");
+  const started = join(root, "diff-started");
+  const script = join(root, "slow-diff.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh\ntouch ${started}\nfor i in $(seq 100); do [ -e ${flag} ] && exit 0; sleep 0.1; done\n`,
+  );
+  chmodSync(script, 0o755);
+  g(origin, "config", "diff.external", script);
+  try {
+    const b = mergeAs("tb");
+    await until(() => existsSync(started), 10_000, "tb's diff");
+    const landing = approve(a);
+    // the landing either ends now (nothing orders the two) or waits for tb's entry: a moment, then tb goes on
+    await Promise.race([landing, new Promise((r) => setTimeout(r, 1500))]);
+    writeFileSync(flag, "");
+    await landing;
+    const { approval } = await b;
+    assert.equal(entry(a).status, "landed");
+    assert.equal(entry(approval).status, "replaced", "tb's entry is on the old main");
+    assert.ok(inboxOf("tb").some((m) => m.from === "rebase"));
+  } finally {
+    g(origin, "config", "--unset", "diff.external");
+  }
 });
 
 test("v6 done-when (RPC level, non-git): an owner edit between request and approval → replaced + rebase → lands", async () => {

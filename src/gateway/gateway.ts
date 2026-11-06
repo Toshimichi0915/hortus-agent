@@ -254,11 +254,15 @@ export function createGateway(deps: GatewayDeps): Gateway {
     return true;
   }
 
-  function reconcile(name: string, scope?: string): Promise<boolean> {
+  /** `first`: on the chain, before the pass (a resync's DELETE: the pass under way would write its cursor back) */
+  function reconcile(name: string, scope?: string, first?: () => void): Promise<boolean> {
     const r = runners.get(name);
     const conn = r?.conn;
     if (!r || !conn) return Promise.resolve(true);
-    const p = r.chain.then(() => reconcileOnce(name, conn, r.ac.signal, scope));
+    const p = r.chain.then(() => {
+      first?.();
+      return reconcileOnce(name, conn, r.ac.signal, scope);
+    });
     r.chain = p.then(() => {});
     return p;
   }
@@ -364,9 +368,10 @@ export function createGateway(deps: GatewayDeps): Gateway {
     },
     async resync(dof, scope) {
       if (!runners.get(dof)?.conn) throw new RpcError("not_found", `no running source ${dof}`);
-      if (scope) db.prepare("DELETE FROM syncs WHERE dof = ? AND scope = ?").run(dof, scope);
-      else db.prepare("DELETE FROM syncs WHERE dof = ?").run(dof);
-      await reconcile(dof, scope);
+      await reconcile(dof, scope, () => {
+        if (scope) db.prepare("DELETE FROM syncs WHERE dof = ? AND scope = ?").run(dof, scope);
+        else db.prepare("DELETE FROM syncs WHERE dof = ?").run(dof);
+      });
     },
     async dm(dof, text) {
       const conn = runners.get(dof)?.conn;
