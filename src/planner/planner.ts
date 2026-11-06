@@ -346,8 +346,10 @@ async function batch(): Promise<boolean> {
       )
       .run(today(c.config), run.tokens);
   } finally {
-    c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    // its directory before its row, so no row means nothing left: a batch run again after a crash takes the same id
+    // (its events went back to 0), and step4's recovery test read between the two (round 24)
     rmSync(paths.task(id), { recursive: true, force: true });
+    c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     bus.emit("tasks", { id });
     if (ok) died = 0;
     else if (isStopping()) release(c, n);
@@ -410,7 +412,7 @@ export const plannerModule: Module = {
     ctx = c;
     // a batch killed with hortusd: what it left goes back in the queue; the dispatcher never starts this kind
     for (const { id } of c.db.prepare("SELECT id FROM tasks WHERE kind = 'planner'").all() as { id: string }[]) {
-      // its directory before its row: no row, nothing left (step4's recovery test read between the two, round 24)
+      // its directory before its row: no row, nothing left (as a batch's own end)
       rmSync(paths.task(id), { recursive: true, force: true });
       c.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
       release(c, Number(id.slice("planner-".length)));
