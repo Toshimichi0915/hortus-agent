@@ -10,8 +10,7 @@ import {
   type Config,
   type Credential,
   type Line,
-  type LoginField,
-  type LoginFrame,
+  type LoginEvent,
   type Msg,
   type Passkey,
   type RemoteSession,
@@ -1293,15 +1292,65 @@ const withTitle = (a: Approval): Approval => ({
 });
 const ok = (message?: string) => (message ? { ok: true, message } : { ok: true });
 
-const pages = new Map<number, LoginFrame>();
-const page = (id: number): LoginFrame => {
+type LoginField = "email" | "password";
+interface LoginPage {
+  email: string;
+  password: string;
+  focus: LoginField | null;
+  signedIn: boolean;
+}
+const pages = new Map<number, LoginPage>();
+const page = (id: number): LoginPage => {
   const p = pages.get(id) ?? { email: "", password: "", focus: null, signedIn: false };
   pages.set(id, p);
   return p;
 };
-const submit = (p: LoginFrame) => {
+const submit = (p: LoginPage) => {
   if (p.email && p.password) Object.assign(p, { signedIn: true, focus: null });
 };
+
+/** ponytail: the mock's remote page, drawn as the screencast's JPEG would be; clicks hit-test these boxes. */
+const SITE = { w: 800, h: 500 };
+const BOXES: [LoginField | "submit", number, number, number, number][] = [
+  ["email", 250, 180, 300, 36],
+  ["password", 250, 230, 300, 36],
+  ["submit", 250, 286, 300, 36],
+];
+function frame(p: LoginPage): string {
+  const c = document.createElement("canvas");
+  [c.width, c.height] = [SITE.w, SITE.h];
+  const g = c.getContext("2d") as CanvasRenderingContext2D;
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, SITE.w, SITE.h);
+  g.font = "600 22px sans-serif";
+  g.fillStyle = "#222";
+  g.fillText(p.signedIn ? "You're signed in" : "Sign in", 250, 160);
+  if (!p.signedIn)
+    for (const [f, x, y, w, h] of BOXES) {
+      g.fillStyle = f === "submit" ? "#222" : "#fff";
+      g.fillRect(x, y, w, h);
+      g.strokeStyle = p.focus === f ? "#222" : "#bbb";
+      g.strokeRect(x + 0.5, y + 0.5, w, h);
+      g.font = "14px sans-serif";
+      g.fillStyle = f === "submit" ? "#fff" : "#555";
+      const text = f === "submit" ? "Continue" : f === "password" ? "•".repeat(p.password.length) : p.email;
+      g.fillText(text || (f === "email" ? "Email" : "Password"), x + 12, y + 23);
+    }
+  return c.toDataURL("image/jpeg", 0.8).slice("data:image/jpeg;base64,".length);
+}
+
+/** The mock's `/events/login`: a frame now and after each input, `closed` once the entry is decided. */
+export function loginStream(id: number, on: (e: LoginEvent) => void): () => void {
+  const send = () => {
+    const a = approvals.find((x) => x.id === id);
+    if (a?.status !== "pending") return on({ closed: a?.status === "approved" ? "done" : "rejected" });
+    on({ frame: frame(page(id)), ...SITE, until: Date.now() + 15 * MIN });
+  };
+  const t = `login:${id}`;
+  bus.addEventListener(t, send);
+  send();
+  return () => bus.removeEventListener(t, send);
+}
 
 type Handler = (input: never) => unknown;
 
@@ -1448,8 +1497,9 @@ export const handlers: Record<string, Handler> = {
     reason?: string;
     grant?: boolean;
   }) => {
-    const a = approvals.find((x) => x.id === id && x.status === "pending");
-    if (!a) throw new ApiError("not_found", `approval ${id} is not pending`);
+    const a = approvals.find((x) => x.id === id);
+    if (!a) throw new ApiError("not_found", `no approval ${id}`);
+    if (a.status !== "pending") throw new ApiError("invalid", "already decided");
     if (a.kind === "login" && decision === "approve")
       throw new ApiError("invalid", "a login is finished in the login view");
     Object.assign(a, {
@@ -1474,31 +1524,34 @@ export const handlers: Record<string, Handler> = {
     const a = approvals.find((x) => x.id === id);
     if (a) Object.assign(a, { status: "landed", reason: null });
     emit("approvals");
-    return ok("Landed on main");
+    return { landed: true, reason: null };
   },
-  // the remote page as the mock draws it. ponytail: `field` stands for the x, y of a real click on the canvas
-  "login.frame": ({ id }: { id: number }): LoginFrame => {
-    const p = page(id);
-    return { ...p, password: "•".repeat(p.password.length) };
-  },
+  "merge.diff": ({ id }: { id: number }) => String(approvals.find((x) => x.id === id)?.summary.patch ?? ""),
   "login.input": (i: {
     id: number;
     type: "mouse" | "key" | "text";
     event?: string;
     key?: string;
     text?: string;
-    field?: LoginField | "submit";
+    x?: number;
+    y?: number;
+    modifiers?: number;
   }) => {
     const p = page(i.id);
     const edit = (f: (v: string) => string) => {
       if (p.focus) p[p.focus] = f(p[p.focus]);
     };
     if (i.type === "mouse" && i.event === "mousePressed") {
-      if (i.field === "submit") submit(p);
-      else p.focus = i.field ?? null;
+      const [field] =
+        BOXES.find(
+          ([, x, y, w, h]) => (i.x ?? -1) >= x && (i.x ?? -1) <= x + w && (i.y ?? -1) >= y && (i.y ?? -1) <= y + h,
+        ) ?? [];
+      if (field === "submit") submit(p);
+      else p.focus = field ?? null;
     } else if (i.type === "text") edit((v) => v + (i.text ?? ""));
     else if (i.type === "key" && i.event === "keyDown") {
-      if (i.key === "Backspace") edit((v) => v.slice(0, -1));
+      if (i.key?.length === 1 && !((i.modifiers ?? 0) & 7)) edit((v) => v + i.key);
+      else if (i.key === "Backspace") edit((v) => v.slice(0, -1));
       else if (i.key === "Enter") submit(p);
       else if (i.key === "Tab") p.focus = p.focus === "email" ? "password" : "email";
       else if (i.key === "Escape") p.focus = null;
@@ -1508,15 +1561,18 @@ export const handlers: Record<string, Handler> = {
   },
   "login.done": ({ id }: { id: number }) => {
     const a = approvals.find((x) => x.id === id);
-    if (a) Object.assign(a, { status: "approved", decided_at: now(), decided_by: "owner" });
+    if (a?.status !== "pending") throw new ApiError("invalid", "already decided");
+    Object.assign(a, { status: "approved", decided_at: now(), decided_by: "owner" });
+    emit(`login:${id}`);
     captured = [{ origin: String(a?.summary.origin), cookies: 4, tokens: 0, last_use: now() }, ...captured];
     emit("approvals", "tasks");
     return ok("Signed in: the task gets placeholders for the cookies the site set");
   },
   "login.reject": ({ id }: { id: number }) => {
     const a = approvals.find((x) => x.id === id);
-    if (a) Object.assign(a, { status: "rejected", decided_at: now(), decided_by: "owner" });
-    emit("approvals", "tasks");
+    if (a?.status !== "pending") throw new ApiError("invalid", "already decided");
+    Object.assign(a, { status: "rejected", decided_at: now(), decided_by: "owner" });
+    emit(`login:${id}`, "approvals", "tasks");
     return ok();
   },
 

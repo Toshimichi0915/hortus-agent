@@ -26,7 +26,7 @@ import { tempDir, until } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { invoke } from "../vault/transforms.ts";
-import { connect, flags, launch } from "./cdp.ts";
+import { connect, flags, launch, page as attach } from "./cdp.ts";
 import { jar, registrable } from "./jar.ts";
 import { browserModule, IDLE } from "./login-view.ts";
 import { BrowserSession } from "./tools.ts";
@@ -45,7 +45,7 @@ const fixtures = tempDir("hortus-browser-tf-");
 
 before(async () => {
   site = await fakeSite();
-  const hosts = ["fake.test", "app.fake.test", "tenant.fake.test", "other.test", "site.test", "idle.test"];
+  const hosts = ["fake.test", "app.fake.test", "tenant.fake.test", "other.test", "site.test", "idle.test", "web.test"];
   ctx = {
     config: Config.parse({
       dev: { upstreams: Object.fromEntries(hosts.map((h) => [h, site.url])) },
@@ -61,7 +61,7 @@ before(async () => {
     "INSERT INTO tasks(id, kind, title, brief, status, scope, origins, created, updated) VALUES (?, 'unattended', ?, 'b', 'running', ?, ?, 't', 't')",
   );
   const scope = JSON.stringify({ credentials: [], repos: [] });
-  for (const id of ["T", "T3", "T4", "T5"]) insert.run(id, id, scope, null);
+  for (const id of ["T", "T3", "T4", "T5", "T6"]) insert.run(id, id, scope, null);
   insert.run("T2", "T2", scope, JSON.stringify(["fake.test"]));
   ctx.config.origins = "*";
   mkdirSync(join(fixtures, "fakesite"), { recursive: true });
@@ -522,6 +522,124 @@ test("browser_login → login view (SSE + login.input) → Done → inbox cookie
     1,
     "T3's grant covers the login too",
   );
+});
+
+test("the web UI's login view (HORTUS_WEB=1) in a real Chromium: the canvas's clicks and keys sign in, Done sends placeholders", {
+  skip: !hasChromium,
+}, async () => {
+  process.env.HORTUS_WEB = "1";
+  const web = await startServer(ctx, 0);
+  delete process.env.HORTUS_WEB;
+  // the owner's browser, on the console directly: a window narrower than the site's 1280 px and a 2x screen, so the
+  // canvas is drawn scaled and its points must be mapped back
+  const owner = await launch({ userDataDir: tempDir("hortus-browser-owner-") });
+  try {
+    const cdp = await connect(owner);
+    const s = await attach(cdp);
+    const js = async <T>(expression: string): Promise<T> => {
+      const r = await cdp.send<{ result: { value: T }; exceptionDetails?: unknown }>(
+        "Runtime.evaluate",
+        { expression, returnByValue: true, awaitPromise: true },
+        s,
+      );
+      if (r.exceptionDetails) throw new Error(`${expression}: ${JSON.stringify(r.exceptionDetails)}`);
+      return r.result.value;
+    };
+    await cdp.send(
+      "Emulation.setDeviceMetricsOverride",
+      { width: 900, height: 1000, deviceScaleFactor: 2, mobile: false },
+      s,
+    );
+    const r = (await call(
+      "browser.login",
+      { url: "http://web.test/login", why: "the new UI" },
+      { role: "worker", task: "T6" },
+    )) as { approval: number; kind: string };
+    assert.equal(r.kind, "login");
+    const id = r.approval;
+    const ready = () => site.seen.filter((x) => x.host === "web.test" && x.path === "/ready").length;
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${web.port}/approvals/${id}/login` }, s);
+    await until(() => ready() > 0, 20_000, "the login form in the view");
+    // a frame of the form drawn: the user field's left border (x 100, y 100..130 on the site) is not white (and not the
+    // blank canvas before any frame, transparent black)
+    await until(
+      () =>
+        js<boolean>(`(() => { const c = document.querySelector("canvas"); if (!c || c.width !== 1280) return false;
+          const d = c.getContext("2d").getImageData(98, 105, 6, 20).data;
+          for (let i = 0; i < d.length; i += 4) if (d[i + 3] === 255 && d[i] < 200) return true; return false; })()`),
+      20_000,
+      "the form on the canvas",
+    );
+    // the site's viewport is 1280 wide, its height what headless leaves of 900: the frame's, the canvas's backing size
+    const [left, top, width, height, h] = await js<number[]>(
+      `(() => { const c = document.querySelector("canvas"); c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return [r.left, r.top, r.width, r.height, c.height]; })()`,
+    );
+    assert.ok(width && width < 1280, `the canvas is drawn scaled (${width} px wide)`);
+    const at = (x: number, y: number) => ({
+      x: (left as number) + (x * (width as number)) / 1280,
+      y: (top as number) + (y * (height as number)) / (h as number),
+    });
+    const click = async (x: number, y: number) => {
+      for (const type of ["mousePressed", "mouseReleased"])
+        await cdp.send("Input.dispatchMouseEvent", { type, ...at(x, y), button: "left", clickCount: 1 }, s);
+    };
+    const type = async (text: string) => {
+      for (const ch of text) {
+        const keyCode = ch.toUpperCase().charCodeAt(0);
+        await cdp.send(
+          "Input.dispatchKeyEvent",
+          { type: "keyDown", key: ch, text: ch, windowsVirtualKeyCode: keyCode },
+          s,
+        );
+        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: ch, windowsVirtualKeyCode: keyCode }, s);
+      }
+    };
+    await click(150, 115); // #user
+    await type(USER);
+    await click(150, 165); // #pw
+    await type(PASSWORD);
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "rawKeyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
+      s,
+    );
+    await cdp.send(
+      "Input.dispatchKeyEvent",
+      { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
+      s,
+    );
+    const auth = await until(
+      () => {
+        const c = cookieRow("web.test", "auth");
+        return site.auth !== undefined && c?.value === site.auth ? c : undefined;
+      },
+      20_000,
+      "the site signed the view in and the auth cookie captured",
+    );
+    // what the owner typed went to the site, and stayed nowhere on the owner's page
+    assert.ok(!(await js<string>("document.documentElement.outerHTML")).includes(PASSWORD));
+    await js(`[...document.querySelectorAll("button")].find((b) => b.textContent.includes("I'm signed in")).click()`);
+    await until(
+      () =>
+        (ctx.db.prepare("SELECT status FROM approvals WHERE id = ?").get(id) as { status: string }).status ===
+        "approved",
+      10_000,
+      "the entry approved",
+    );
+    // the page follows: the decision, no canvas (its stream closed with it)
+    await until(() => js<boolean>(`!document.querySelector("canvas")`), 10_000, "the decided entry shown");
+    const msg = (ctx.db.prepare("SELECT body FROM inbox WHERE task_id = 'T6' ORDER BY seq").all() as { body: string }[])
+      .map((x) => JSON.parse(x.body))
+      .find((m) => m.from === "cookies");
+    assert.ok(msg, "inbox cookies");
+    const cookies = msg.data as { name: string; value: string }[];
+    assert.ok(cookies.some((c) => c.name === "auth" && c.value === `hortus-secret-${auth.name}`));
+    assert.ok(cookies.every((c) => c.value.startsWith("hortus-secret-")));
+    assert.ok(!JSON.stringify(msg).includes(auth.value), "the real cookie value never reaches the task");
+  } finally {
+    await owner.close();
+    await web.close();
+  }
 });
 
 test("browser.login for an origin with a stored login → a grant entry; approving it sends the jar", {

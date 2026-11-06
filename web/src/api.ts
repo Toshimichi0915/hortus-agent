@@ -1,10 +1,8 @@
 /**
  * The console API as the pages use it, and the one door to it. `call(method, input)` is `POST /api/<method>` (role
  * owner, `X-Hortus: 1`); `subscribe(topics)` and `streamRows` share the page's one SSE stream (src/console/live.ts).
- * `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead, which a production bundle leaves out.
- *
- * ponytail: what the pages read beyond today's daemon: `login.frame` (the mock's stand-in for the `/events/login`
- * frames, CONNECT.md's step 5).
+ * `loginStream` is the login view's own. `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead,
+ * which a production bundle leaves out.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config.ts";
@@ -118,6 +116,48 @@ export function streamRows(id: string, onRows: (rows: Row[]) => void): () => voi
     clearTimeout(timer);
     off();
   };
+}
+
+/** One `/events/login` message (src/browser/login-view.ts › Event); `frame` is a base64 JPEG of the hostile site. */
+export interface LoginEvent {
+  frame?: string;
+  w?: number;
+  h?: number;
+  until?: number;
+  closed?: string;
+  error?: string;
+}
+
+/**
+ * `/events/login?id=`: the login view's frames, on a stream of its own while the page shows it (opening it starts the
+ * view's Chromium). It ends at `closed` or `error`: a retry after those would start a new Chromium. `onDown` hears a
+ * drop (`true`: the browser retries, `"lost"`: it gave up, a non-200) and the stream back (`false`).
+ */
+export function loginStream(
+  id: number,
+  on: (e: LoginEvent) => void,
+  onDown: (down: boolean | "lost") => void,
+): () => void {
+  if (import.meta.env.VITE_MOCK === "1") {
+    let off: (() => void) | undefined;
+    let live = true;
+    import("./mock.ts").then((m) => {
+      if (live) off = m.loginStream(id, on);
+    });
+    return () => {
+      live = false;
+      off?.();
+    };
+  }
+  const s = new EventSource(`/events/login?id=${id}`);
+  s.onopen = () => onDown(false);
+  s.onerror = () => onDown(s.readyState === EventSource.CLOSED ? "lost" : true);
+  s.onmessage = (m) => {
+    const e = JSON.parse(m.data) as LoginEvent;
+    if (e.closed !== undefined || e.error !== undefined) s.close();
+    on(e);
+  };
+  return () => s.close();
 }
 
 /**
@@ -304,17 +344,6 @@ export interface RemoteStatus {
   cert?: string;
   /** this page came through the remote listener: enrolment codes are made at the machine */
   remote: boolean;
-}
-
-export type LoginField = "email" | "password";
-
-/** The mock's stand-in for the login view's screencast frames (`/events/login?id=`). */
-export interface LoginFrame {
-  email: string;
-  /** masked, as the site's own field would show it */
-  password: string;
-  focus: LoginField | null;
-  signedIn: boolean;
 }
 
 export interface DofFile {

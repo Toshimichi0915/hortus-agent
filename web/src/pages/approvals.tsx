@@ -2,10 +2,19 @@
  * Approvals: what waits for the owner (a credentialed request, a merge, a new transform, a login, a grant), said in
  * plain words with the request itself below; the history; and the live login view.
  */
-import { type ReactNode, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { type Approval, type ApprovalStatus, call, type LoginField, type LoginFrame, useCall } from "../api.ts";
+import { button as buttonOf, modifiers, pagePoint } from "../../../src/console/login-input.ts";
+import { type Approval, type ApprovalStatus, bus, call, loginStream, useCall } from "../api.ts";
 import { CodeBlock } from "../markdown.tsx";
 import {
   buttonVariants,
@@ -47,6 +56,22 @@ const VERB: Record<string, string> = {
   DELETE: "Delete on",
 };
 const taskLink = (a: Approval) => `/tasks/${a.task_id}`;
+
+/**
+ * A decision call. One that lost to another tab, the CLI or a phone says so plainly, and every page on `approvals`
+ * reloads to show what was decided (the stream may have missed it).
+ */
+async function decisive<T>(method: string, input: Record<string, unknown>): Promise<T> {
+  try {
+    return await call<T>(method, input);
+  } catch (e) {
+    if (!/already decided|, not approved$/.test(errorText(e))) throw e;
+    bus.dispatchEvent(new Event("approvals"));
+    throw new Error(
+      "This was already decided, in another tab, the CLI or on a phone. The page now shows the decision.",
+    );
+  }
+}
 
 /** One line for lists: "Send to slack.com (slack)". */
 export function approvalTitle(a: Approval): string {
@@ -204,10 +229,13 @@ function RequestView({ s }: { s: Record<string, unknown> }) {
   );
 }
 
-function MergeView({ s, full }: { s: Record<string, unknown>; full?: boolean }) {
-  const patch = str(s.patch);
+function MergeView({ id, s, full }: { id: number; s: Record<string, unknown>; full?: boolean }) {
+  const [whole, setWhole] = useState<string>();
+  const patch = whole ?? str(s.patch);
   const lines = patch.split("\n");
   const [all, setAll] = useState(!!full);
+  // the entry keeps the first 64 KB: an owner approves what they can read
+  const [load, loading] = useAction(async () => setWhole(await call<string>("merge.diff", { id })));
   const n = Number(s.files ?? 0);
   return (
     <div className="flex flex-col gap-2 *:data-[slot=button]:self-start">
@@ -233,6 +261,11 @@ function MergeView({ s, full }: { s: Record<string, unknown>; full?: boolean }) 
         >
           Show the whole diff ({lines.length} lines)
         </button>
+      )}
+      {all && !!s.truncated && whole === undefined && (
+        <Button size="sm" icon="code" loading={loading} onClick={() => load()}>
+          The diff is cut at 64 KB: load the rest
+        </Button>
       )}
     </div>
   );
@@ -328,7 +361,7 @@ function Body({
   onValues: (v: Record<string, Record<string, string>>) => void;
 }) {
   const s = a.summary;
-  if (a.category === "merge") return <MergeView s={s} full={full} />;
+  if (a.category === "merge") return <MergeView id={a.id} s={s} full={full} />;
   if (a.category === "transforms")
     return <TransformView s={s} pending={a.status === "pending"} values={values} onValues={onValues} />;
   if (a.kind === "login")
@@ -365,27 +398,32 @@ function Body({
   return <RequestView s={s} />;
 }
 
+/** Why it asks: each on its own line, so a tainted consequential request says both (the old page's order). */
 function Why({ a }: { a: Approval }) {
   const p = a.payload ?? {};
-  if (p.untrusted?.length)
-    return (
-      <Callout tone="warning" title="This task read untrusted text">
-        {p.untrusted.join("; ")}. Make sure this is what <em>you</em> want, not what they asked for.
-      </Callout>
-    );
-  if (p.judge)
-    return (
-      <p className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-[13px] text-foreground/80 [&>svg]:mt-0.5 [&>svg]:text-muted-foreground">
-        <Icon name="scale" size={15} /> <span>The judge passed this to you: {p.judge}</span>
-      </p>
-    );
-  if (p.consequential || a.category === "merge")
-    return (
-      <p className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-[13px] text-foreground/80 [&>svg]:mt-0.5 [&>svg]:text-muted-foreground">
-        <Icon name="alert" size={15} /> <span>It changes something that is hard to undo, so it always asks you.</span>
-      </p>
-    );
-  return null;
+  const tainted = !!p.untrusted?.length;
+  const line =
+    "flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-[13px] text-foreground/80 [&>svg]:mt-0.5 [&>svg]:text-muted-foreground";
+  return (
+    <>
+      {tainted && (
+        <Callout tone="warning" title="This task read untrusted text">
+          {p.untrusted?.join("; ")}. Make sure this is what <em>you</em> want, not what they asked for.
+        </Callout>
+      )}
+      {/* a tainted entry's judge reason is its taint, said above */}
+      {p.judge && !tainted && (
+        <p className={line}>
+          <Icon name="scale" size={15} /> <span>The judge passed this to you: {p.judge.slice(0, 200)}</span>
+        </p>
+      )}
+      {(p.consequential || a.category === "merge") && (
+        <p className={line}>
+          <Icon name="alert" size={15} /> <span>It changes something that is hard to undo, so it always asks you.</span>
+        </p>
+      )}
+    </>
+  );
 }
 
 const TILE = "grid flex-none place-items-center rounded-lg";
@@ -417,7 +455,10 @@ const stuck = (a: Approval) =>
   a.category === "merge" && a.status === "approved" && a.decided_by === "owner" && !!a.reason;
 
 function Decision({ a }: { a: Approval }) {
-  const [retry, busy] = useAction(() => call("merge.retry", { id: a.id }));
+  const [retry, busy] = useAction(
+    () => decisive<{ landed: boolean; reason: string | null }>("merge.retry", { id: a.id }),
+    (r) => (r.landed ? "Merged" : `Not merged: ${r.reason}`),
+  );
   if (a.status === "pending") return null;
   if (stuck(a))
     return (
@@ -458,10 +499,12 @@ export function ApprovalCard({ a, compact, full }: { a: Approval; compact?: bool
   const [reason, setReason] = useState("");
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [decide, busy] = useAction(async (decision: "approve" | "reject", extra: Record<string, unknown> = {}) => {
-    const r = await call<{ message?: string }>("approval.decide", { id: a.id, decision, ...extra });
+    const r = await decisive<{ message?: string }>("approval.decide", { id: a.id, decision, ...extra });
+    // typed credentials leave the page once hortusd has them
+    setValues({});
     return { message: r.message ?? (decision === "approve" ? "Approved" : "Rejected") };
   });
-  const [rejectLogin, rejectingLogin] = useAction(() => call("login.reject", { id: a.id }), "Rejected");
+  const [rejectLogin, rejectingLogin] = useAction(() => decisive("login.reject", { id: a.id }), "Rejected");
   const h = head(a);
   // only what was typed: an empty field stays unconfigured
   const entered = Object.fromEntries(
@@ -670,11 +713,20 @@ type Send = (input: Record<string, unknown>) => void;
 /** Keys the box forwards to the page instead of editing itself. */
 const FORWARDED = ["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"];
 
+const keyInput = (e: ReactKeyboardEvent, event: "keyDown" | "keyUp") => ({
+  type: "key",
+  event,
+  key: e.key,
+  code: e.code,
+  keyCode: e.keyCode,
+  modifiers: modifiers(e),
+});
+
 /**
  * The way to type on a phone (a canvas brings up no keyboard) and to paste. Nothing stays here: each character goes to
  * the page and leaves the box, so a password is never on show. An IME's text goes once it is committed.
  */
-function TypeBox({ send }: { send: Send }) {
+function TypeBox({ send, disabled }: { send: Send; disabled: boolean }) {
   const id = useId();
   const [text, setText] = useState("");
   const flush = (v: string) => {
@@ -696,6 +748,7 @@ function TypeBox({ send }: { send: Send }) {
         autoCapitalize="off"
         autoCorrect="off"
         spellCheck={false}
+        disabled={disabled}
         aria-describedby={`${id}-hint`}
         onChange={(e) => {
           if ((e.nativeEvent as InputEvent).isComposing) setText(e.target.value);
@@ -705,77 +758,154 @@ function TypeBox({ send }: { send: Send }) {
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing || !FORWARDED.includes(e.key)) return;
           e.preventDefault();
-          send({ type: "key", event: "keyDown", key: e.key, code: e.code, keyCode: e.keyCode });
-          send({ type: "key", event: "keyUp", key: e.key, code: e.code, keyCode: e.keyCode });
+          send(keyInput(e, "keyDown"));
+          send(keyInput(e, "keyUp"));
         }}
       />
     </div>
   );
 }
 
-/** ponytail: the mock's drawing of the remote page; the real one is a canvas of JPEG frames, clicks sent as x, y. */
-function FakeSite({ frame, send }: { frame: LoginFrame | undefined; send: Send }) {
-  const click = (field: string) => send({ type: "mouse", event: "mousePressed", field });
-  if (frame?.signedIn)
-    return (
-      <div className="flex flex-col items-center gap-1 text-neutral-800">
-        <p className="text-xl font-semibold">You're signed in</p>
-        <p className="text-sm text-neutral-500">{frame.email}</p>
-      </div>
-    );
-  const field = (name: LoginField, label: string) => (
-    <button
-      type="button"
-      className={cn(
-        "cursor-text rounded-lg border border-neutral-300 px-3 py-2 text-left text-sm text-neutral-500",
-        frame?.focus === name && "border-neutral-800 ring-1 ring-neutral-800",
-        frame?.[name] && "text-neutral-800",
-      )}
-      onClick={() => click(name)}
-    >
-      {frame?.[name] || label}
-      {frame?.focus === name && <span className="ml-px inline-block h-3.5 w-px bg-neutral-800 align-text-bottom" />}
-    </button>
-  );
+const CLOSED: Record<string, string> = {
+  done: "Signed in.",
+  rejected: "Rejected.",
+  idle: "The view closed after 15 minutes without input. The request still waits: open the view again.",
+};
+
+/** "m:ss" until `until`, ticking. */
+function Countdown({ until }: { until: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const s = Math.max(0, Math.round((until - Date.now()) / 1000));
   return (
-    <div className="flex w-[min(300px,80%)] flex-col gap-3 text-neutral-800">
-      <span className="size-9 rounded-lg bg-neutral-800" />
-      <p className="text-xl font-semibold">Sign in</p>
-      {field("email", "Email")}
-      {field("password", "Password")}
-      <button
-        type="button"
-        className="cursor-pointer rounded-lg bg-neutral-800 p-2 text-center text-sm font-semibold text-white"
-        onClick={() => click("submit")}
-      >
-        Continue
-      </button>
-    </div>
+    <span className="text-muted-foreground text-xs tabular-nums">
+      closes after {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")} idle
+    </span>
   );
 }
 
+type ViewState = { state: "starting" | "live" | "reconnecting" } | { state: "lost" | "closed" | "error"; text: string };
+
 /**
- * The live login view: the site in a headless browser, drawn here; the owner clicks and types, the task gets only
- * placeholders for the cookies it sets. ponytail: the page is a static stand-in until the frames stream in.
+ * The live login view: the site in hortusd's headless Chromium, its screencast drawn on a canvas (`/events/login`, a
+ * second stream beside the page's own while this page is open); the owner's pointer, wheel and keys go back as
+ * `login.input` at the page's own coordinates. The task gets only placeholders for the cookies the site sets.
  */
 export function LoginView({ id }: { id: number }) {
   const a = useCall<Approval>("approval.get", { id }, ["approvals"]);
-  const frame = useCall<LoginFrame>(import.meta.env.VITE_MOCK === "1" ? "login.frame" : null, { id }, [`login:${id}`]);
-  const [done, finishing] = useAction(() => call("login.done", { id }));
-  const [reject, rejecting] = useAction(() => call("login.reject", { id }), "Rejected");
-  // one at a time, in order: a late character must not land after a newer one
+  const pending = a.data?.status === "pending";
+  const canvas = useRef<HTMLCanvasElement>(null);
+  /** the last frame's page size (CSS px), what `login.input` coordinates are in */
+  const size = useRef({ w: 0, h: 0 });
+  const [view, setView] = useState<ViewState>({ state: "starting" });
+  const [until, setUntil] = useState(0);
+  // bumped by "Open it again": a new stream, which starts a new Chromium
+  const [attempt, setAttempt] = useState(0);
+  const ended = view.state === "lost" || view.state === "closed" || view.state === "error";
+  const endedRef = useRef(false);
+  endedRef.current = ended;
+  const [done, finishing] = useAction(
+    () => decisive<{ cookies: number }>("login.done", { id }),
+    (r) => `Signed in: the task gets ${r.cookies} cookie${r.cookies === 1 ? "" : "s"} as placeholders`,
+  );
+  const [reject, rejecting] = useAction(() => decisive("login.reject", { id }), "Rejected");
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` reopens the stream
+  useEffect(() => {
+    if (!pending) return;
+    setView({ state: "starting" });
+    let newest = 0;
+    return loginStream(
+      id,
+      (e) => {
+        if (e.until) setUntil(e.until);
+        if (e.error !== undefined) return setView({ state: "error", text: e.error });
+        if (e.closed !== undefined)
+          return setView({ state: "closed", text: CLOSED[e.closed] ?? `Closed: ${e.closed}.` });
+        const { frame, w, h } = e;
+        if (!frame || !w || !h) return;
+        // the hostile site's pixels: decoded as a JPEG by an <img>, never parsed as markup; the newest frame wins
+        const n = ++newest;
+        const img = new Image();
+        img.onload = () => {
+          const c = canvas.current;
+          if (n !== newest || !c) return;
+          if (c.width !== img.naturalWidth || c.height !== img.naturalHeight)
+            [c.width, c.height] = [img.naturalWidth, img.naturalHeight];
+          c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
+          size.current = { w, h };
+        };
+        img.src = `data:image/jpeg;base64,${frame}`;
+        setView((v) => (v.state === "live" ? v : { state: "live" }));
+      },
+      (down) =>
+        setView((v) =>
+          v.state === "closed" || v.state === "error"
+            ? v
+            : down === "lost"
+              ? { state: "lost", text: "The connection to hortusd is gone." }
+              : down
+                ? { state: "reconnecting" }
+                : v.state === "reconnecting"
+                  ? { state: "live" }
+                  : v,
+        ),
+    );
+  }, [id, pending, attempt]);
+
+  // one at a time, in order: a keyUp must not overtake its keyDown, a late character land after a newer one
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const send: Send = (input) => {
+    if (endedRef.current) return;
     queue.current = queue.current
-      .then(() => call("login.input", { id, ...input }))
-      .catch((e) => toast(errorText(e), "error"));
+      .then(() => call<{ until?: number }>("login.input", { id, ...input }))
+      .then(
+        (r) => r?.until && setUntil(r.until),
+        (e) => {
+          // the view closed under us (idle, the browser exited): said once, in the bar, not a toast per key
+          if (/closed/.test(errorText(e))) setView({ state: "closed", text: errorText(e) });
+          else toast(errorText(e), "error");
+        },
+      );
   };
+  const at = (e: { clientX: number; clientY: number }) => {
+    const c = canvas.current;
+    return c && pagePoint(e.clientX, e.clientY, c.getBoundingClientRect(), size.current.w, size.current.h);
+  };
+  const mouse = (e: ReactPointerEvent | WheelEvent, event: string, extra: Record<string, unknown> = {}) => {
+    const p = at(e);
+    if (p) send({ type: "mouse", event, ...p, ...extra });
+  };
+  // wheel: React's is passive, and the page behind must not scroll instead
+  const sendRef = useRef(mouse);
+  sendRef.current = mouse;
+  useEffect(() => {
+    const c = canvas.current;
+    if (!c) return;
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      sendRef.current(e, "mouseWheel", { deltaX: e.deltaX, deltaY: e.deltaY });
+    };
+    c.addEventListener("wheel", wheel, { passive: false });
+    return () => c.removeEventListener("wheel", wheel);
+  }, []);
+  const moved = useRef(0);
+
   const s = a.data?.summary ?? {};
   const host = hostOf(str(s.origin));
   const back = { to: "/approvals", label: "Approvals" };
-  if (a.data && a.data.status !== "pending")
+  if (a.error)
     return (
-      <Page title={`Sign in to ${host}`} back={back}>
+      <Page title={`Login #${id}`} back={back}>
+        <Callout tone="danger">{a.error}</Callout>
+      </Page>
+    );
+  if (a.data && (a.data.kind !== "login" || !pending))
+    return (
+      <Page title={a.data.kind === "login" ? `Sign in to ${host}` : `Approval #${id}`} back={back}>
         <ApprovalCard a={a.data} />
       </Page>
     );
@@ -793,24 +923,69 @@ export function LoginView({ id }: { id: number }) {
       wide
     >
       <div className="overflow-hidden rounded-xl border bg-card shadow-md">
-        <div className="flex items-center gap-2.5 border-b bg-muted px-3 py-2 text-[13px] text-foreground/80 [&_code]:flex-1">
+        <div className="flex flex-wrap items-center gap-2.5 border-b bg-muted px-3 py-2 text-[13px] text-foreground/80 [&_code]:flex-1">
           <Icon name="lock" size={15} />
           <code className="truncate">{str(s.url)}</code>
-          <Pill tone="ok" dot>
-            Live
+          {view.state === "live" && until > 0 && <Countdown until={until} />}
+          <Pill tone={view.state === "live" ? "ok" : undefined} dot={view.state === "live"}>
+            {view.state === "live"
+              ? "Live"
+              : view.state === "starting"
+                ? "Starting the browser…"
+                : view.state === "reconnecting"
+                  ? "Reconnecting…"
+                  : "Closed"}
           </Pill>
         </div>
-        <div
-          className="grid aspect-video max-h-[60vh] place-items-center bg-white outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset"
-          role="application"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: the live page takes the owner's clicks and keys
-          tabIndex={0}
-          aria-label="The site, live: click and type here"
-        >
-          <FakeSite frame={frame.data} send={send} />
+        <div className="relative grid min-h-48 place-items-center bg-white">
+          <canvas
+            ref={canvas}
+            width={1280}
+            height={900}
+            // no border or padding: login-input.ts maps the box to the page
+            className="block h-auto max-h-[70vh] w-auto max-w-full touch-none outline-none focus-visible:ring-3 focus-visible:ring-ring"
+            tabIndex={0}
+            aria-label="The site, live: click and type here"
+            onContextMenu={(e) => e.preventDefault()}
+            onPointerDown={(e) => {
+              e.currentTarget.focus();
+              e.preventDefault();
+              mouse(e, "mousePressed", { button: buttonOf(e.button), clickCount: 1 });
+            }}
+            onPointerUp={(e) => mouse(e, "mouseReleased", { button: buttonOf(e.button), clickCount: 1 })}
+            onPointerMove={(e) => {
+              if (Date.now() - moved.current < 50) return;
+              moved.current = Date.now();
+              mouse(e, "mouseMoved", { button: e.buttons & 1 ? "left" : "none" });
+            }}
+            onKeyDown={(e) => {
+              e.preventDefault();
+              send(keyInput(e, "keyDown"));
+            }}
+            onKeyUp={(e) => {
+              e.preventDefault();
+              send(keyInput(e, "keyUp"));
+            }}
+          />
+          {view.state !== "live" && (
+            <div className="absolute inset-0 grid place-items-center bg-white/85 p-6 text-center text-neutral-700">
+              {!("text" in view) ? (
+                <Spinner />
+              ) : (
+                <div className="flex max-w-md flex-col items-center gap-3">
+                  <p>{view.text}</p>
+                  {pending && (
+                    <Button icon="refresh" onClick={() => setAttempt((n) => n + 1)}>
+                      Open the view again
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="border-t px-3.5 py-3">
-          <TypeBox send={send} />
+          <TypeBox send={send} disabled={ended} />
         </div>
       </div>
       <Callout tone="info">
@@ -818,10 +993,10 @@ export function LoginView({ id }: { id: number }) {
         password.
       </Callout>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" icon="check" loading={finishing} onClick={() => done()}>
+        <Button variant="primary" icon="check" loading={finishing} disabled={!pending} onClick={() => done()}>
           I'm signed in
         </Button>
-        <Button variant="quiet-danger" loading={rejecting} onClick={() => reject()}>
+        <Button variant="quiet-danger" loading={rejecting} disabled={!pending} onClick={() => reject()}>
           Reject
         </Button>
       </div>
