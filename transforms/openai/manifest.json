@@ -3,8 +3,20 @@
   "credentials": {
     "openai": {
       "type": "token",
-      "hosts": ["api.openai.com"],
-      "locations": ["header:Authorization"]
+      "hosts": [
+        "api.openai.com"
+      ],
+      "locations": [
+        "header:Authorization"
+      ]
     }
-  }
+  },
+  "consequential": [
+    "DELETE **",
+    "POST **/files",
+    "POST **/uploads",
+    "POST **/batches",
+    "POST **/fine_tuning/**",
+    "POST **/organization/**"
+  ]
 }

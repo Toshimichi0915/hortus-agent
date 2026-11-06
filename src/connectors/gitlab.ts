@@ -4,7 +4,7 @@
  * placeholder `hortus-secret-<name>` in `PRIVATE-TOKEN` through `deps.fetch` (the pipeline as role core). Project ids
  * are `group/…/project`, URL-encoded in API paths; their channel directory is `group__…__project`.
  */
-import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
+import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Heard, Mirrored } from "../types.ts";
 import { equals } from "../vault/ops.ts";
 import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest } from "./forge.ts";
 
@@ -38,6 +38,8 @@ interface Issue {
   updated_at: string;
 }
 interface MR extends Issue {
+  merged_by?: User | null;
+  closed_by?: User | null;
   source_branch: string;
   target_branch: string;
   sha: string;
@@ -228,6 +230,30 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
   }
 
+  /** The live rules (`toEvent`) for what a reconcile finds, from the object where no event came: a missed message or end. */
+  async function heard(
+    p: string,
+    thread: string,
+    type: string,
+    u: User | null | undefined,
+    writer: User | undefined,
+    text: string,
+    ts: string,
+    end?: string,
+  ): Promise<Heard> {
+    const own = !!u && (await me())?.id === u.id;
+    const robot = !!u && (own || u.bot === true || BOT_NAME.test(u.username));
+    const ender = robot && !own && !!end && writer?.id !== u?.id;
+    return {
+      author: u && !ender ? { user: u.username, member: await member(p, writer?.id ?? u.id) } : null,
+      bot: robot && !ender,
+      summary: `${type} ${p}${thread} by ${u?.username ?? "?"}: ${u && writer?.id === u.id ? text : NOT_THEIRS}`,
+      refs: [ref(p, thread)],
+      ts: iso(ts),
+      ...(end ? { state: end } : {}),
+    };
+  }
+
   const people = (us: User[] | undefined) => (us ?? []).map((x) => x.username);
 
   function issueTop(p: string, i: Issue): Change {
@@ -324,12 +350,20 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  async function approvals(p: string, mr: MR): Promise<Change[]> {
+  async function approvals(p: string, mr: MR, later: boolean): Promise<Change[]> {
     const a = await json<{ approved_by?: { user: User }[]; updated_at?: string }>(
       `${P(p)}/merge_requests/${mr.iid}/approvals`,
     );
     // Community Edition's answer has no `updated_at`
-    return (a.approved_by ?? []).map((x) => reviewChange(p, `!${mr.iid}`, x.user, a.updated_at ?? mr.updated_at));
+    const ts = a.updated_at ?? mr.updated_at;
+    const thread = `!${mr.iid}`;
+    return Promise.all(
+      (a.approved_by ?? []).map(async (x) => {
+        const c = reviewChange(p, thread, x.user, ts);
+        if (later) c.heard = await heard(p, thread, "merge_request.approved", x.user, undefined, "", ts);
+        return c;
+      }),
+    );
   }
 
   return {
@@ -430,25 +464,44 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         if (t > max) max = t;
       };
       const notes = async (kind: string, iid: number, thread: string) => {
-        for (const n of await all<Note>(`${P(project)}/${kind}/${iid}/notes?per_page=100`))
-          changes.push(noteChange(project, thread, n, n.author?.username ?? ""));
+        for (const n of await all<Note>(`${P(project)}/${kind}/${iid}/notes?per_page=100`)) {
+          const c = noteChange(project, thread, n, n.author?.username ?? "");
+          // a system note is the forge's own line: no hook sends one
+          if (cursor && !n.system)
+            c.heard = await heard(project, thread, "note", n.author, n.author, n.body ?? n.note ?? "", n.created_at);
+          changes.push(c);
+        }
+      };
+      const prHeard = async (mr: MR): Promise<Change[]> => {
+        const out = await prTop(project, mr, mr.state === "opened");
+        const top = out[0];
+        const s = state(mr.state);
+        const by = s === "merged" ? mr.merged_by : s === "closed" ? mr.closed_by : mr.author;
+        const act = s === "merged" ? "merge" : s === "closed" ? "close" : "open";
+        const said = [mr.title, mr.description].filter(Boolean).join("\n\n");
+        if (cursor && top)
+          top.heard = await heard(project, `!${mr.iid}`, `merge_request.${act}`, by, mr.author, said, mr.updated_at, s);
+        return out;
       };
       for (const i of await all<Issue>(`${P(project)}/issues?scope=all&per_page=100${after}`)) {
         seen(i.updated_at);
-        changes.push(issueTop(project, i));
+        const top = issueTop(project, i);
+        const said = [i.title, i.description].filter(Boolean).join("\n\n");
+        if (cursor) top.heard = await heard(project, `#${i.iid}`, "issue.open", i.author, i.author, said, i.created_at);
+        changes.push(top);
         await notes("issues", i.iid, `#${i.iid}`);
       }
       for (const mr of await all<MR>(`${P(project)}/merge_requests?state=all&per_page=100${after}`)) {
         seen(mr.updated_at);
         if (mr.state === "opened") continue; // below, whole
-        changes.push(...(await prTop(project, mr, false)));
+        changes.push(...(await prHeard(mr)));
         await notes("merge_requests", mr.iid, `!${mr.iid}`);
       }
       // open MRs whole: state, checks, diff, notes and approvals (a pipeline moves without touching updated_at)
       for (const mr of await all<MR>(`${P(project)}/merge_requests?state=opened&per_page=100`)) {
-        changes.push(...(await prTop(project, mr, true)));
+        changes.push(...(await prHeard(mr)));
         await notes("merge_requests", mr.iid, `!${mr.iid}`);
-        changes.push(...(await approvals(project, mr)));
+        changes.push(...(await approvals(project, mr, !!cursor)));
       }
       yield { changes, cursor: max };
     },

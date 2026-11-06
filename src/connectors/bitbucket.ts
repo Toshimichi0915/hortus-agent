@@ -5,7 +5,7 @@
  *
  * Authors are `account_id`s (nicknames are not unique, so trust never keys on them); the mirror shows nicknames.
  */
-import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
+import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Heard, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
 import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest, worst } from "./forge.ts";
 
@@ -42,6 +42,7 @@ interface Pull {
   description?: string | null;
   state: string;
   author?: User | null;
+  closed_by?: User | null;
   source: { branch: { name: string }; commit?: { hash: string } | null };
   destination: { branch: { name: string } };
   participants?: { user: User; approved?: boolean; state?: string | null; participated_on?: string | null }[];
@@ -195,6 +196,30 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       bot: robot && !ender,
       summary: `${type} ${p}${thread ?? ""} by ${nick(u)}: ${text}`,
       refs: thread ? [ref(p, thread)] : prs.map((n) => ref(p, `!${n}`)),
+    };
+  }
+
+  /** The live rules (`toEvent`) for what a reconcile finds, from the object where no event came: a missed message or end. */
+  async function heard(
+    p: string,
+    thread: string,
+    type: string,
+    u: User | null | undefined,
+    writer: User | null | undefined,
+    text: string,
+    ts: string,
+    end?: string,
+  ): Promise<Heard> {
+    const own = !!idOf(u) && idOf(await me()) === idOf(u);
+    const robot = !!u && (own || u.type === "app_user");
+    const ender = robot && !own && !!end && idOf(writer) !== idOf(u);
+    return {
+      author: u && !ender ? { user: idOf(u), member: await member(p, writer ?? u) } : null,
+      bot: robot && !ender,
+      summary: `${type} ${p}${thread} by ${nick(u)}: ${idOf(u) && idOf(writer) === idOf(u) ? text : NOT_THEIRS}`,
+      refs: [ref(p, thread)],
+      ts: iso(ts),
+      ...(end ? { state: end } : {}),
     };
   }
 
@@ -383,8 +408,24 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
         if (t > max) max = t;
       };
       const comments = async (kind: string, id: number, thread: string) => {
-        for (const c of await all<Comment>(`${R(project)}/${kind}/${id}/comments?pagelen=100`, "values"))
-          if (!c.deleted) changes.push(commentChange(project, thread, c));
+        for (const c of await all<Comment>(`${R(project)}/${kind}/${id}/comments?pagelen=100`, "values")) {
+          if (c.deleted) continue;
+          const x = commentChange(project, thread, c);
+          const type = kind === "issues" ? "issue:comment_created" : "pullrequest:comment_created";
+          if (cursor) x.heard = await heard(project, thread, type, c.user, c.user, c.content?.raw ?? "", c.created_on);
+          changes.push(x);
+        }
+      };
+      const prHeard = async (pr: Pull): Promise<Change[]> => {
+        const out = await prTop(project, pr, pr.state === "OPEN");
+        const top = out[0];
+        const s = pr.state.toLowerCase();
+        const type = s === "open" ? "created" : s === "merged" ? "fulfilled" : "rejected";
+        const said = [pr.title, pr.description].filter(Boolean).join("\n\n");
+        const by = s === "open" ? pr.author : (pr.closed_by ?? pr.author);
+        if (cursor && top)
+          top.heard = await heard(project, `!${pr.id}`, `pullrequest:${type}`, by, pr.author, said, pr.updated_on, s);
+        return out;
       };
       let issues: Issue[] = [];
       try {
@@ -395,32 +436,33 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       }
       for (const i of issues) {
         seen(i.updated_on);
-        changes.push(issueTop(project, i));
+        const top = issueTop(project, i);
+        const said = [i.title, i.content?.raw].filter(Boolean).join("\n\n");
+        if (cursor)
+          top.heard = await heard(project, `#${i.id}`, "issue:created", i.reporter, i.reporter, said, i.created_on);
+        changes.push(top);
         await comments("issues", i.id, `#${i.id}`);
       }
       const done = "state=MERGED&state=DECLINED&state=SUPERSEDED";
       for (const pr of await all<Pull>(`${R(project)}/pullrequests?${done}&pagelen=50${q}`, "values")) {
         seen(pr.updated_on);
-        changes.push(...(await prTop(project, pr, false)));
+        changes.push(...(await prHeard(pr)));
         await comments("pullrequests", pr.id, `!${pr.id}`);
       }
       // open PRs whole: state, statuses, diff, comments and approvals (a status moves without touching updated_on)
       for (const listed of await all<Pull>(`${R(project)}/pullrequests?state=OPEN&pagelen=50`, "values")) {
         seen(listed.updated_on);
         const pr = await json<Pull>(`${R(project)}/pullrequests/${listed.id}`);
-        changes.push(...(await prTop(project, pr, true)));
+        changes.push(...(await prHeard(pr)));
         await comments("pullrequests", pr.id, `!${pr.id}`);
-        for (const x of pr.participants ?? [])
-          if (x.approved || x.state === "changes_requested")
-            changes.push(
-              reviewChange(
-                project,
-                `!${pr.id}`,
-                x.user,
-                x.participated_on ?? pr.updated_on,
-                x.approved ? "approved" : "changes_requested",
-              ),
-            );
+        for (const x of pr.participants ?? []) {
+          if (!x.approved && x.state !== "changes_requested") continue;
+          const ts = x.participated_on ?? pr.updated_on;
+          const c = reviewChange(project, `!${pr.id}`, x.user, ts, x.approved ? "approved" : "changes_requested");
+          const type = x.approved ? "pullrequest:approved" : "pullrequest:changes_request_created";
+          if (cursor) c.heard = await heard(project, `!${pr.id}`, type, x.user, undefined, "", ts);
+          changes.push(c);
+        }
       }
       yield { changes, cursor: max };
     },

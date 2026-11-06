@@ -545,7 +545,19 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
           cmpId(a.id, b.id),
         );
         const changes: Change[] = first && !THREAD.has(c.type) ? [channelChange(c)] : [];
-        for (const m of page) if (MIRRORED.has(m.type ?? 0)) changes.push(...(await messageChanges(m, true)));
+        for (const m of page) {
+          if (!MIRRORED.has(m.type ?? 0)) continue;
+          const mine = await messageChanges(m, true);
+          const top = mine.find((x) => x.frontmatter);
+          // the live event's fields: past the first sync a reconcile may be the only one to see it. REST leaves out
+          // `member` and `guild_id`, which a guild channel implies
+          if (cursor && top) {
+            const d = { ...m, ...(c.guild_id ? { member: {}, guild_id: c.guild_id } : {}) };
+            const { author, bot, summary, refs } = await toEvent({ session_id: "", s: 0, t: "MESSAGE_CREATE", d });
+            top.heard = { author, bot, summary, refs };
+          }
+          changes.push(...mine);
+        }
         after = page.at(-1)?.id ?? after;
         if (first || page.length) yield { changes, cursor: after };
         if (!page.length) break;

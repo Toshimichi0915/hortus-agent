@@ -26,7 +26,7 @@ import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
-import { tempDir } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
@@ -73,6 +73,22 @@ const fake = http.createServer((req, res) => {
     if (req.url?.includes("git-receive-pack")) {
       res.writeHead(200, { "content-type": "application/x-git-receive-pack-result" });
       return res.end(`n=${n}`);
+    }
+    if (req.url?.startsWith("/model/")) {
+      const kind = req.url.slice(7);
+      if (kind === "json") return json({ usage: { prompt_tokens: 100, completion_tokens: 20 } });
+      if (kind === "none") return json({ error: "nothing counted" });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (kind === "openai")
+        res.write(
+          'data: {"choices":[]}\n\ndata: {"usage":{"prompt_tokens":70,"completion_tokens":7}}\n\ndata: [DONE]\n\n',
+        );
+      if (kind === "anthropic")
+        res.write(
+          'data: {"message":{"usage":{"input_tokens":5,"cache_read_input_tokens":50,"output_tokens":1}}}\n\ndata: {"usage":{"output_tokens":9}}\n\n',
+        );
+      if (kind === "silent") res.write(`data: ${"x".repeat(4000)}\n\n`);
+      return res.end();
     }
     if (req.url === "/sse") {
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -154,6 +170,7 @@ const HOSTS = [
   "str.test",
   "badres.test",
   "badhdr.test",
+  "models.test",
 ];
 let ports: { https: number; http: number; dns: number };
 let ca: Buffer;
@@ -864,6 +881,82 @@ test("the session's own model credential: no gate, placeholders in its body (the
   }
 });
 
+test("a task's model calls are counted at the proxy, streamed or not, and end at its budget plus one context", async () => {
+  const prev = ctx.config.worker.provider;
+  ctx.config.worker.provider = "gh";
+  const row = () => ctx.db.prepare("SELECT metered FROM tasks WHERE id = 'T'").get() as { metered: number };
+  const model = (kind: string) =>
+    send({
+      host: "api.gh.test",
+      method: "POST",
+      path: `/model/${kind}`,
+      headers: { authorization: "Bearer hortus-secret-gh" },
+      body: "{}",
+    });
+  const charged = async (kind: string) => {
+    const before = row().metered;
+    assert.equal((await model(kind)).status, 200);
+    await until(() => row().metered !== before || kind === "none", 2000, kind);
+    await sleep(20);
+    return row().metered - before;
+  };
+  try {
+    assert.equal(await charged("json"), 120, "as core adds them: input + output");
+    assert.equal(await charged("openai"), 77);
+    assert.equal(await charged("anthropic"), 64, "cache reads are input; output is the last, cumulative figure");
+    assert.equal(await charged("none"), 0, "no usage in a body: fails open");
+    assert.ok((await charged("silent")) >= 1000, "a stream that reports nothing is counted by its bytes");
+    // another credential, or an uncredentialed call to the same host, is nobody's model spend
+    const n = row().metered;
+    await send({ host: "api.gh.test", path: "/model/json" });
+    assert.equal(row().metered, n);
+    const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
+    ctx.db.prepare("UPDATE tasks SET budget = ? WHERE id = 'T'").run(JSON.stringify({ tokens: 10, hours: 1 }));
+    ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(10 + ctx.config.worker.context_window - 1);
+    assert.equal((await model("none")).status, 200, "the agent's summary call, past its own stop");
+    ctx.db.prepare("UPDATE tasks SET metered = metered + 1 WHERE id = 'T'").run();
+    const over = await model("json");
+    assert.equal(over.status, 403);
+    assert.match(over.body, /budget exceeded/);
+    ctx.db.prepare("UPDATE tasks SET budget = ?, metered = 0 WHERE id = 'T'").run(budget.budget);
+  } finally {
+    ctx.config.worker.provider = prev;
+  }
+});
+
+test("a model credential's manifest `consequential` is gated: fine-tuning, deleting, the admin API are no thinking", async () => {
+  const prev = ctx.config;
+  const vault = readVault();
+  writeVault({ ...vault, llm: { type: "token", value: "sk-model", transform: "openai", hosts: ["models.test"] } });
+  ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" } });
+  try {
+    const call = (method: string, path: string) =>
+      send({
+        host: "models.test",
+        method,
+        path,
+        headers: { authorization: "Bearer hortus-secret-llm", "content-length": "2" },
+        body: "{}",
+      });
+    const n = approvals();
+    assert.equal((await call("POST", "/v1/chat/completions")).status, 200);
+    assert.equal(approvals(), n);
+    for (const [m, p] of [
+      ["POST", "/v1/fine_tuning/jobs"],
+      ["DELETE", "/v1/files/f1"],
+      ["POST", "/v1/organization/admin_api_keys"],
+    ] as const) {
+      const r = await call(m, p);
+      assert.equal(r.status, 403, `${m} ${p}`);
+      assert.match(r.body, /approval/);
+    }
+    assert.equal(approvals(), n + 3);
+  } finally {
+    ctx.config = prev;
+    writeVault(vault);
+  }
+});
+
 test("a credential without a transform follows only a manifest naming it, never another's same-type entry", async () => {
   const prev = ctx.config.worker.provider;
   writeVault({
@@ -941,7 +1034,7 @@ test("origins: a list never cuts a session off its own model; a stranger's host,
   writeVault({ ...vault, llm: { type: "token", value: "sk-x", transform: "openai", hosts: ["models.test"] } });
   ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" }, origins: ["registry.npmjs.org"] });
   try {
-    const task = { scope: null, origins: null };
+    const task = { scope: null, origins: null, budget: null, metered: 0 };
     const worker = await egress({ role: "worker", task: "T" }, "models.test", true, task);
     assert.equal("status" in worker && worker.status === 403, false);
     const other = await egress({ role: "worker", task: "T" }, "example.com", true, task);

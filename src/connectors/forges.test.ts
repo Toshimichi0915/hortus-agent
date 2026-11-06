@@ -404,6 +404,13 @@ before(async () => {
     connectors,
     fetch: () => coreFetch,
     commit: (dof, changes, msg) => commit(dof, changes, msg),
+    mirrored: (dof, path) => {
+      try {
+        return readFileSync(join(paths.dof(dof), path), "utf8");
+      } catch {
+        return null;
+      }
+    },
     wake: () => {
       wakes++;
     },
@@ -891,6 +898,18 @@ for (const h of H) {
     const calls0 = h.fake.calls.length;
     await gw.reconcile(dof, P);
     assert.ok(fm(dof, `${D}/#${lost.n}/#${lost.n}.md`), "read back by history");
+    if (dof !== "github") {
+      // no delivery log to read back: the owner's issue reaches the Planner as the hook would have brought it
+      const r = db
+        .prepare("SELECT author, trusted, consumed, refs FROM events WHERE dof = ? AND key LIKE ?")
+        .get(dof, `history:${D}/#${lost.n}/#${lost.n}.md:%`) as
+        | { author: string; trusted: number; consumed: number; refs: string }
+        | undefined;
+      assert.ok(r, "routed");
+      assert.equal(r.trusted, 1);
+      assert.equal(r.consumed, 0);
+      assert.deepEqual(JSON.parse(r.refs), [`${dof}:${P}:#${lost.n}`]);
+    }
     assert.ok(
       h.fake.calls.slice(calls0).some((c) => h.since.test(c.url)),
       "history asked since the cursor",
@@ -939,7 +958,13 @@ for (const h of H) {
     assert.ok(pending(true).some((p) => p.id === id));
     gate.decide(id, "reject", "owner");
     for (const [method, path] of h.writes) {
-      const r = await send({ host: h.apiHost, path, method, headers: h.rest, ...(method === "GET" ? {} : { body: "{}" }) });
+      const r = await send({
+        host: h.apiHost,
+        path,
+        method,
+        headers: h.rest,
+        ...(method === "GET" ? {} : { body: "{}" }),
+      });
       assert.ok(isApproval(r), `${method} ${path}: ${r.body}`);
       const wid = JSON.parse(r.body).approval as number;
       assert.ok(

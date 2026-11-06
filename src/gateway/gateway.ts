@@ -3,6 +3,7 @@
  * trust → insert (dedupe) → ack → mirror → commit → wake. Reconcile: at start and every 10 min, `history` per scope
  * from its `syncs` cursor. Nothing here names a service.
  */
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Config, DofConfig } from "../config.ts";
@@ -11,6 +12,9 @@ import { backoff, sleep } from "../connectors/retry.ts";
 import { trusted } from "../connectors/trust.ts";
 import type { Module } from "../ctx.ts";
 import { type DatabaseSync, now } from "../db.ts";
+import { readCapped } from "../hostile.ts";
+import { unsafe } from "../mirror/repo.ts";
+import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import {
   type Change,
@@ -22,6 +26,7 @@ import {
 } from "../types.ts";
 
 export const RECONCILE_MS = 10 * 60_000;
+const HOUR = 3600_000;
 
 /** What the Planner, a brief and a Worker's inbox get of a message, as written: a task has no DOF by default, so this is
  * all it sees. A trusted author's order keeps its last line, and a cut says so: the last instruction of a long paste went
@@ -49,6 +54,8 @@ export interface GatewayDeps {
   ws?: ConnectorDeps["ws"];
   /** the mirror writer (01-mirror-search.md) */
   commit(dof: string, changes: Change[], message: string): Promise<unknown>;
+  /** the mirror file's text, null when there is none; unset: a reconcile routes nothing */
+  mirrored?(dof: string, path: string): string | null;
   /** wake the Planner */
   wake(): void;
   hasRef(ref: string): boolean;
@@ -103,9 +110,39 @@ export function createGateway(deps: GatewayDeps): Gateway {
   const release = db.prepare("UPDATE events SET consumed = ? WHERE dof = ? AND key = ? AND consumed = -2");
   const forget = db.prepare("DELETE FROM events WHERE dof = ? AND key = ?");
   db.exec("UPDATE events SET consumed = 0 WHERE consumed = -2");
-  const getCursor = db.prepare("SELECT cursor FROM syncs WHERE dof = ? AND scope = ?");
-  const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync) VALUES (?, ?, ?, ?)
+  const getCursor = db.prepare("SELECT cursor, first FROM syncs WHERE dof = ? AND scope = ?");
+  const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync, first) VALUES (?1, ?2, ?3, ?4, ?4)
     ON CONFLICT(dof, scope) DO UPDATE SET cursor = excluded.cursor, last_sync = excluded.last_sync`);
+  const routed = db.prepare("SELECT 1 FROM events WHERE dof = ? AND key = ? AND created > ?");
+  const missedKey = (c: Change) => `history:${c.path}${c.frontmatter?.state ? `:${c.frontmatter.state}` : ""}`;
+
+  /**
+   * The objects of a history batch nobody heard of: no connection was up, and a service with no redelivery will not send
+   * them again. A live event left the file (or the state) in the mirror, so that is the dedupe, whatever the event's key;
+   * the check and the insert share a tick, and the live path looks here after its commit, so one of the two routes it.
+   * A bot's is not routed, nor what the scope's first sync took: history, not news. Returned held until the commit.
+   */
+  function missed(name: string, changes: Change[], since: string): string[] {
+    const keys: string[] = [];
+    const cfg = deps.config().dofs[name];
+    for (const c of changes) {
+      const h = c.heard;
+      if (!h || h.bot || !cfg) continue;
+      const ts = h.ts ?? String(c.frontmatter?.ts ?? "");
+      if (ts <= since) continue;
+      const text = deps.mirrored?.(name, c.path);
+      if (text === undefined || (text !== null && !(h.state && !text.includes(`\nstate: ${h.state}\n`)))) continue;
+      const a = h.author;
+      const key = missedKey(c);
+      const event = { dof: name, key, ts, payload: null, author: a, bot: false, summary: h.summary, refs: h.refs };
+      const t = trusted(event, cfg);
+      const summary = summaryOf(h.summary, t);
+      const by = [a?.user ?? null, a ? Number(a.member) : null] as const;
+      insert.run(name, key, ts, ...by, Number(t), 0, "null", now(), summary, JSON.stringify(h.refs), -2);
+      keys.push(key);
+    }
+    return keys;
+  }
 
   async function eventsLoop(name: string, r: Runner, conn: Connector, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
@@ -148,7 +185,11 @@ export function createGateway(deps: GatewayDeps): Gateway {
             const head = event.summary.replace(/\s+/g, " ").slice(0, 120);
             if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${head}`);
             log.info(`sync(${name}): ${head} +${m.changes.length}`);
-            const wake = m.wake && !event.bot;
+            // a retry that came after a reconcile routed the same object (Slack's run for an hour after a restart)
+            const twice = m.changes.some((c) =>
+              routed.get(name, missedKey(c), new Date(Date.now() - HOUR).toISOString()),
+            );
+            const wake = m.wake && !event.bot && !twice;
             release.run(wake ? 0 : -1, name, event.key); // reactions, deletes, joins: mirrored, not Planner input
             r.error = undefined;
             if (wake) deps.wake();
@@ -187,11 +228,14 @@ export function createGateway(deps: GatewayDeps): Gateway {
     for (const scope of scopes) {
       if (signal.aborted) return true; // a first backfill runs for hours, and stopOne waits for this loop
       try {
-        const row = getCursor.get(name, scope) as { cursor: string | null } | undefined;
+        const row = getCursor.get(name, scope) as { cursor: string | null; first: string | null } | undefined;
         let n = 0;
         for await (const b of history(scope, row?.cursor ?? null)) {
+          const heard = row?.first ? missed(name, b.changes, row.first) : [];
           if (b.changes.length) await deps.commit(name, b.changes, `sync(${name}): ${scope} +${b.changes.length}`);
           setCursor.run(name, scope, b.cursor, now());
+          for (const key of heard) release.run(0, name, key);
+          if (heard.length) deps.wake();
           n += b.changes.length;
           if (signal.aborted) return true;
         }
@@ -382,6 +426,9 @@ export const gatewayModule: Module = {
       connectors,
       fetch: (name) => wiring.fetch(name),
       commit: (dof, changes, msg) => wiring.commit(dof, changes, msg),
+      mirrored: (dof, path) =>
+        // what the writer refuses never lands: "" reads as known, or it would be routed on every pass
+        unsafe(path) ? "" : (readCapped(join(paths.dof(dof), path), 1 << 20)?.text ?? null),
       wake: () => wiring.wake(),
       hasRef: (ref) => wiring.hasRef(ref),
       ws: (url) => (wiring.ws ?? ((u: string) => new WebSocket(u)))(url),

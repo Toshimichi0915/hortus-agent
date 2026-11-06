@@ -18,6 +18,7 @@ import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
+import { overdrawn } from "../proxy/pipeline.ts";
 import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
@@ -349,16 +350,22 @@ async function finish(
   // a session hortusd or the owner ended (shutdown, close, a STOP killed after 30 s) did not fail: killed, it exits
   // non-zero with no result, and the card said so; after a restart that error also stopped approvals starting the chat
   // (tasks.ts › restarts)
+  // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
+  const b = tasks.get(id);
+  const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number };
+  const overdrawnBy = limit.tokens !== undefined && b.metered >= overdrawn(limit.tokens);
   const error =
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
         ? `budget_exceeded: the session was stopped after ${hours.toFixed(2)} h (budget hours)`
-        : failed
-          ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
-          : spent !== undefined
-            ? `budget_exceeded: ${spent.slice(0, 2000)}`
-            : (gaveUp?.slice(0, 2000) ?? null);
+        : overdrawnBy
+          ? `budget_exceeded: budget exceeded: ${b.metered}/${limit.tokens} tokens through the proxy`
+          : failed
+            ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
+            : spent !== undefined
+              ? `budget_exceeded: ${spent.slice(0, 2000)}`
+              : (gaveUp?.slice(0, 2000) ?? null);
   const fresh = tasks.get(id);
   // what reached the inbox during this session: an older message a clean exit left behind is the Worker's choice (it
   // drains at its start), and re-queueing on it let a hostile one boot again for its whole `hours`, a Planner batch each
@@ -368,7 +375,9 @@ async function finish(
   const current = fresh.status;
   // `runs`: tokens its schedule runs charged to this task (3c), kept on top of its own sessions' count
   const runs = (JSON.parse(fresh.usage ?? "{}") as { runs?: number }).runs ?? 0;
-  const usage = JSON.stringify(runs ? { tokens: tokens + runs, runs } : { tokens });
+  // the proxy saw every model call and the session only its own, so never the two added
+  const own = Math.max(tokens, fresh.metered);
+  const usage = JSON.stringify(runs ? { tokens: own + runs, runs } : { tokens: own });
   const extra = { hours, usage, summary: summary ?? row.summary, error };
   if (stopping || current !== "running") {
     // shutdown (recovery decides at the next start) or closed meanwhile: only the accounting
@@ -383,7 +392,10 @@ async function finish(
     // an owner message the Worker never drained re-queues it; a crash waits for the next message (no restart loop),
     // and so do a STOP and an exhausted budget (both exit 0 without draining: re-queueing them would loop)
     const halted =
-      overBudget || msgs.some((m) => m.type === "budget_exceeded") || existsSync(join(paths.ctl(id), "STOP"));
+      overBudget ||
+      overdrawnBy ||
+      msgs.some((m) => m.type === "budget_exceeded") ||
+      existsSync(join(paths.ctl(id), "STOP"));
     tasks.setStatus(id, exit.code === 0 && inbox > cursor && !halted ? "queued" : "waiting", extra);
   }
   if (error) reply(id, { type: "error", message: error });
@@ -453,7 +465,7 @@ export async function runPlanner(
     const exit = await entry.child.wait();
     const { tokens } = scan(join(paths.out(row.id), "sessions"));
     log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
-    return { tokens, ok: exit.code === 0 };
+    return { tokens: Math.max(tokens, tasks.get(row.id).metered), ok: exit.code === 0 };
   } finally {
     releaseLinks(row.id);
     running.delete(row.id);

@@ -308,6 +308,7 @@ test("history: after= paging ascending with cursor = last id; a thread scope fil
     ["302/channel.md", ...ms.map((m) => `302/${m.id}/${m.id}.md`)],
   );
   assert.equal(all.at(-1)?.cursor, ms[2]?.id);
+  assert.equal(all.flatMap((b) => b.changes).filter((c) => c.heard).length, 0, "a first sync hears nothing");
   const m4 = fake.post("302", { user: "201", text: "m4", quiet: true });
   const inc = await collect("302", ms[2]?.id ?? null);
   assert.deepEqual(

@@ -44,6 +44,7 @@ export interface TaskRow {
   origins: string | null;
   budget: string | null;
   usage: string | null;
+  metered: number;
   project: string | null;
   runtime: string | null;
   parent: string | null;

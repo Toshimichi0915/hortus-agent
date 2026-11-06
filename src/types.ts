@@ -45,6 +45,20 @@ export interface Change {
   frontmatter?: Record<string, unknown>;
   body?: string;
   bytes?: Buffer;
+  /** history only: who this object is, should the live event for it have been missed (gateway › reconcile) */
+  heard?: Heard;
+}
+
+/** What a reconcile routes for an object the mirror does not hold yet: the live event's fields, by the live rules. */
+export interface Heard {
+  author: Author | null;
+  bot: boolean;
+  summary: string;
+  refs: string[];
+  /** when it happened, where that is not `frontmatter.ts` (a PR's end) */
+  ts?: string;
+  /** a PR's: a change of state counts too, not only a new file */
+  state?: string;
 }
 
 export interface DiffEntry {

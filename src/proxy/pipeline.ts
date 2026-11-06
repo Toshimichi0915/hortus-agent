@@ -9,6 +9,7 @@ import http from "node:http";
 import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { PassThrough, pipeline, Readable, type Transform } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import zlib from "node:zlib";
 import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
@@ -89,14 +90,22 @@ export interface Target {
 export interface TaskRow {
   scope: { credentials?: string[]; repos?: string[] } | null;
   origins: "*" | string[] | null;
+  budget: { tokens: number } | null;
+  /** tokens counted on its model calls here */
+  metered: number;
 }
 
 export function taskRow(id: string): TaskRow | undefined {
-  const r = ctx().db.prepare("SELECT scope, origins FROM tasks WHERE id = ?").get(id) as
-    | { scope: string | null; origins: string | null }
+  const r = ctx().db.prepare("SELECT scope, origins, budget, metered FROM tasks WHERE id = ?").get(id) as
+    | { scope: string | null; origins: string | null; budget: string | null; metered: number }
     | undefined;
   if (!r) return undefined;
-  return { scope: r.scope ? JSON.parse(r.scope) : null, origins: r.origins ? JSON.parse(r.origins) : null };
+  return {
+    scope: r.scope ? JSON.parse(r.scope) : null,
+    origins: r.origins ? JSON.parse(r.origins) : null,
+    budget: r.budget ? (JSON.parse(r.budget) as { tokens: number }) : null,
+    metered: r.metered,
+  };
 }
 
 /** Global `origins` merged with the task row's (already narrowed by its projects when the dispatcher wrote it). */
@@ -545,6 +554,8 @@ export interface Prepared {
   scrub: Scrubber;
   /** the session's own model call: its body is conversation, sent as is (handles in it are text, not handles) */
   llmCall?: boolean;
+  /** a task's model call: its usage counts against `budget.tokens` */
+  metered?: boolean;
   /** handle text → value, for handles minted asynchronously after the gate (installation tokens) */
   tokens?: Map<string, string>;
 }
@@ -762,14 +773,14 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     git === "receive" && RECEIVE_PACK.test(ct) && template.body === "0000" && req.headers["content-length"] === "4";
   // a vouched read (GraphQL) still needs repos to narrow its token to: `repositories: []` is not known to mean none
   const read = template.read === true && projects.length > 0;
+  const listed = [...manifests].some((m) =>
+    (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
+  );
   const consequential =
     !probe &&
     (blind ||
       // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
-      (!read &&
-        [...manifests].some((m) =>
-          (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
-        )) ||
+      (!read && listed) ||
       (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase())));
   if (found.length && client.task) {
     for (const m of manifests) {
@@ -786,9 +797,17 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     }
   }
 
-  // 9. gate (only requests that carry a credential)
+  // the session's own model calls, counted here too: a Worker's `curl` to its model is in no session file, and those
+  // files are the Worker's. Past the budget and one context (the agent's own stop and its summary call come first) they end
+  const model = found.length > 0 && found.every((f) => f.h.name === llm);
+  const metered = model && !!client.task && (client.role === "worker" || client.role === "planner");
+  if (metered && task?.budget && task.metered >= overdrawn(task.budget.tokens))
+    return refuse(403, `budget exceeded: ${task.metered}/${task.budget.tokens} tokens through the proxy`, { host });
+
+  // 9. gate (only requests that carry a credential); a model call only where its manifest names it: a big conversation
+  // is a streamed body, and no act
   let approved = false;
-  if (found.length && category && !probe && !found.every((f) => f.h.name === llm)) {
+  if (found.length && category && !probe && (!model || listed)) {
     const hash = hashTemplate(template);
     // a grant on the origin (checked above) passes captured-only requests that are not consequential
     const granted = capturedOnly && (client.role === "login" || !consequential);
@@ -832,6 +851,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     body,
     scrub: s,
     llmCall,
+    metered,
     tokens,
   };
 }
@@ -1051,6 +1071,63 @@ async function slot(c: Client): Promise<() => void> {
   };
 }
 
+/** Where the proxy refuses a task's model calls: `budget.tokens` plus one context, for the summary after the agent's stop. */
+export const overdrawn = (tokens: number): number => tokens + ctx().config.worker.context_window;
+
+/**
+ * Input and output tokens of a model response or an SSE event, as core reckons them (`usage` of the openai and anthropic
+ * providers), so a call the agent also logs counts the same. ponytail: the two shipped shapes, in the proxy rather than
+ * in `transforms/` because a stream skips `response()`; a custom provider's other shape is not counted.
+ */
+function usageOf(v: unknown): { input: number; output: number } | undefined {
+  const o = v as { usage?: unknown; message?: { usage?: unknown }; response?: { usage?: unknown } } | null;
+  const u = (o?.usage ?? o?.message?.usage ?? o?.response?.usage) as Record<string, unknown> | null | undefined;
+  if (!u || typeof u !== "object") return undefined;
+  const n = (k: string) => (typeof u[k] === "number" && u[k] > 0 && u[k] < 1e12 ? u[k] : 0);
+  return {
+    input: n("prompt_tokens") || n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
+    output: n("completion_tokens") || n("output_tokens"),
+  };
+}
+
+function charge(p: Prepared, tokens: number): void {
+  if (tokens > 0)
+    ctx()
+      .db.prepare("UPDATE tasks SET metered = metered + ? WHERE id = ?")
+      .run(tokens, p.client.task as string);
+}
+
+/** A stream's usage, read as it passes. A stream reports none unless asked (`stream_options`, which a `curl` leaves out):
+ * then its bytes, at 4 a token, or that one flag would be a way round the count. */
+function meterStream(p: Prepared, r: Readable): void {
+  const text = new StringDecoder("utf8");
+  let carry = "";
+  let bytes = p.raw.body?.length ?? 0;
+  let input = 0;
+  let output = 0;
+  let seen = false;
+  const line = (l: string) => {
+    if (!l.includes('"usage"')) return;
+    try {
+      const u = usageOf(JSON.parse(l.replace(/^data:\s*/, "")));
+      if (!u) return;
+      seen = true;
+      input = Math.max(input, u.input); // Anthropic's arrive in two events, each cumulative
+      output = Math.max(output, u.output);
+    } catch {} // not JSON: nothing to count
+  };
+  r.on("data", (b: Buffer) => {
+    bytes += b.length;
+    const lines = (carry + text.write(b)).split("\n");
+    carry = (lines.pop() ?? "").slice(-(1 << 20));
+    lines.forEach(line);
+  });
+  r.once("close", () => {
+    line(carry);
+    charge(p, seen ? input + output : Math.ceil(bytes / 4));
+  });
+}
+
 /** Set-Cookie captured first, whatever the body or transport (HEAD, 204, a stream, binary, a WebSocket's handshake): the
  * client never gets a real value. The scrubber that knows the capture. */
 export function takeCookies(p: Prepared, res: http.IncomingMessage): Scrubber {
@@ -1107,6 +1184,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     headers = plain;
   }
   const streamed = (r: Readable): Out => {
+    if (p.metered) meterStream(p, r);
     const { "content-length": _, ...h } = headers;
     const s = scrub.stream();
     pipeline(r, s, () => {});
@@ -1126,6 +1204,13 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
   // ponytail: over 16 MB (or still arriving after 30 s) skips response() and is scrubbed as a stream, not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
+  // no `usage`, no charge (an error, a model list): a provider that reports none is not stopped by this
+  if (p.metered && text !== undefined) {
+    try {
+      const u = usageOf(JSON.parse(text));
+      if (u) charge(p, u.input + u.output);
+    } catch {} // not JSON: nothing to count
+  }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);
     return { status, headers: { ...headers, "content-length": String(body.length) }, body };

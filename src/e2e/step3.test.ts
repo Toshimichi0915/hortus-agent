@@ -326,7 +326,37 @@ test("over budget with an undrained message: waiting, no restart loop", { skip }
   // the raise is what the Worker waited for: it starts it, once
   assert.match(c.task.error ?? "", /^budget_exceeded: budget exceeded/);
   await api("task.budget", { id, tokens: 1e6 });
-  await until(async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3, 15_000, "go on");
+  await until(
+    async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3,
+    15_000,
+    "go on",
+  );
+});
+
+test("the proxy's count of a task's model calls: past it the task is over budget, and never added to the session's", {
+  skip,
+}, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "spend" });
+  await waitStatus(id, "waiting");
+  await api("task.budget", { id, tokens: 10 });
+  const db = openDb(paths.db());
+  db.prepare("UPDATE tasks SET metered = 5000000 WHERE id = ?").run(id);
+  db.close();
+  await api("task.budget", { id, tokens: 1e9 }); // the Worker's own count stays under: only the proxy's is over
+  await api("task.send", { id, text: "one more" });
+  await until(
+    async () => JSON.stringify((await card(id)).task.usage).includes("5000000"),
+    15_000,
+    "usage is the larger count",
+  );
+  await api("task.budget", { id, tokens: 10 });
+  await api("task.send", { id, text: "and one more" });
+  await until(
+    async () => /^budget_exceeded: .*through the proxy/.test((await card(id)).task.error ?? ""),
+    15_000,
+    "over",
+  );
+  await waitStatus(id, "waiting");
 });
 
 test("hostile out/: a link planted at summary.md is never followed by hortusd", { skip }, async () => {

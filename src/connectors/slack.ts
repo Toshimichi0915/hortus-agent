@@ -371,6 +371,17 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
 
     async *history(scope, cursor) {
       const oldest = cursor ?? undefined;
+      /** the live event's fields, on the message's file: past the first sync a reconcile may be the only one to see it */
+      const said = async (m: SlackMsg): Promise<Change[]> => {
+        const changes = await messageChanges(scope, m, true);
+        const top = changes.find((c) => c.frontmatter);
+        if (cursor && top) {
+          const event = { ...m, type: "message", channel: scope } as unknown as Payload["event"];
+          const { author, bot, summary, refs } = await toEvent({ event_id: "", event } as Payload);
+          top.heard = { author, bot, summary, refs };
+        }
+        return changes;
+      };
       const msgs = (await all<SlackMsg>("conversations.history", { channel: scope, oldest, limit: 200 }, "messages"))
         .filter((m) => MIRRORED.has(m.subtype))
         .sort((a, b) => cmpTs(a.ts, b.ts));
@@ -378,14 +389,14 @@ export async function create(deps: ConnectorDeps): Promise<Connector> {
       for (let i = 0; i === 0 || i < msgs.length; i += 200) {
         const changes: Change[] = i === 0 ? [await channelChange(scope)] : [];
         for (const m of msgs.slice(i, i + 200)) {
-          changes.push(...(await messageChanges(scope, m, true)));
+          changes.push(...(await said(m)));
           if (m.reply_count) {
             const replies = await all<SlackMsg>(
               "conversations.replies",
               { channel: scope, ts: m.ts, oldest },
               "messages",
             );
-            for (const r of replies) if (r.ts !== m.ts) changes.push(...(await messageChanges(scope, r, true)));
+            for (const r of replies) if (r.ts !== m.ts) changes.push(...(await said(r)));
           }
           if (cmpTs(m.ts, max) > 0) max = m.ts;
         }

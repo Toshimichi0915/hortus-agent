@@ -10,7 +10,7 @@ import { call } from "../rpc.ts";
 import { FakeSlack } from "../test/fakes/slack.ts";
 import { directPathFetch, FakeTelegram } from "../test/fakes/telegram.ts";
 import { memLog, tempDir, until } from "../test/until.ts";
-import type { Change, Connector, ConnectorFactory, Event, Incoming } from "../types.ts";
+import type { Change, Connector, ConnectorFactory, Event, Heard, Incoming } from "../types.ts";
 import { createGateway, type GatewayDeps, summaryOf, timing } from "./gateway.ts";
 
 test("summaryOf: an owner's long order keeps its last line, a stranger's is cut sooner, and a cut says so", () => {
@@ -36,7 +36,12 @@ interface Commit {
   held?: number;
 }
 
-function harness(config: () => Config, factories: Record<string, ConnectorFactory>, fetch?: typeof fake.fetch) {
+function harness(
+  config: () => Config,
+  factories: Record<string, ConnectorFactory>,
+  fetch?: typeof fake.fetch,
+  mirrored?: GatewayDeps["mirrored"],
+) {
   const commits: Commit[] = [];
   const order: string[] = [];
   const log = memLog();
@@ -57,6 +62,7 @@ function harness(config: () => Config, factories: Record<string, ConnectorFactor
       wakes++;
     },
     hasRef: () => false,
+    ...(mirrored ? { mirrored } : {}),
   };
   return { gw: createGateway(deps), commits, order, log, wakes: () => wakes };
 }
@@ -329,6 +335,80 @@ test("reconcile: a scope that throws keeps its cursor; the other scopes proceed"
   assert.equal(cur("bad"), "5");
   assert.equal(cur("good"), "9");
   assert.ok(H.log.errors.some((e) => e.includes("reconcile bad failed")));
+  await H.gw.stop();
+});
+
+test("reconcile routes what no connection heard: not the first sync, a bot's, or what the mirror holds; a retry after it wakes nothing", async () => {
+  const cfg = Config.parse({ dofs: { mz: { type: "stub", owner: "U1" } } });
+  const file = (id: string, user: string, bot = false, ts = "2030-01-01T00:00:00Z", extra = {}): Change => ({
+    op: "put",
+    path: `C/${id}/${id}.md`,
+    frontmatter: { ts, ...extra },
+    body: "",
+    heard: { author: { user, member: true }, bot, summary: `message by ${user}: ${id}`, refs: [`mz:C:${id}`] },
+  });
+  let batch: Change[] = [file("old", "U1")];
+  const held = new Map<string, string>([
+    ["C/seen/seen.md", "---\nts: x\n---\n"],
+    ["C/pr/pr.md", "---\nstate: open\n---\n"],
+  ]);
+  const st = stub("mz", {
+    scopes: async () => ["C"],
+    async *history() {
+      yield { changes: batch, cursor: "c" };
+    },
+    mirror: async () => ({ changes: [{ op: "put", path: "C/lost/lost.md", body: "" }], wake: true }),
+  });
+  const H = harness(
+    () => cfg,
+    { stub: async () => st },
+    undefined,
+    (_d, p) => held.get(p) ?? null,
+  );
+  const rowsOf = () =>
+    db.prepare("SELECT key, trusted, summary, refs, consumed FROM events WHERE dof = 'mz' ORDER BY id").all() as {
+      key: string;
+      trusted: number;
+      consumed: number;
+    }[];
+  H.gw.start();
+  await until(() => H.commits.length === 1);
+  await sleep(20);
+  assert.deepEqual(rowsOf(), [], "the first sync is history, not news");
+  assert.equal(H.wakes(), 0);
+
+  const end = file("pr", "U2", false, "2030-01-01T00:00:00Z", { state: "merged" });
+  (end.heard as Heard).state = "merged";
+  const open = file("pr", "U2", false, "2030-01-01T00:00:00Z", { state: "open" });
+  (open.heard as Heard).state = "open";
+  batch = [
+    file("lost", "U1"),
+    file("stranger", "U9"),
+    file("mine", "BOT", true),
+    file("seen", "U1"),
+    file("before", "U1", false, "2001-01-01T00:00:00Z"),
+    end,
+    open,
+  ];
+  await H.gw.reconcile("mz");
+  const got = rowsOf();
+  assert.deepEqual(
+    got.map((r) => [r.key, r.trusted, r.consumed]),
+    [
+      ["history:C/lost/lost.md", 1, 0],
+      ["history:C/stranger/stranger.md", 0, 0],
+      ["history:C/pr/pr.md:merged", 0, 0],
+    ],
+  );
+  assert.equal(H.wakes(), 1);
+  await H.gw.reconcile("mz");
+  assert.equal(rowsOf().length, 3, "a second pass, the file still unseen, is the same row");
+
+  // Slack's retry of the message a reconcile already routed
+  st.push({ key: "late" });
+  await until(() => rowsOf().length === 4);
+  await sleep(20);
+  assert.equal(rowsOf().at(-1)?.consumed, -1);
   await H.gw.stop();
 });
 

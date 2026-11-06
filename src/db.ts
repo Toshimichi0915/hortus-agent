@@ -75,6 +75,10 @@ const migrations: string[] = [
   "ALTER TABLE console_sessions ADD COLUMN passkey TEXT;",
   // review round 22: a task's runs, looked up at every gate check (family)
   "CREATE INDEX tasks_parent ON tasks(parent);",
+  // review round 22: when a scope's first sync ended (only what is newer is a missed message) and the tokens the proxy
+  // counted on a task's model calls
+  `ALTER TABLE syncs ADD COLUMN first TEXT; UPDATE syncs SET first = last_sync;
+  ALTER TABLE tasks ADD COLUMN metered INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 const TAINT_MAX = 5;
