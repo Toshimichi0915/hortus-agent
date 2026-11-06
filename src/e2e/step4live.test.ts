@@ -63,6 +63,50 @@ const eventTask = (text: string) =>
         | undefined,
   );
 
+/** The transient unit; a second call is a restart's second half. */
+async function startDaemon(): Promise<void> {
+  const env = { HORTUS_HOME: paths.home(), HORTUS_CONSOLE_PORT: String(port), HOME: home, PATH: process.env.PATH };
+  const r = spawnSync(
+    "sudo",
+    [
+      "systemd-run",
+      "--unit",
+      UNIT,
+      "--collect",
+      "--uid",
+      String(process.getuid?.()),
+      "--gid",
+      String(process.getgid?.()),
+      "-p",
+      "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE",
+      "-p",
+      "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE",
+      "-p",
+      "Delegate=yes",
+      "-p",
+      "KillMode=mixed",
+      "-p",
+      "RuntimeMaxSec=900",
+      ...Object.entries(env).flatMap(([k, v]) => ["-E", `${k}=${v}`]),
+      process.execPath,
+      "--no-warnings",
+      bin("hortusd"),
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  await until(
+    () =>
+      fetch(`http://127.0.0.1:${port}/`).then(
+        (x) => x.ok,
+        () => false,
+      ),
+    20_000,
+    "the console",
+  );
+  await until(() => fake.calls.some((c) => c.method === "apps.connections.open"), 20_000, "the socket");
+}
+
 before(async () => {
   if (!LIVE) return;
   const owner = JSON.parse(readFileSync(join(realHome, ".hortus", "secrets.json"), "utf8")) as Record<
@@ -104,46 +148,7 @@ before(async () => {
     { mode: 0o600 },
   );
   cleanupNet();
-  const env = { HORTUS_HOME: paths.home(), HORTUS_CONSOLE_PORT: String(port), HOME: home, PATH: process.env.PATH };
-  const r = spawnSync(
-    "sudo",
-    [
-      "systemd-run",
-      "--unit",
-      UNIT,
-      "--collect",
-      "--uid",
-      String(process.getuid?.()),
-      "--gid",
-      String(process.getgid?.()),
-      "-p",
-      "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE",
-      "-p",
-      "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE",
-      "-p",
-      "Delegate=yes",
-      "-p",
-      "KillMode=mixed",
-      "-p",
-      "RuntimeMaxSec=900",
-      ...Object.entries(env).flatMap(([k, v]) => ["-E", `${k}=${v}`]),
-      process.execPath,
-      "--no-warnings",
-      bin("hortusd"),
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(r.status, 0, r.stderr);
-  await until(
-    () =>
-      fetch(`http://127.0.0.1:${port}/`).then(
-        (x) => x.ok,
-        () => false,
-      ),
-    20_000,
-    "the console",
-  );
-  await until(() => fake.calls.some((c) => c.method === "apps.connections.open"), 20_000, "the socket");
+  await startDaemon();
   mark("daemon up");
 });
 
@@ -217,4 +222,88 @@ test("the owner's DM → Planner task on foo → reply in the DM thread (notifie
   mark(`batches so far: ${batches} (follow-up in #${batches > batchesBefore ? batches : "?"})`);
   const usage = db((d) => d.prepare("SELECT day, tokens FROM planner_usage").all());
   mark(`planner_usage: ${JSON.stringify(usage)}`);
+});
+
+const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Approve what is pending on a task until `done` holds: the walk is about routing and counting, not the gate. */
+async function approving<T>(id: string, done: () => T | undefined, ms: number, what: string): Promise<T> {
+  return until(
+    async () => {
+      for (const a of (await api<{ approvals: { id: number; category: string }[] }>("task.get", { id })).approvals)
+        await api("approval.decide", { id: a.id, decision: "approve" });
+      return done();
+    },
+    ms,
+    what,
+  );
+}
+
+test("a message posted while hortusd is down reaches the Planner at the reconcile, and is answered once", {
+  skip,
+  timeout: 600_000,
+}, async () => {
+  // what the first sync of a scope reads is history: it has to have run
+  await until(
+    () => db((d) => d.prepare("SELECT 1 FROM syncs WHERE scope = 'D1' AND first IS NOT NULL").get()),
+    20_000,
+    "D1's first sync",
+  );
+  spawnSync("sudo", ["systemctl", "stop", UNIT], { stdio: "ignore" });
+  fake.epoch = Math.floor(Date.now() / 1000); // a message older than the scope's first sync is history, not news
+  const asked = fake.post("D1", { user: "U1", text: "Reply to this DM with the word heron", quiet: true });
+  mark("owner's DM posted with hortusd down");
+  await tick(500);
+  fake.calls.length = 0;
+  await startDaemon();
+  const id = await until(() => eventTask("the word heron")?.task_id, 300_000, "the Planner's task");
+  mark(`routed to ${id}`);
+  const row = db((d) => d.prepare("SELECT key, trusted FROM events WHERE summary LIKE '%the word heron%'").all()) as {
+    key: string;
+    trusted: number;
+  }[];
+  assert.equal(row.length, 1, "one event, whatever redelivers");
+  assert.match(row[0]?.key ?? "", /^history:/);
+  assert.equal(row[0]?.trusted, 1);
+  const reply = await approving(
+    id,
+    () => fake.calls.find((c) => c.method === "chat.postMessage" && /heron/i.test(c.params.text ?? "")),
+    300_000,
+    "the reply",
+  );
+  mark(`answered: ${String(reply.params.text).slice(0, 120)} (thread ${reply.params.thread_ts} of ${asked.ts})`);
+});
+
+test("a Worker's own curl to its model is counted, streamed or not, and past the budget its model calls end", {
+  skip,
+  timeout: 600_000,
+}, async () => {
+  const curl = (body: string) =>
+    `curl -s https://ollama.com/v1/chat/completions -H 'Authorization: Bearer hortus-secret-ollama-cloud' -H 'Content-Type: application/json' -d '{"model":"${MODEL}","messages":[{"role":"user","content":"Say hi"}]${body}}' | tail -c 200`;
+  const text = `Run these three commands with bash, once each, then call done with a one-line summary.\n${curl("")}\n${curl(',"stream":true')}\n${curl(',"stream":true,"stream_options":{"include_usage":true}')}`;
+  const { id } = await api<{ id: string }>("task.open", { text });
+  const row = () =>
+    db((d) => d.prepare("SELECT status, metered, usage, error FROM tasks WHERE id = ?").get(id)) as {
+      status: string;
+      metered: number;
+      usage: string | null;
+      error: string | null;
+    };
+  await approving(id, () => (row().status === "waiting" ? true : undefined), 300_000, "the turn's end");
+  const r = row();
+  const sessions = (JSON.parse(r.usage ?? "{}") as { tokens?: number }).tokens ?? 0;
+  mark(`metered ${r.metered}, usage ${sessions}, error ${r.error}`);
+  assert.ok(r.metered > 0);
+  assert.equal(sessions, r.metered, "the proxy saw every call, so its count is the task's, not a sum");
+
+  db((d) =>
+    d.prepare("UPDATE tasks SET budget = ?, metered = ? WHERE id = ?").run('{"tokens":1,"hours":1}', 200_000, id),
+  );
+  await api("task.send", { id, text: "Say hi again." });
+  await until(
+    () => (/^budget_exceeded: .*through the proxy/.test(row().error ?? "") ? true : undefined),
+    120_000,
+    "the stop",
+  );
+  mark(`stopped: ${row().error}`);
+  assert.equal(row().status, "waiting");
 });

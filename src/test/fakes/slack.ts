@@ -74,6 +74,8 @@ export class FakeSlack {
   /** envelope ids acked by the client, in order */
   acks: string[] = [];
   /** every API call, in order */
+  /** where its message clock starts: a fixed past, unless a test needs messages newer than the daemon's start */
+  epoch = 1730000000;
   calls: { method: string; params: Params }[] = [];
   /** every request's Authorization header (or ""), in order */
   auths: string[] = [];
@@ -337,7 +339,7 @@ export class FakeSlack {
   // ---- HTTP ----------------------------------------------------------------------------------------------------
 
   private ts(): string {
-    return `${1730000000 + ++this.n}.000100`;
+    return `${this.epoch + ++this.n}.000100`;
   }
 
   private must(channel: string): FakeChannel {

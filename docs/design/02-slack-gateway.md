@@ -111,3 +111,5 @@ Edge cases: a message with an empty `text` and one file; `ts` with trailing zero
 
 - `discord`/`telegram` (4b) are new files under `src/connectors/` plus one line in `connectors/index.ts`; the gateway, mirror, trust and tests of this step do not change. Verify by grepping `gateway.ts` for `slack`: zero hits.
 - The fake's shape (`post`/`edit`/`delete`/`react`/`replay`/`disconnect`) is the template for the other fakes, so the same gateway tests run against each connector.
+
+**Round 22.** `history` sets `Change.heard` past the first sync; a reconcile routes an object the mirror lacks, newer than `syncs.first`, as `history:<path>[:state]` (`gateway.ts › missed`).
