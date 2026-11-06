@@ -217,7 +217,10 @@ test("project origins: a chat holds every project's list, its run too; a list ex
   const chat = parent(undefined, "chat");
   const plain = parent();
   assert.equal(row(chat.id), null);
-  ctx.config = Config.parse({ ...prev, projects: { ...prev.projects, strict: { path: project, origins: ["a.test"] } } });
+  ctx.config = Config.parse({
+    ...prev,
+    projects: { ...prev.projects, strict: { path: project, origins: ["a.test"] } },
+  });
   try {
     const strict = parent(undefined, "unattended", "strict");
     assert.deepEqual(row(strict.id), ["a.test"]);
@@ -264,7 +267,12 @@ test("the parent's grants cover a run, and a run's cover the next; a durable gra
   cookie(p.id, "own");
   cookie(stranger.id, "site", "login");
   cookie(stranger.id, "other");
-  assert.deepEqual(jar(ctx.db, r.id).map((c) => c.name).sort(), ["own", "site"]);
+  assert.deepEqual(
+    jar(ctx.db, r.id)
+      .map((c) => c.name)
+      .sort(),
+    ["own", "site"],
+  );
   const pass = (task: string, category: string) =>
     check({
       caller: worker(task),
@@ -296,7 +304,9 @@ test("a run inherits its parent's taint, and an earlier run's; the parent none o
   assert.deepEqual(taintOf(ctx.db, p.id, ctx.config), ["read a page"]);
   // a stranger's reply routed to a run: the next one reads what that run left, so it is not clean either
   ctx.db
-    .prepare("INSERT INTO events(dof, key, ts, author, trusted, bot, created, task_id) VALUES ('s', 'k', 't', 'U9', 0, 0, 't', ?)")
+    .prepare(
+      "INSERT INTO events(dof, key, ts, author, trusted, bot, created, task_id) VALUES ('s', 'k', 't', 'U9', 0, 0, 't', ?)",
+    )
     .run(r.id);
   assert.ok(taintOf(ctx.db, next.id, ctx.config).includes("read untrusted messages (s:U9)"));
   assert.deepEqual(taintOf(ctx.db, p.id, ctx.config), ["read a page"]);
@@ -336,6 +346,8 @@ test("run exit: usage charged to the parent, summary kept as last-summary.md; ov
   runs.onExit(tasks.get(r.id), [msg]);
   runs.onExit(tasks.get(r.id), []); // a second exit of the same run is not charged twice
   assert.deepEqual(JSON.parse(tasks.get(p.id).usage ?? ""), { tokens: 150, runs: 150 });
+  // the parent's own next session gets what its runs left, not its whole budget again
+  assert.equal(tasks.taskJson(ctx.config, tasks.get(p.id)).budget.tokens, 0, "100 less 150");
   assert.match(tasks.get(p.id).error ?? "", /^budget_exceeded: .*150\/100 tokens/);
   assert.deepEqual(told, [`task ${p.id} is over budget`], "once");
   const rows = () =>
@@ -480,6 +492,8 @@ test("a run left after its parent closed cannot set a timer: nothing would ever 
   tick();
   const run = ctx.db.prepare("SELECT id FROM tasks WHERE parent = ?").get(p.id) as { id: string };
   await tasks.close(p.id, "done");
+  // a run still queued or at work when its task ends (a merged PR) ends with it: it would act, and ask, for a closed task
+  assert.equal(tasks.get(run.id).status, "done");
   assert.equal(ctx.db.prepare("SELECT 1 FROM schedules WHERE id = ?").get(id), undefined);
   await assert.rejects(set(run.id, { every: 300 }), /is closed/);
   assert.equal((ctx.db.prepare("SELECT count(*) AS n FROM schedules").get() as { n: number }).n, 0);

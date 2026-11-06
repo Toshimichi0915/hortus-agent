@@ -928,6 +928,13 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     const over = await model("json");
     assert.equal(over.status, 403);
     assert.match(over.body, /budget exceeded/);
+    // what its schedules' runs spent is its own: a session after them gets what is left, not the budget again
+    const cw = ctx.config.worker.context_window;
+    ctx.db
+      .prepare("UPDATE tasks SET metered = 0, usage = ? WHERE id = 'T'")
+      .run(JSON.stringify({ tokens: 10 + cw, runs: 10 + cw }));
+    assert.equal((await model("json")).status, 403, "its runs' tokens count");
+    ctx.db.prepare("UPDATE tasks SET usage = NULL WHERE id = 'T'").run();
     ctx.db.prepare("UPDATE tasks SET budget = ?, metered = 0 WHERE id = 'T'").run(budget.budget);
   } finally {
     ctx.config.worker.provider = prev;

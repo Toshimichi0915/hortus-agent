@@ -204,6 +204,13 @@ test("a host session past its hours is killed: a tool that never returns reaches
   });
   await until(() => tasks.get(id).status === "waiting", 10_000);
   assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
+  // the owner's raise of its hours is what it waited for: it goes on, as after a token stop
+  await call("task.budget", { id, hours: 1 }, { role: "owner" });
+  const said = ctx.db.prepare("SELECT body FROM inbox WHERE task_id = ?").all(id) as { body: string }[];
+  assert.ok(
+    said.some((r) => r.body.includes("raised the budget")),
+    "told to go on",
+  );
   await dispatcherModule.stop();
   await proxyModule.stop();
 });

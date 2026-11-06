@@ -92,20 +92,20 @@ export interface TaskRow {
   scope: { credentials?: string[]; repos?: string[] } | null;
   origins: "*" | string[] | null;
   budget: { tokens: number } | null;
-  /** tokens counted on its model calls here */
+  /** tokens counted on its model calls here, and its schedules' runs' (their own limit is what was left at their start) */
   metered: number;
 }
 
 export function taskRow(id: string): TaskRow | undefined {
-  const r = ctx().db.prepare("SELECT scope, origins, budget, metered FROM tasks WHERE id = ?").get(id) as
-    | { scope: string | null; origins: string | null; budget: string | null; metered: number }
+  const r = ctx().db.prepare("SELECT scope, origins, budget, metered, usage FROM tasks WHERE id = ?").get(id) as
+    | { scope: string | null; origins: string | null; budget: string | null; metered: number; usage: string | null }
     | undefined;
   if (!r) return undefined;
   return {
     scope: r.scope ? JSON.parse(r.scope) : null,
     origins: r.origins ? JSON.parse(r.origins) : null,
     budget: r.budget ? (JSON.parse(r.budget) as { tokens: number }) : null,
-    metered: r.metered,
+    metered: r.metered + ((r.usage ? (JSON.parse(r.usage) as { runs?: number }) : {}).runs ?? 0),
   };
 }
 

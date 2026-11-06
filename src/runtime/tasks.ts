@@ -116,6 +116,9 @@ const json = (v: unknown): string => JSON.stringify(v);
 const parse = <T>(s: string | null | undefined, d: T): T => (s ? (JSON.parse(s) as T) : d);
 export const isClosed = (s: string): boolean => s === "done" || s === "failed";
 
+/** Tokens its schedules' runs charged to this task (usage.runs, 3c). */
+export const runsOf = (t: Pick<TaskRow, "usage">): number => parse<{ runs?: number }>(t.usage, {}).runs ?? 0;
+
 export function get(id: string): TaskRow {
   const r = ctx().db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
   if (!r) throw new RpcError("not_found", `no task ${id}`);
@@ -256,6 +259,9 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
   if (isClosed(t.status)) throw new RpcError("invalid", `task ${id} is already ${t.status}`);
   closing.add(id);
   try {
+    // its schedules' runs end with it (a merged PR's task): one queued or at work would act, and ask, for a closed task
+    const runs = ctx().db.prepare("SELECT id FROM tasks WHERE parent = ? AND status NOT IN ('done', 'failed')").all(id);
+    for (const r of runs as { id: string }[]) await close(r.id, outcome);
     await hooks.kill(id);
     setStatus(id, outcome, { closed: now() });
     await finishClose(id);
@@ -376,7 +382,8 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       dofs: readable(c, row.scope),
     },
     origins: mergeOrigins(c.origins, parse<string[] | null>(row.origins, null)),
-    budget: parse(row.budget, c.worker.budget),
+    // what its schedules' runs spent is this task's too (runs.ts › onExit): the session gets what is left
+    budget: ((b) => ({ ...b, tokens: Math.max(0, b.tokens - runsOf(row)) }))(parse(row.budget, c.worker.budget)),
     hours_used: row.hours ?? 0,
     provider,
     model,
@@ -542,7 +549,8 @@ define("task.budget", {
     const t = get(id);
     // the raise means go on, and nothing else would start it: the page just said "ok". Not a schedule's parent over
     // budget: its timers fire again by themselves
-    const spent = t.status === "waiting" && /^budget_exceeded: (budget exceeded|the VM)/.test(t.error ?? "");
+    const spent =
+      t.status === "waiting" && /^budget_exceeded: (budget exceeded|the session was stopped)/.test(t.error ?? "");
     budget(id, b);
     if (spent) inboxWrite(id, { from: "console", trusted: true, text: "The owner raised the budget: go on." });
     return { ok: true };

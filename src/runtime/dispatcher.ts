@@ -352,14 +352,15 @@ async function finish(
   // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
   const b = tasks.get(id);
   const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number };
-  const overdrawnBy = limit.tokens !== undefined && b.metered >= overdrawn(limit.tokens, ctx?.config as Config);
+  const metered = b.metered + tasks.runsOf(b);
+  const overdrawnBy = limit.tokens !== undefined && metered >= overdrawn(limit.tokens, ctx?.config as Config);
   const error =
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
         ? `budget_exceeded: the session was stopped after ${hours.toFixed(2)} h (budget hours)`
         : overdrawnBy
-          ? `budget_exceeded: budget exceeded: ${b.metered}/${limit.tokens} tokens through the proxy`
+          ? `budget_exceeded: budget exceeded: ${metered}/${limit.tokens} tokens through the proxy`
           : failed
             ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
             : spent !== undefined
