@@ -4,7 +4,7 @@
  * `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead, which a production bundle leaves out.
  *
  * ponytail: what the pages read beyond today's daemon: `login.frame` (the mock's stand-in for the `/events/login`
- * frames, CONNECT.md's step 5) and the chat stream sending each row's JSON line, not its HTML (step 4).
+ * frames, CONNECT.md's step 5).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config.ts";
@@ -25,11 +25,14 @@ export class ApiError extends Error {
   }
 }
 
+const BATCH_MS = 30;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const CODES: Record<number, ApiError["code"]> = { 400: "invalid", 403: "forbidden", 404: "not_found" };
 
 export async function call<T = unknown>(method: string, input: unknown = {}): Promise<T> {
+  // spelled out each time: the bundler drops the mock's chunk only for this exact test
   if (import.meta.env.VITE_MOCK === "1") {
     const { handlers } = await import("./mock.ts");
     await sleep(80 + Math.random() * 160);
@@ -68,7 +71,7 @@ const watch =
   import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), reconnecting.set);
 
 /** Calls `f` on each event of `topics`. */
-export function subscribe(topics: string[], f: () => void): () => void {
+export function subscribe(topics: string[], f: (e: Event) => void): () => void {
   for (const t of topics) bus.addEventListener(t, f);
   const release = watch?.(topics);
   return () => {
@@ -78,45 +81,41 @@ export function subscribe(topics: string[], f: () => void): () => void {
 }
 
 /**
- * A chat's rows after `after`, then each new one as it lands. One pull at a time, in order: events that arrive meanwhile
- * ask for one more, so rows are never repeated or reordered. A pull that fails waits for the next event; the stream's
- * own reconnect is one.
- *
- * ponytail: `task.get`'s last 1000 rows are the source, because the chat stream sends HTML; over 1000 rows between two
- * pulls leaves a gap. CONNECT.md's step 4 puts the rows in the stream.
+ * A chat's rows from the stream: its last 1000, then each new one as it lands, in batches (a row can be one word, and
+ * each batch renders once). The stream resumes after a drop by itself; `last` only makes a repeat harmless.
  */
-export function streamRows(id: string, after: number, onRows: (rows: Row[]) => void): () => void {
-  let last = after;
+export function streamRows(id: string, onRows: (rows: Row[]) => void): () => void {
   let live = true;
-  let busy = false;
-  let again = false;
-  const pull = async () => {
-    if (busy) {
-      again = true;
-      return;
-    }
-    busy = true;
-    try {
-      do {
-        again = false;
-        const rows = (await call<{ replies: Row[] }>("task.get", { id })).replies.filter((r) => r.seq > last);
-        if (!live) return;
-        const end = rows.at(-1);
-        if (end) {
-          last = end.seq;
-          onRows(rows);
-        }
-      } while (again);
-    } catch {
-      // the page's own `task.get` shows why
-    } finally {
-      busy = false;
-    }
+  let last = -1;
+  let batch: Row[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const add = (r: Row) => {
+    if (!live || r.seq <= last) return;
+    last = r.seq;
+    batch.push(r);
+    timer ??= setTimeout(() => {
+      timer = undefined;
+      const rows = batch;
+      batch = [];
+      onRows(rows);
+    }, BATCH_MS);
   };
-  pull();
-  const off = subscribe([`chat:${id}`], pull);
+  // the mock has no replay, and its `task.get` is read after any row that lands meanwhile
+  let ready = import.meta.env.VITE_MOCK !== "1";
+  const off = subscribe([`chat:${id}`], (e) => {
+    if (ready) add((e as CustomEvent<Row>).detail);
+  });
+  if (import.meta.env.VITE_MOCK === "1")
+    call<{ replies: Row[] }>("task.get", { id }).then(
+      (d) => {
+        ready = true;
+        d.replies.forEach(add);
+      },
+      () => {},
+    );
   return () => {
     live = false;
+    clearTimeout(timer);
     off();
   };
 }

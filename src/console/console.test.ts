@@ -176,6 +176,38 @@ test("a chat past the replay's 1,000 lines says what it cut and where the rest i
   ctx.db.exec("DELETE FROM tasks WHERE id = 'long'; DELETE FROM replies WHERE task_id = 'long'");
 });
 
+test("sse: a chat row is { seq, html, body, created }; a row that cannot be re-serialized goes as its text", async () => {
+  const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('rows', ?, ?, '2026-01-01')");
+  const nest = (n: number) => `{"type":"text","text":${"[".repeat(n)}${"]".repeat(n)}}`;
+  ins.run(1, JSON.stringify({ type: "text", text: "plain <b>" }));
+  ins.run(2, "not json at all");
+  ins.run(3, nest(1e6));
+  // every depth around where JSON.stringify gives out, whatever the stack holds when the row is written
+  let edge = 1000;
+  try {
+    for (; edge < 1e6; edge += 100) JSON.stringify(JSON.parse(nest(edge)));
+  } catch {}
+  let seq = 3;
+  for (let d = edge - 500; d < edge + 100; d += 5) ins.run(++seq, nest(d));
+  ins.run(++seq, JSON.stringify({ type: "status", text: "after them" }));
+  const text = await stream("/events/chat?task=rows", {}, (t) => t.includes(`id: ${seq}\n`));
+  const rows = [...text.matchAll(/^data: (.*)$/gm)].map((m) => JSON.parse(m[1] as string));
+  assert.deepEqual(
+    rows.map((r) => r.seq),
+    Array.from({ length: seq }, (_, i) => i + 1),
+  );
+  assert.deepEqual(rows[0], {
+    seq: 1,
+    html: '<div class="r text">plain &lt;b&gt;</div>',
+    created: "2026-01-01",
+    body: { type: "text", text: "plain <b>" },
+  });
+  assert.equal(rows[1].body, "not json at all");
+  assert.equal(rows[2].body, nest(1e6));
+  assert.deepEqual(rows.at(-1).body, { type: "status", text: "after them" });
+  ctx.db.exec("DELETE FROM replies WHERE task_id = 'rows'");
+});
+
 test("sse: chat honours Last-Event-ID and follows the bus; keepalives; no listener leak", async () => {
   const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('x', ?, ?, '2026-01-01')");
   for (let i = 1; i <= 10; i++) ins.run(i, JSON.stringify({ type: "text", text: `line ${i}` }));

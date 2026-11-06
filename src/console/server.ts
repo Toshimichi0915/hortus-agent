@@ -12,10 +12,10 @@ import { logger } from "../log.ts";
 import { call, isStream } from "../rpc.ts";
 import { type Caller, RpcError } from "../types.ts";
 import { bus } from "./events.ts";
-import { h, layout, type Page, tryCall } from "./html.ts";
+import { h, layout, line, type Page, tryCall } from "./html.ts";
 import { watch as watchLogin } from "../browser/login-view.ts";
 import { approvals } from "./pages/approvals.ts";
-import { chat, lastReplies, repliesAfter, replyLine } from "./pages/chat.ts";
+import { chat, lastReplies, type ReplyRow, repliesAfter, replyLine } from "./pages/chat.ts";
 import { credentials } from "./pages/credentials.ts";
 import { dofFile } from "./pages/dof.ts";
 import { loginView } from "./pages/login-view.ts";
@@ -154,6 +154,19 @@ function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined):
 }
 
 /**
+ * A `chat` event: `{ seq, html, body, created }`, `html` for the old console. `body` nests one level deeper here than in
+ * `line`'s own check, so a row at the very edge of the stack can still throw: then it goes as its text too.
+ */
+function chatEvent(r: ReplyRow): string {
+  const row = { seq: r.seq, html: replyLine(r).html, created: r.created };
+  try {
+    return JSON.stringify({ ...row, body: line(r.body) });
+  } catch {
+    return JSON.stringify({ ...row, body: r.body });
+  }
+}
+
+/**
  * `/events/<names>`, comma-separated: a page's one stream (HTTP/1.1 gives an origin six connections, and an open SSE
  * holds one; three per chat page stalled every fetch with two chats open). `approvals`, `tasks` and `settings` are named
  * SSE events; `chat` is the unnamed one: it replays every `replies` row after `Last-Event-ID` (or `?after=`; default:
@@ -195,7 +208,7 @@ function events(
       const next = () => (last < 0 ? lastReplies(ctx, taskId) : repliesAfter(ctx, taskId, last));
       for (let rows = next(); rows.length; rows = next())
         for (const r of rows) {
-          res.write(`id: ${r.seq}\ndata: ${JSON.stringify({ seq: r.seq, html: replyLine(r).html })}\n\n`);
+          res.write(`id: ${r.seq}\ndata: ${chatEvent(r)}\n\n`);
           last = r.seq;
         }
     };

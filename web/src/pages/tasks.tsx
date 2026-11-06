@@ -423,7 +423,7 @@ export function TaskPage({ id }: { id: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   useEffect(() => {
     setRows([]);
-    return streamRows(id, -1, (r) => setRows((p) => [...p, ...r]));
+    return streamRows(id, (r) => setRows((p) => [...p, ...r]));
   }, [id]);
   const [tab, setTab] = useState<"activity" | "sent" | "inbox" | "console">("activity");
   const [budget, setBudget] = useState(false);
@@ -529,7 +529,7 @@ export function TaskPage({ id }: { id: string }) {
             {tab === "activity" &&
               (rows.length ? (
                 <div className="mx-auto flex max-w-[808px] flex-col gap-5.5 px-4 pt-3 pb-7 sm:gap-7 sm:px-6 sm:pt-4 sm:pb-10 max-w-none! gap-5.5! p-4! sm:p-5!">
-                  <Thread rows={rows} live={t.status === "running"} />
+                  <Thread id={id} rows={rows} live={t.status === "running"} />
                 </div>
               ) : (
                 <p className="text-muted-foreground px-5 py-4">Nothing yet.</p>

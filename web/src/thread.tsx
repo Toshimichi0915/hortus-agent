@@ -2,86 +2,33 @@
  * A task's stream as a conversation: the owner's messages as bubbles, the Worker's text as Markdown, and the steps in
  * between (thinking, tool calls and their output, status lines) folded into one "activity" line per run of them.
  */
-import { type ReactNode, useEffect, useState } from "react";
+import { memo, type ReactNode, useEffect, useState } from "react";
+import { type Part, str, type Tool, type Turn, turnBuilder } from "../../src/console/turns.ts";
 import type { Row } from "./api.ts";
 import { Markdown } from "./markdown.tsx";
 import { CopyButton, cn, Icon, type IconName, Logo, RelTime, Spinner } from "./ui.tsx";
 
-interface Tool {
-  kind: "tool";
-  id: string;
-  name: string;
-  input: unknown;
-  output?: string;
-  isError?: boolean;
-}
-
-type Part =
-  | { kind: "text"; text: string; closed?: boolean }
-  | { kind: "thinking"; text: string }
-  | Tool
-  | { kind: "status"; text: string }
-  | { kind: "error"; text: string };
-
-interface Turn {
-  role: "user" | "assistant";
-  key: number;
-  at: string;
-  parts: Part[];
-}
-
-/** Text and thinking arrive as deltas, a row each: a run of them is one part; a `message` row ends a text part. */
-export function toTurns(rows: Row[]): Turn[] {
-  const turns: Turn[] = [];
-  for (const r of rows) {
-    const b = r.body;
-    if (b.type === "owner") {
-      turns.push({ role: "user", key: r.seq, at: r.created, parts: [{ kind: "text", text: b.text }] });
-      continue;
-    }
-    let t = turns.at(-1);
-    if (!t || t.role === "user") {
-      t = { role: "assistant", key: r.seq, at: r.created, parts: [] };
-      turns.push(t);
-    }
-    t.at = r.created;
-    const last = t.parts.at(-1);
-    switch (b.type) {
-      case "message":
-        if (last?.kind === "text") last.closed = true;
-        break;
-      case "text":
-        if (last?.kind === "text" && !last.closed) last.text += b.text;
-        else t.parts.push({ kind: "text", text: b.text });
-        break;
-      case "thinking":
-        if (last?.kind === "thinking") last.text += b.text;
-        else t.parts.push({ kind: "thinking", text: b.text });
-        break;
-      case "tool_call":
-        t.parts.push({ kind: "tool", id: b.id, name: b.name, input: b.input });
-        break;
-      case "tool_result": {
-        const call = t.parts.find((p): p is Tool => p.kind === "tool" && p.id === b.id);
-        if (call) Object.assign(call, { output: b.output, isError: b.isError });
-        else t.parts.push({ kind: "tool", id: b.id, name: "tool", input: {}, output: b.output, isError: b.isError });
-        break;
-      }
-      case "status":
-        t.parts.push({ kind: "status", text: b.text });
-        break;
-      case "error":
-        t.parts.push({ kind: "error", text: b.message });
-        break;
-    }
-  }
-  return turns;
-}
-
-export function Thread({ rows, live }: { rows: Row[]; live: boolean }) {
-  const turns = toTurns(rows);
+export function Thread({ id, rows, live }: { id: string; rows: Row[]; live: boolean }) {
+  const [build] = useState(turnBuilder);
+  const turns = build(rows);
+  // seqs start at 1, so what the stream's last 1000 left out is plain
+  const cut = (rows[0]?.seq ?? 1) - 1;
   return (
     <>
+      {cut > 0 && (
+        <p className="text-center text-xs text-muted-foreground">
+          {cut.toLocaleString("en")} earlier lines not shown (a line can be a few words of a reply): the whole
+          conversation is in{" "}
+          <a
+            href={`/tasks/${encodeURIComponent(id)}/log`}
+            target="_blank"
+            rel="noopener"
+            className="text-brand-text underline underline-offset-2"
+          >
+            session.md
+          </a>
+        </p>
+      )}
       {turns.map((t, i) =>
         t.role === "user" ? (
           <UserTurn key={t.key} turn={t} />
@@ -99,7 +46,7 @@ const textOf = (t: Turn) =>
     .map((p) => p.text)
     .join("\n\n");
 
-function UserTurn({ turn }: { turn: Turn }) {
+const UserTurn = memo(function UserTurn({ turn }: { turn: Turn }) {
   const text = textOf(turn);
   return (
     <article className="group flex flex-col gap-1 max-w-[min(85%,620px)] items-end self-end" aria-label="You said">
@@ -112,9 +59,9 @@ function UserTurn({ turn }: { turn: Turn }) {
       </div>
     </article>
   );
-}
+});
 
-function AssistantTurn({ turn, live }: { turn: Turn; live: boolean }) {
+const AssistantTurn = memo(function AssistantTurn({ turn, live }: { turn: Turn; live: boolean }) {
   const segs: (Part | Part[])[] = [];
   for (const p of turn.parts) {
     if (p.kind === "text" || p.kind === "error") segs.push(p);
@@ -169,7 +116,7 @@ function AssistantTurn({ turn, live }: { turn: Turn; live: boolean }) {
       </div>
     </article>
   );
-}
+});
 
 /** The owner waits on the Worker: no line of its turn yet. */
 export function Pending({ text = "Thinking" }: { text?: string }) {
@@ -249,7 +196,7 @@ function label(p: Tool): { icon: IconName; text: ReactNode } {
     icon: "wrench",
     text: (
       <>
-        {p.name} <code>{JSON.stringify(p.input)}</code>
+        {p.name} <code>{str(p.input)}</code>
       </>
     ),
   };

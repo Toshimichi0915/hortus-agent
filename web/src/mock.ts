@@ -1112,12 +1112,13 @@ const get = (id: string): Task => {
 function addRow(id: string, body: Line): number {
   const list = replies.get(id) ?? [];
   const seq = (list.at(-1)?.seq ?? 0) + 1;
-  list.push({ seq, body, created: now() });
+  const row = { seq, body, created: now() };
+  list.push(row);
   replies.set(id, list);
   const t = get(id);
   t.metered = (t.metered ?? 0) + (body.type === "text" ? 400 : 2500);
   t.updated = now();
-  emit(`chat:${id}`);
+  bus.dispatchEvent(new CustomEvent(`chat:${id}`, { detail: row }));
   return seq;
 }
 
@@ -1395,7 +1396,7 @@ export const handlers: Record<string, Handler> = {
     halt(id);
     const t = get(id);
     Object.assign(t, { status: outcome, outcome, closed: now(), updated: now() });
-    emit("tasks", `chat:${id}`);
+    emit("tasks");
     return ok();
   },
   "task.budget": ({ id, tokens, hours }: { id: string; tokens?: number; hours?: number }) => {

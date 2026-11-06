@@ -357,7 +357,7 @@ export function Conversation({ id }: { id: string }) {
   useEffect(() => {
     setRows([]);
     stick.current = true;
-    return streamRows(id, -1, (r) => setRows((p) => [...p, ...r]));
+    return streamRows(id, (r) => setRows((p) => [...p, ...r]));
   }, [id]);
   // pinned to the newest line unless the owner scrolled up to read
   useLayoutEffect(() => {
@@ -432,7 +432,7 @@ export function Conversation({ id }: { id: string }) {
             className="mx-auto flex max-w-[808px] flex-col gap-5.5 px-4 pt-3 pb-7 sm:gap-7 sm:px-6 sm:pt-4 sm:pb-10"
             aria-live="off"
           >
-            <Thread rows={rows} live={running} />
+            <Thread id={id} rows={rows} live={running} />
             {running && lastIsOwner && (
               <Pending
                 text={

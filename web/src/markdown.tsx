@@ -4,12 +4,12 @@
  * strikethrough, links (http, https, mailto and in-app paths only) and bare URLs. Unclosed fences render as code, so a
  * reply mid-stream looks right.
  */
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { CopyButton, cn, Link } from "./ui.tsx";
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
   return <div className={cn(MD, className)}>{blocks(text.replace(/\r\n?/g, "\n").split("\n"), "m")}</div>;
-}
+});
 
 const MD =
   "text-[15.5px] leading-[1.7] wrap-anywhere [&_:not(pre)>code]:rounded [&_:not(pre)>code]:border [&_:not(pre)>code]:bg-muted [&_:not(pre)>code]:px-1 [&_:not(pre)>code]:py-px [&_:not(pre)>code]:text-[.86em] [&_a]:text-brand-text [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-[3px] [&_blockquote]:pl-4 [&_blockquote]:text-foreground/80 [&_li]:marker:text-muted-foreground [&_li+li]:mt-1 [&_li>*+*]:mt-[.8em] [&_li>p]:m-0 [&_ol]:list-decimal [&_ol]:pl-6 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-6 [&>*+*]:mt-[.8em]";

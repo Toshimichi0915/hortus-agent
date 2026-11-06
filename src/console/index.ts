@@ -10,7 +10,7 @@ import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
 import { type ApprovalRow, approvalOut } from "../vault/gate.ts";
 import { bus } from "./events.ts";
-import { PAGE, parse } from "./html.ts";
+import { line, PAGE, parse } from "./html.ts";
 import { PENDING_FOR } from "./pages/approvals.ts";
 import { lastReplies } from "./pages/chat.ts";
 import { type ScheduleListRow, withSummaries } from "./pages/schedules.ts";
@@ -63,18 +63,6 @@ define("task.list", {
     ].map((t) => ({ ...taskOut(t), pending: (pending.get(t.id) as { n: number }).n }));
   },
 });
-
-/** A `replies` body (the Worker's stdout line) as JSON when it serializes back, else its text: a line nested a million
- * deep parses but throws in the response's JSON.stringify, which made the task's card unreadable. */
-function line(body: string): unknown {
-  const v = parse(body);
-  try {
-    JSON.stringify(v);
-    return v ?? body;
-  } catch {
-    return body;
-  }
-}
 
 define("task.get", {
   roles: [...owner],

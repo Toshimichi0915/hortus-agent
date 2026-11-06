@@ -70,6 +70,18 @@ export function parse<T = unknown>(text: string | null | undefined): T | undefin
   }
 }
 
+/** A `replies` body (the Worker's stdout line) as JSON when it serializes back, else its text: a line nested a million
+ * deep parses but throws in the response's JSON.stringify, which made the task's card unreadable. */
+export function line(body: string): unknown {
+  const v = parse(body);
+  try {
+    JSON.stringify(v);
+    return v ?? body;
+  } catch {
+    return body;
+  }
+}
+
 export const time = (iso: string | null | undefined): Raw =>
   // UTC without JavaScript; app.js rewrites it in the browser's time zone
   iso ? h`<time datetime="${iso}" title="UTC">${iso.replace("T", " ").slice(0, 16)}</time>` : raw("—");
