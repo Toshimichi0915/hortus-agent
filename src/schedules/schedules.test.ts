@@ -294,6 +294,12 @@ test("a run inherits its parent's taint, and an earlier run's; the parent none o
   taint(ctx.db, r.id, "read a stranger");
   assert.deepEqual(taintOf(ctx.db, next.id, ctx.config), ["read a page", "read a stranger"]);
   assert.deepEqual(taintOf(ctx.db, p.id, ctx.config), ["read a page"]);
+  // a stranger's reply routed to a run: the next one reads what that run left, so it is not clean either
+  ctx.db
+    .prepare("INSERT INTO events(dof, key, ts, author, trusted, bot, created, task_id) VALUES ('s', 'k', 't', 'U9', 0, 0, 't', ?)")
+    .run(r.id);
+  assert.ok(taintOf(ctx.db, next.id, ctx.config).includes("read untrusted messages (s:U9)"));
+  assert.deepEqual(taintOf(ctx.db, p.id, ctx.config), ["read a page"]);
 });
 
 test("scope: a chat parent's run on a project is an unattended host task (never in place); without one, a VM task", async () => {

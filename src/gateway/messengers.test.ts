@@ -129,6 +129,7 @@ for (const a of adapters) {
   test(`${a.dof}: an owner's message is inserted trusted, committed, and wakes the Planner`, async () => {
     gw.start();
     await until(() => gw.list()[0]?.connected, 3000, "connected");
+    await gw.reconcile(a.dof); // under load the start's history pass took the message first, and the commit was its
     const path = a.post("owner", "please do x");
     const c = await until(() => committed(path), 3000, "commit");
     assert.match(c.message, new RegExp(`^sync\\(${a.dof}\\): .*please do x$`));

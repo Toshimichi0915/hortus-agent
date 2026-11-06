@@ -134,7 +134,12 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
       ]
     : [];
   const authors = (
-    db.prepare("SELECT DISTINCT dof, author FROM events WHERE task_id = ? AND trusted = 0").all(task) as {
+    db
+      .prepare(
+        "SELECT DISTINCT dof, author FROM events WHERE task_id IN (SELECT value FROM json_each(?)) AND trusted = 0",
+      )
+      // an earlier run's reader is this one's too, through what it left; the parent's come with its own taintOf
+      .all(JSON.stringify(t.parent ? family(db, task).filter((id) => id !== t.parent) : [task])) as {
       dof: string;
       author: string | null;
     }[]

@@ -163,7 +163,7 @@ real one. Two ways to run a development daemon:
   `systemd-run --user --scope -p Delegate=yes env HORTUS_HOME=/tmp/hortus-dev HORTUS_NO_NET=1 dist/bin/hortusd.js` (the bins' shebang silences `node:sqlite`'s
   experimental warning; `node dist/bin/hortusd.js` prints it).
   `dev.upstreams` in its `hortusd.json` points hosts at fake services. It works only with `HORTUS_HOME` set (the daemon logs
-  an error and uses the real hosts otherwise), and the `hortus` CLI needs the same `HORTUS_HOME` to find that daemon.
+  an error and uses the real hosts otherwise), and only for what the daemon itself calls: with no interception a Worker's own model call goes to the real host, placeholder key and all, so use a fake provider there, and the `hortus` CLI needs the same `HORTUS_HOME` to find that daemon.
 - With them: `scripts/dev-run.sh <name> <HORTUS_HOME> [ENV=value …]` starts it as a transient system unit with the real
   unit's capabilities (passwordless sudo); stop it with `sudo systemctl stop hortusd-<name>`, logs with
   `journalctl -u hortusd-<name> -f`. It differs from the installed unit in four ways: it is transient (gone at a stop, so

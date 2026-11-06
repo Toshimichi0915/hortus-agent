@@ -84,3 +84,5 @@ Solid arrows are hard dependencies; dotted ones improve the done-when (no click 
 Critical path: F0 → {F1, F2} → 1 → 2 → 3 → 4 → 6. Everything in wave 3b–3h is off it.
 
 Across steps: `src/e2e/fuzz.test.ts` (default suite) feeds every hostile reader random and adversarial input (v7 › Testing); `src/e2e/load.test.ts`, `src/mirror/load.test.ts` and the approvals burst in `src/console/app.test.ts` cover concurrency and load (default suite; numbers in v7 › Testing); `src/e2e/soak.test.ts` a long-running daemon (1.5 min in the default suite, `HORTUS_TEST_SOAK=1` for an hour; v7 › Review round 7 — soak); `src/e2e/stop.test.ts` a stop and a Settings save with every kind of client live (v7 › Review round 11 — stop and reload).
+
+Round 22 changed no step's status; `planner.runtime` unset is now a VM once the image exists, and `task_create` writes `vm` under the host fallback (v7 › Review round 22).
