@@ -185,6 +185,8 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
   const entry: Running = { vm, done: Promise.resolve(), hours: () => row.hours + (Date.now() - startedAt) / 3.6e6 };
   running.set(row.id, entry);
   let lastError: string | undefined;
+  /** why the session ended, once known: a `finish` that throws must not put its own error in its place */
+  let ended: string | undefined;
   let thinking = "";
   const flushThinking = () => {
     if (thinking && kind.chat) reply(row.id, { type: "thinking", text: thinking });
@@ -208,13 +210,8 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         const exit = await child.wait();
         // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
         // a boot timeout: the card's error says so above the serial output's tail (slice(-2000) keeps both)
-        await finish(
-          row,
-          exit,
-          startedAt,
-          exit.error && `${exit.error}\n${tail(consoleLog, 1500)}`,
-          exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs,
-        );
+        ended = exit.error && `${exit.error}\n${tail(consoleLog, 1500)}`;
+        await finish(row, exit, startedAt, ended, exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs);
         return;
       }
       const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
@@ -266,11 +263,13 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       const exit = await child.wait();
       cancel();
       flushThinking();
+      ended = lastError;
       await finish(row, exit, startedAt, lastError, over);
     } catch (e) {
       // could not start (no Landlock, no session address, no provider): waiting with the reason, no retry loop
-      const message = e instanceof Error ? e.message : String(e);
-      log().error("start failed", e, { task: row.id });
+      const why = e instanceof Error ? e.message : String(e);
+      const message = ended ? `${ended}\n(recording it failed: ${why})` : why;
+      log().error(ended ? "exit not recorded" : "start failed", e, { task: row.id });
       if (!stopping) {
         tasks.setStatus(row.id, "waiting", { error: message, hours: row.hours + (Date.now() - startedAt) / 3.6e6 });
         if (row.kind !== "chat" && !tasks.closing.has(row.id)) {
@@ -353,7 +352,7 @@ async function finish(
   // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
   const b = tasks.get(id);
   const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number };
-  const overdrawnBy = limit.tokens !== undefined && b.metered >= overdrawn(limit.tokens);
+  const overdrawnBy = limit.tokens !== undefined && b.metered >= overdrawn(limit.tokens, ctx?.config as Config);
   const error =
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null

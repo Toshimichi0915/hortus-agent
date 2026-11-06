@@ -13,6 +13,7 @@ import { StringDecoder } from "node:string_decoder";
 import zlib from "node:zlib";
 import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
+import type { Config } from "../config.ts";
 import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import {
@@ -801,7 +802,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // files are the Worker's. Past the budget and one context (the agent's own stop and its summary call come first) they end
   const model = found.length > 0 && found.every((f) => f.h.name === llm);
   const metered = model && !!client.task && (client.role === "worker" || client.role === "planner");
-  if (metered && task?.budget && task.metered >= overdrawn(task.budget.tokens))
+  if (metered && task?.budget && task.metered >= overdrawn(task.budget.tokens, cfg))
     return refuse(403, `budget exceeded: ${task.metered}/${task.budget.tokens} tokens through the proxy`, { host });
 
   // 9. gate (only requests that carry a credential); a model call only where its manifest names it: a big conversation
@@ -1072,7 +1073,7 @@ async function slot(c: Client): Promise<() => void> {
 }
 
 /** Where the proxy refuses a task's model calls: `budget.tokens` plus one context, for the summary after the agent's stop. */
-export const overdrawn = (tokens: number): number => tokens + ctx().config.worker.context_window;
+export const overdrawn = (tokens: number, c: Pick<Config, "worker">): number => tokens + c.worker.context_window;
 
 /**
  * Input and output tokens of a model response or an SSE event, as core reckons them (`usage` of the openai and anthropic

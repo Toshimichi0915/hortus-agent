@@ -246,6 +246,18 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
     );
     assert.match(outbox(id)[0]?.text ?? "", /^failed: boot timeout: /);
 
+    // a session's end that cannot be recorded keeps its reason: the failure path's own error is added, not put in its place
+    const failed = tasks.hooks.failed;
+    let thrown = false;
+    tasks.hooks.failed = (t) => {
+      if (thrown) return failed(t);
+      thrown = true;
+      throw new Error("recording broke");
+    };
+    id = await run("exec sleep 600");
+    assert.match(tasks.get(id).error ?? "", /^boot timeout: .*recording broke/s);
+    tasks.hooks.failed = failed;
+
     told.length = 0;
     id = await run(`${OUT}; exec sleep 600`, { tokens: 1000, hours: 0.0005 });
     assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
