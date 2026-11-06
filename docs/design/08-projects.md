@@ -68,3 +68,5 @@ Add/remove (`project.set`/`project.delete`: `delete` leaves `projects/<name>.git
 - The forge origin (6) reuses nothing here but the branch naming (`hortus/<task>`); `merge.ts` is local-origin only by design.
 - A new project `runtime` value is a dispatcher row; projects code does not switch on it.
 - `restore` and `snapshot` are the only shadow operations; a future "diff since snapshot" page is a `git diff` call on the same repo.
+
+**Round 23.** `prepareClone` clones into `clones/<id>.new`, branches and sets the remote there, then renames: a restart inside the clone left one on `main` with the origin's path as its remote. `merge.request` reads `main` and writes its entry on the project's sync chain (`serialized`), so another task's landing cannot fall between the two.

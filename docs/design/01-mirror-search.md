@@ -72,3 +72,5 @@ The `logs` DOF has no repo: `writeLog(taskId, files)` writes with the same temp-
 - A connector emits only `Change`s; nothing in F1 names Slack. Adding a forge later adds frontmatter keys (`state`, `checks`) with no change here: `render` is schema-free.
 - A new DOF kind without a repo (like `logs`) reuses `writeLog`'s temp-and-rename and the indexer.
 - The indexer's `title` rule is the one place a new object kind might need a line.
+
+**Round 23.** `repo.ts › recover` drops a stale `refs/heads/main.lock` and the worktree's `HEAD.lock` beside round 8's `index.lock`: a git killed inside a commit's ref update left them, and every later commit of that DOF failed "cannot lock ref".

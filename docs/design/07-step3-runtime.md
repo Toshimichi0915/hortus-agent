@@ -77,3 +77,5 @@ Edge cases: two `task.send` within 10 ms get seq 1 and 2 (serialized); an owner 
 - A new task kind is a row in the dispatcher's kind table (runtime, profile, wake target); the lifecycle does not change.
 - A new runtime (3g's VM) implements `start(task): Child` beside `host.ts`; the dispatcher picks it by `runtime`.
 - A new outbox type is one case in the exit handler and the zod union.
+
+**Round 23.** `close` sets the row closed before it waits for the session (its teardown, or a whole start: a clone, a VM's boot), so a restart in that wait finishes the close (recovery's closed-row path) instead of running the task again. `finishClose` ends the task's open schedule runs with its outcome, so recovery ends them too. A raise during a session: the session runs on its start's budget, so `finish` treats a budget stop after a raise as no error and queues the task to go on.

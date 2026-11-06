@@ -110,7 +110,7 @@ messenger, one forge and the Planner's (and Workers') model:
 - `origins`: `"*"` (any public host) or a list; a project's own `origins` makes its tasks reach only the global list plus
   that list, whatever the global says, and a chat holds every project's, so one strict project makes every chat strict. A
   session's own model host is never refused, whatever the lists say. A change reaches open tasks at their next request.
-- `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on.
+- `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on, also when raised while it runs. A schedule's runs spend the budget of the task that set it.
 - A message posted while `hortusd` or its connection is down is read back by the 10-minute reconcile and reaches the Planner as if it had come live, and so does a CI result on a task's open PR that no event brought (missed, or done before the PR existed); what the first sync of a source backfills does not.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
   `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.
@@ -180,6 +180,7 @@ Opt-in suites, skipped otherwise:
 - `HORTUS_TEST_LLM=1`: live model calls (`HORTUS_TEST_MODEL` picks the model).
 - `HORTUS_TEST_VM=1`: boots Worker VMs (`HORTUS_TEST_IMAGES`, default `$HORTUS_HOME/images`; needs `/dev/kvm`).
 - `HORTUS_TEST_SOAK=1`: the soak test at full speed for `HORTUS_TEST_SOAK_MIN` minutes (default 60; the default suite runs 1.5 min of it).
+- `HORTUS_TEST_CHAOS=1`: owner orders through the Planner, Workers and closes with the daemon SIGKILLed at random points (`HORTUS_TEST_CHAOS_KILLS`, the number of kills).
 
 `KEEP=1` keeps an end-to-end test's temp directory (with its `hortusd.log`).
 

@@ -115,3 +115,5 @@ Edge cases: a message with an empty `text` and one file; `ts` with trailing zero
 **Round 22.** `history` sets `Change.heard` past the first sync; a reconcile routes an object the mirror lacks, newer than `syncs.first`, as `history:<path>[:state]` (`gateway.ts › missed`).
 
 **Round 23.** A CI result on a task's open PR on any forge: a `patch` with `Change.ci` (`{ sha, result, run }`, success or failure only; the run is GitLab's pipeline id, the newest status or suite time elsewhere), keyed `history:<path>:checks:<sha12>:<result>:<run>`. It is deduped by that key alone, not by the mirror (a result done before its PR existed is already in the PR's `checks`): the live event that mirrored it carries the key in `events.heard`, and a live one after a reconcile routed it wakes nothing.
+
+A resync's `DELETE FROM syncs` runs on the DOF's reconcile chain, just before its own pass: done at once, a pass under way wrote its cursor back and the resync resumed from it.

@@ -50,3 +50,5 @@ Rows by task: text, kind (`at` / `every 15m` / `cron … tz`), next fire, last r
 - The script runner is F5's; a different interpreter is a `task.json` field.
 
 **Round 22.** A run is its parent's at the gate: `taintOf` adds the parent's and earlier runs' (the next run reads what this one left in `/schedule`), and the parent's task grants cover it (`gate.ts › PARENT`, `jar.ts › grantedOrigins`).
+
+**Round 23.** A task's runs spend its budget: the session's `task.json` carries `budget.tokens` less `usage.runs`, and the proxy's limit and `finish`'s overdrawn count `metered` plus the runs'. A task's close ends its open runs (`tasks.ts › finishClose`).
