@@ -114,4 +114,4 @@ Edge cases: a message with an empty `text` and one file; `ts` with trailing zero
 
 **Round 22.** `history` sets `Change.heard` past the first sync; a reconcile routes an object the mirror lacks, newer than `syncs.first`, as `history:<path>[:state]` (`gateway.ts › missed`).
 
-**Round 23.** A CI result on a task's open GitLab or Bitbucket PR: a `patch` with `Change.ci` (`{ sha, result }`, success or failure only), keyed `history:<path>:checks:<sha12>:<result>`; the live CI patch carries the same `ci`, so whichever comes second wakes nothing.
+**Round 23.** A CI result on a task's open PR on any forge: a `patch` with `Change.ci` (`{ sha, result, run }`, success or failure only; the run is GitLab's pipeline id, the newest status or suite time elsewhere), keyed `history:<path>:checks:<sha12>:<result>:<run>`. It is deduped by that key alone, not by the mirror (a result done before its PR existed is already in the PR's `checks`): the live event that mirrored it carries the key in `events.heard`, and a live one after a reconcile routed it wakes nothing.

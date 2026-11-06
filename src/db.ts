@@ -79,6 +79,9 @@ const migrations: string[] = [
   // counted on a task's model calls
   `ALTER TABLE syncs ADD COLUMN first TEXT; UPDATE syncs SET first = last_sync;
   ALTER TABLE tasks ADD COLUMN metered INTEGER NOT NULL DEFAULT 0;`,
+  // review round 23: the CI result a live event mirrored (gateway › missed), so a reconcile does not route it again
+  `ALTER TABLE events ADD COLUMN heard TEXT;
+  CREATE INDEX events_heard ON events(dof, heard) WHERE heard IS NOT NULL;`,
 ];
 
 const TAINT_MAX = 5;

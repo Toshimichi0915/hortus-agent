@@ -13,7 +13,6 @@ import { trusted } from "../connectors/trust.ts";
 import type { Module } from "../ctx.ts";
 import { type DatabaseSync, now } from "../db.ts";
 import { readCapped } from "../hostile.ts";
-import { parse } from "../mirror/render.ts";
 import { unsafe } from "../mirror/repo.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
@@ -115,8 +114,10 @@ export function createGateway(deps: GatewayDeps): Gateway {
   const setCursor = db.prepare(`INSERT INTO syncs(dof, scope, cursor, last_sync, first) VALUES (?1, ?2, ?3, ?4, ?4)
     ON CONFLICT(dof, scope) DO UPDATE SET cursor = excluded.cursor, last_sync = excluded.last_sync`);
   const routed = db.prepare("SELECT 1 FROM events WHERE dof = ? AND key = ? AND created > ?");
+  const keyed = db.prepare("SELECT 1 FROM events WHERE dof = ?1 AND (key = ?2 OR heard = ?2)");
+  const hear = db.prepare("UPDATE events SET heard = ? WHERE dof = ? AND key = ?");
   const missedKey = (c: Change) =>
-    `history:${c.path}${c.ci ? `:checks:${c.ci.sha}:${c.ci.result}` : c.frontmatter?.state ? `:${c.frontmatter.state}` : ""}`;
+    `history:${c.path}${c.ci ? `:checks:${c.ci.sha}:${c.ci.result}:${c.ci.run}` : c.frontmatter?.state ? `:${c.frontmatter.state}` : ""}`;
 
   /**
    * The objects of a history batch nobody heard of: no connection was up, and a service with no redelivery will not send
@@ -132,20 +133,19 @@ export function createGateway(deps: GatewayDeps): Gateway {
       if (!h || h.bot || !cfg) continue;
       const ts = h.ts ?? String(c.frontmatter?.ts ?? "");
       if (ts <= since) continue;
-      const text = deps.mirrored?.(name, c.path);
-      if (text === undefined || text === "") continue;
-      // held: the file, its state, and for a CI result that result on that head
-      const fm = text === null ? null : parse(text).frontmatter;
-      const ci = c.ci;
-      const sha = String(fm?.head_sha ?? "").slice(0, 12);
-      if (fm && (!h.state || fm.state === h.state) && (!ci || (fm.checks === ci.result && sha === ci.sha))) continue;
+      // a CI result is its key alone: the mirror holds the `checks` of one that came before its PR, and nobody heard it
+      if (!c.ci) {
+        const text = deps.mirrored?.(name, c.path);
+        if (text === undefined || (text !== null && !(h.state && !text.includes(`\nstate: ${h.state}\n`)))) continue;
+      } else if (!deps.mirrored || keyed.get(name, missedKey(c))) continue;
       const a = h.author;
       const key = missedKey(c);
       const event = { dof: name, key, ts, payload: null, author: a, bot: false, summary: h.summary, refs: h.refs };
       const t = trusted(event, cfg);
       const summary = summaryOf(h.summary, t);
       const by = [a?.user ?? null, a ? Number(a.member) : null] as const;
-      insert.run(name, key, ts, ...by, Number(t), 0, "null", now(), summary, JSON.stringify(h.refs), -2);
+      const fresh = insert.run(name, key, ts, ...by, Number(t), 0, "null", now(), summary, JSON.stringify(h.refs), -2);
+      if (c.ci && !fresh.changes) continue; // routed already, or heard live
       keys.push(key);
     }
     return keys;
@@ -192,10 +192,15 @@ export function createGateway(deps: GatewayDeps): Gateway {
             const head = event.summary.replace(/\s+/g, " ").slice(0, 120);
             if (m.changes.length) await deps.commit(name, m.changes, `sync(${name}): ${head}`);
             log.info(`sync(${name}): ${head} +${m.changes.length}`);
+            // a CI result's key on its event, so a reconcile knows it was heard; one a reconcile routed first wakes
+            // nothing here. ponytail: the first PR's, should one result be the head of two
+            const ci = m.changes.find((c) => c.ci);
+            if (ci) hear.run(missedKey(ci), name, event.key);
             // a retry that came after a reconcile routed the same object (Slack's run for an hour after a restart)
-            const twice = m.changes.some((c) =>
-              routed.get(name, missedKey(c), new Date(Date.now() - HOUR).toISOString()),
-            );
+            const hour = new Date(Date.now() - HOUR).toISOString();
+            const twice =
+              (ci && routed.get(name, missedKey(ci), "")) ||
+              m.changes.some((c) => !c.ci && routed.get(name, missedKey(c), hour));
             const wake = m.wake && !event.bot && !twice;
             release.run(wake ? 0 : -1, name, event.key); // reactions, deletes, joins: mirrored, not Planner input
             r.error = undefined;

@@ -2,7 +2,7 @@
  * What every forge connector shares (17-github.md): the in-process event queue the webhook listener fills, the
  * project → directory rule, and the `repos` glob filter.
  */
-import type { ConnectorDeps, Event, Incoming } from "../types.ts";
+import type { Change, ConnectorDeps, Event, Incoming } from "../types.ts";
 
 /** An event's author is who acted, so `trusted` and the owner's plain rendering are theirs: the text of what they acted on
  * stays out when someone else wrote it. The owner's label on a stranger's issue put its body before the Planner, as the
@@ -154,4 +154,31 @@ export function cached<V>(ms: number, f: (key: string) => Promise<V>): (key: str
 export function iso(s: string | null | undefined): string {
   const d = s ? new Date(s) : new Date();
   return (Number.isNaN(d.getTime()) ? new Date() : d).toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+/** `Change.ci` of a PR head's CI: a result only (success or failure), with the run it is, as a re-run's same result is
+ * news too. Undefined without either. */
+export function ciOf(sha: string, checks: string | null, run: string | number | undefined): Change["ci"] {
+  if ((checks !== "success" && checks !== "failure") || run === undefined || run === "") return undefined;
+  return { sha: sha.slice(0, 12), result: checks, run: String(run) };
+}
+
+/**
+ * What a reconcile routes of a task's open PR's CI result (gateway › missed): its hook was missed in an outage, or it
+ * came before the PR existed (a push's pipeline done before the Worker's PR, whose own opening is a bot's and wakes
+ * nothing). Nobody's words, as live: no author.
+ */
+export function ciHeard(o: {
+  path: string;
+  ref: string;
+  type: string;
+  where: string;
+  sha: string;
+  ci: Change["ci"];
+  at: string | undefined;
+}): Change[] {
+  if (!o.ci) return [];
+  const summary = `${o.type} ${o.where} by ?: ${o.ci.result} on ${o.sha.slice(0, 7)}`;
+  const heard = { author: null, bot: false, summary, refs: [o.ref], ts: iso(o.at) };
+  return [{ op: "patch", path: o.path, frontmatter: { checks: o.ci.result }, heard, ci: o.ci }];
 }

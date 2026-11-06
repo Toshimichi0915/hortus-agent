@@ -6,7 +6,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Heard, Mirrored } from "../types.ts";
 import { equals } from "../vault/ops.ts";
-import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest } from "./forge.ts";
+import { cached, ciHeard, ciOf, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const HOUR = 3600_000;
@@ -268,30 +268,16 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
   }
 
-  async function checksOf(p: string, sha: string): Promise<{ checks: string | null; at?: string }> {
+  async function checksOf(p: string, sha: string): Promise<{ checks: string | null; at?: string; run?: number }> {
     try {
-      const [pl] = await json<{ status: string; updated_at?: string }[]>(`${P(p)}/pipelines?sha=${sha}&per_page=1`);
-      return { checks: ci(pl?.status), ...(pl?.updated_at ? { at: pl.updated_at } : {}) };
+      const [pl] = await json<{ id: number; status: string; updated_at?: string }[]>(
+        `${P(p)}/pipelines?sha=${sha}&per_page=1`,
+      );
+      return { checks: ci(pl?.status), run: pl?.id, ...(pl?.updated_at ? { at: pl.updated_at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: pipelines of ${p}@${sha} failed`, e);
       return { checks: null };
     }
-  }
-
-  /** What a reconcile routes of an open MR's CI result, should its pipeline event have been missed: a task's MR only, and
-   * only a result, as a live one on its head (`mirror` › pipeline). Key and check: `Change.ci`. */
-  function ciHeard(p: string, mr: MR, checks: string | null, when?: string): Change[] {
-    const thread = `!${mr.iid}`;
-    if ((checks !== "success" && checks !== "failure") || !deps.hasRef(ref(p, thread))) return [];
-    const heard = {
-      author: null,
-      bot: false,
-      summary: `pipeline ${p}${thread} by ?: ${checks} on ${mr.sha.slice(0, 7)}`,
-      refs: [ref(p, thread)],
-      ts: iso(when),
-    };
-    const ci = { sha: mr.sha.slice(0, 12), result: checks };
-    return [{ op: "patch", path: at(p, thread), frontmatter: { checks }, heard, ci }];
   }
 
   async function diffOf(p: string, iid: number): Promise<Change[]> {
@@ -309,7 +295,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
   /** `heard`: a reconcile's, past the first sync, of an open MR */
   async function prTop(p: string, mr: MR, diff: boolean, heard = false): Promise<Change[]> {
     const t = `!${mr.iid}`;
-    const { checks, at: when } = await checksOf(p, mr.sha);
+    const { checks, at: when, run } = await checksOf(p, mr.sha);
     const files = diff ? await diffOf(p, mr.iid) : [];
     const fm: Record<string, unknown> = {
       id: t,
@@ -327,7 +313,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     if (checks) fm.checks = checks;
     if (files.length) fm.files = ["files/diff.patch"];
     const top: Change = { op: "put", path: at(p, t), frontmatter: fm, body: mr.description ?? "" };
-    return [top, ...files, ...(heard ? ciHeard(p, mr, checks, when) : [])];
+    const result = heard && deps.hasRef(ref(p, t)) ? ciOf(mr.sha, checks, run) : undefined;
+    const where = `${p}${t}`;
+    const routed = ciHeard({ path: at(p, t), ref: ref(p, t), type: "pipeline", where, sha: mr.sha, ci: result, at: when });
+    return [top, ...files, ...routed];
   }
 
   function noteChange(p: string, thread: string, n: Note, user: string): Change {
@@ -456,9 +445,8 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
             open.map(async (m): Promise<Change> => {
               const checks = ci(onHead(m) ? a.status : m.head_pipeline?.status) ?? (await checksOf(p, m.sha)).checks;
               // the key a reconcile would route this result under: whichever comes second wakes nothing
-              const heard = onHead(m) && (checks === "success" || checks === "failure");
-              const c: Change = { op: "patch", path: at(p, `!${m.iid}`), frontmatter: { checks } };
-              return heard ? { ...c, ci: { sha: m.sha.slice(0, 12), result: checks } } : c;
+              const heard = onHead(m) ? ciOf(m.sha, checks, a.id) : undefined;
+              return { op: "patch", path: at(p, `!${m.iid}`), frontmatter: { checks }, ...(heard && { ci: heard }) };
             }),
           );
           // a result on an MR that ended asks nothing of its task

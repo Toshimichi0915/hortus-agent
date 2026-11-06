@@ -62,6 +62,7 @@ interface FakeSuite {
   status: string;
   conclusion: string | null;
   latest_check_runs_count: number;
+  updated_at: string;
 }
 interface FakeRepo {
   full_name: string;
@@ -477,6 +478,7 @@ export class FakeGitHub {
       status: o.status ?? "completed",
       conclusion: o.conclusion,
       latest_check_runs_count: o.runs ?? 1,
+      updated_at: this.ts(),
     };
     r.suites.push(s);
     const prs = [...r.things.values()].filter((t) => t.pr?.shas.includes(sha));

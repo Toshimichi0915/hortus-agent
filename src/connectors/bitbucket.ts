@@ -7,7 +7,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Heard, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
-import { cached, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest, worst } from "./forge.ts";
+import { cached, ciHeard, ciOf, dirOf, eventQueue, HttpError, iso, matches, NOT_THEIRS, rest, worst } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const HOUR = 3600_000;
@@ -246,22 +246,6 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     }
   }
 
-  /** What a reconcile routes of an open PR's CI result, should its status event have been missed: a task's PR only, and
-   * only a result, as a live one (`mirror` › a status). Key and check: `Change.ci`; a PR names its head by 12 hex. */
-  function ciHeard(p: string, pr: Pull, sha: string, checks: string | null, when?: string): Change[] {
-    const thread = `!${pr.id}`;
-    if ((checks !== "success" && checks !== "failure") || !deps.hasRef(ref(p, thread))) return [];
-    const heard = {
-      author: null,
-      bot: false,
-      summary: `repo:commit_status_updated ${p}${thread} by ?: ${checks} on ${sha.slice(0, 7)}`,
-      refs: [ref(p, thread)],
-      ts: iso(when),
-    };
-    const ci = { sha: sha.slice(0, 12), result: checks };
-    return [{ op: "patch", path: at(p, thread), frontmatter: { checks }, heard, ci }];
-  }
-
   async function diffOf(p: string, n: number): Promise<Change[]> {
     try {
       const bytes = Buffer.from(await (await get(`${R(p)}/pullrequests/${n}/diff`)).arrayBuffer());
@@ -293,7 +277,11 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     if (checks) fm.checks = checks;
     if (files.length) fm.files = ["files/diff.patch"];
     const top: Change = { op: "put", path: at(p, t), frontmatter: fm, body: pr.description ?? "" };
-    return [top, ...files, ...(heard && sha ? ciHeard(p, pr, sha, checks, when) : [])];
+    // a run is the statuses' newest time: a re-run moves it
+    const result = heard && sha && deps.hasRef(ref(p, t)) ? ciOf(sha, checks, when) : undefined;
+    const type = "repo:commit_status_updated";
+    const routed = ciHeard({ path: at(p, t), ref: ref(p, t), type, where: `${p}${t}`, sha: sha ?? "", ci: result, at: when });
+    return [top, ...files, ...routed];
   }
 
   function commentChange(p: string, thread: string, c: Comment): Change {
@@ -386,10 +374,15 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       if (!thread) {
         if (!type.startsWith("repo:commit_status_") || !prs?.length) return none; // a push: the repo mirror's business
         const sha = shaOf(b) ?? "";
-        const { checks } = await checksOf(p, sha);
+        const { checks, at: when } = await checksOf(p, sha);
         // the key a reconcile would route this result under (prs are those it is the head of): the second wakes nothing
-        const ci = checks === "success" || checks === "failure" ? { ci: { sha: sha.slice(0, 12), result: checks } } : {};
-        const changes: Change[] = prs.map((n) => ({ op: "patch", path: at(p, `!${n}`), frontmatter: { checks }, ...ci }));
+        const ci = ciOf(sha, checks, when);
+        const changes: Change[] = prs.map((n) => ({
+          op: "patch",
+          path: at(p, `!${n}`),
+          frontmatter: { checks },
+          ...(ci && { ci }),
+        }));
         return { changes, wake: e.refs.some((r) => deps.hasRef(r)) };
       }
       const action = type.slice(type.indexOf(":") + 1);

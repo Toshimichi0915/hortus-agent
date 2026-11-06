@@ -5,7 +5,7 @@
  */
 import type { Change, ConnectorDeps, ConnectorStatus, Event, Forge, Mirrored } from "../types.ts";
 import { hmacVerify } from "../vault/ops.ts";
-import { dirOf, eventQueue, matches, NOT_THEIRS, worst } from "./forge.ts";
+import { ciHeard, ciOf, dirOf, eventQueue, matches, NOT_THEIRS, worst } from "./forge.ts";
 
 const MAX_DIFF = 20 * 1024 * 1024;
 const MEMBER = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -69,6 +69,7 @@ interface Suite {
   conclusion: string | null;
   latest_check_runs_count?: number;
   pull_requests?: { number: number }[];
+  updated_at?: string;
 }
 interface Repo {
   full_name: string;
@@ -199,14 +200,21 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
   }
 
-  async function checksOf(repo: string, sha: string, fallback: Suite[] = []): Promise<string | null> {
+  /** `at`: the newest suite's time, the run a result is (a re-run moves it) */
+  async function checksOf(
+    repo: string,
+    sha: string,
+    fallback: Suite[] = [],
+  ): Promise<{ checks: string | null; at?: string }> {
     try {
       const { check_suites } = await json<{ check_suites: Suite[] }>(`/repos/${repo}/commits/${sha}/check-suites`);
       // GitHub opens a suite per checks-writing App on every push: one that never ran stays `queued`, for ever
-      return worst(check_suites.filter((s) => s.latest_check_runs_count !== 0));
+      const ran = check_suites.filter((s) => s.latest_check_runs_count !== 0);
+      const at = ran.map((s) => s.updated_at ?? "").sort().at(-1);
+      return { checks: worst(ran), ...(at ? { at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: check suites of ${repo}@${sha} failed`, e);
-      return worst(fallback);
+      return { checks: worst(fallback) };
     }
   }
 
@@ -223,9 +231,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
   }
 
   /** The PR's top message (v6's PR example) and, with `diff`, its `files/diff.patch`. */
-  async function prTop(repo: string, pr: Pull, diff: boolean): Promise<Change[]> {
+  /** `heard`: a reconcile's, past the first sync, of an open PR (its CI result, routed if nobody heard it) */
+  async function prTop(repo: string, pr: Pull, diff: boolean, heard = false): Promise<Change[]> {
     const t = `!${pr.number}`;
-    const checks = await checksOf(repo, pr.head.sha);
+    const { checks, at: when } = await checksOf(repo, pr.head.sha);
     const files = diff ? await diffOf(repo, pr.number) : [];
     const fm: Record<string, unknown> = {
       id: t,
@@ -242,7 +251,11 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     };
     if (checks) fm.checks = checks;
     if (files.length) fm.files = ["files/diff.patch"];
-    return [{ op: "put", path: at(repo, t), frontmatter: fm, body: pr.body ?? "" }, ...files];
+    const top: Change = { op: "put", path: at(repo, t), frontmatter: fm, body: pr.body ?? "" };
+    const result = heard && deps.hasRef(ref(repo, t)) ? ciOf(pr.head.sha, checks, when) : undefined;
+    const where = `${repo}${t}`;
+    const routed = ciHeard({ path: at(repo, t), ref: ref(repo, t), type: "check_suite", where, sha: pr.head.sha, ci: result, at: when });
+    return [top, ...files, ...routed];
   }
 
   function commentChange(repo: string, thread: string, c: Comment, review = false): Change {
@@ -356,13 +369,12 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
           const prs = await Promise.all(s.pull_requests.map((x) => json<Pull>(`/repos/${repo}/pulls/${x.number}`)));
           const onHead = (pr: Pull) => pr.head.sha === s.head_sha;
           const changes = await Promise.all(
-            prs.map(
-              async (pr): Promise<Change> => ({
-                op: "patch",
-                path: at(repo, `!${pr.number}`),
-                frontmatter: { checks: await checksOf(repo, pr.head.sha, onHead(pr) ? [s] : []) },
-              }),
-            ),
+            prs.map(async (pr): Promise<Change> => {
+              const { checks, at: when } = await checksOf(repo, pr.head.sha, onHead(pr) ? [s] : []);
+              // the key a reconcile would route this result under: whichever comes second wakes nothing
+              const ci = onHead(pr) ? ciOf(pr.head.sha, checks, when) : undefined;
+              return { op: "patch", path: at(repo, `!${pr.number}`), frontmatter: { checks }, ...(ci && { ci }) };
+            }),
           );
           // a result on a PR that ended asks nothing of its task
           const live = (pr: Pull) => pr.state === "open" && onHead(pr);
@@ -412,7 +424,7 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       // open PRs whole: state, checks, diff, reviews and review comments (CI moves without touching updated_at)
       for (const pr of await all<Pull>(`/repos/${project}/pulls?state=open&per_page=100`)) {
         const t = `!${pr.number}`;
-        changes.push(...(await prTop(project, pr, true)));
+        changes.push(...(await prTop(project, pr, true, !!cursor)));
         for (const r of await all<Review>(`/repos/${project}/pulls/${pr.number}/reviews?per_page=100`))
           changes.push(reviewChange(project, t, r));
         for (const c of await all<Comment>(`/repos/${project}/pulls/${pr.number}/comments?per_page=100`))

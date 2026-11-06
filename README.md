@@ -111,7 +111,7 @@ messenger, one forge and the Planner's (and Workers') model:
   that list, whatever the global says, and a chat holds every project's, so one strict project makes every chat strict. A
   session's own model host is never refused, whatever the lists say. A change reaches open tasks at their next request.
 - `worker.budget`: `tokens` counts every model call a task makes, the proxy's count where it is the larger (a Worker's own `curl` included). The agent stops itself at the budget; past it plus one context the proxy refuses its model calls (a response it cannot read the usage of counts by its bytes) and the card says `budget_exceeded`. Raise it on the card and the task goes on.
-- A message posted while `hortusd` or its connection is down is read back by the 10-minute reconcile and reaches the Planner as if it had come live, and so does a CI result on a task's open GitLab or Bitbucket PR; what the first sync of a source backfills does not.
+- A message posted while `hortusd` or its connection is down is read back by the 10-minute reconcile and reaches the Planner as if it had come live, and so does a CI result on a task's open PR that no event brought (missed, or done before the PR existed); what the first sync of a source backfills does not.
 - Everything else (`projects`, `policy`, `judge_notes`, `vm`, `chat.allow`, `console.listen` for the remote console,
   `proxy` ports) has defaults; the schema with them is `src/config.ts`, the reasons `hortus_v7.md` › Config.
 
