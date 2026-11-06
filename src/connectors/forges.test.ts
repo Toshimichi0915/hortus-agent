@@ -656,8 +656,11 @@ for (const h of H) {
     const sha = await h.commit("late", "l.txt", "l\n");
     const pr = await h.openPR("toshi", "Late", "late", "d");
     db.prepare("INSERT INTO task_refs(ref, task_id) VALUES (?, 'W')").run(`${dof}:${P}:!${pr.n}`);
-    await h.merge(pr.n, "toshi");
+    const end = (await h.merge(pr.n, "toshi")) as Sent;
     await until(() => fm(dof, `${D}/!${pr.n}/!${pr.n}.md`)?.frontmatter.state === "merged", 3000, "merged");
+    // its wake comes after the commit, which a loaded machine finishes well after the file is there (round 24)
+    const woke = db.prepare("SELECT 1 FROM events WHERE key = ? AND consumed = 0");
+    await until(() => woke.get(end.guid), 3000, "the merge's wake");
     const w = await quiet();
     await h.result(sha, "failure");
     assert.equal(await quiet(), w);
