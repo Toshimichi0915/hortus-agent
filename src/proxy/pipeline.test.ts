@@ -943,6 +943,11 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     assert.equal(list.status, 200);
     await sleep(20);
     assert.equal(row().metered, n, "a GET generates nothing");
+    // but it fetches what a background call generated (OpenAI's `GET /v1/responses/<id>`): its usage counts
+    assert.equal((await send({ host: "api.gh.test", path: "/model/json", headers: auth })).status, 200);
+    await until(() => row().metered !== n, 2000, "a GET's usage");
+    assert.equal(row().metered - n, 120);
+    ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(n);
     const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
     ctx.db.prepare("UPDATE tasks SET budget = ? WHERE id = 'T'").run(JSON.stringify({ tokens: 10, hours: 1 }));
     ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(10 + ctx.config.worker.context_window - 1);

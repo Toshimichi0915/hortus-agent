@@ -852,9 +852,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     body,
     scrub: s,
     llmCall,
-    // charged only what can generate: a GET (core's model list at every session's start, ~5.4k by its bytes) cannot,
-    // and was charged to every quiet schedule run. Still refused past the budget above
-    metered: metered && template.method !== "GET" && template.method !== "HEAD",
+    metered,
     tokens,
   };
 }
@@ -1221,7 +1219,11 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     // a refusal (a 429 of the provider's own limit, a 5xx) generated nothing: its prompt charged at every retry stopped a
     // long task "over budget" for a rate limit (round 23)
     const asked = status < 400 ? (p.raw.body?.length ?? 0) : 0;
-    charge(p, u ? u.input + u.output : Math.ceil((asked + r.buf.length) / 4));
+    // a GET generates nothing, so no bytes (core's model list at every session's start, ~5.4k by them, was charged to
+    // every quiet schedule run), but it fetches what a background call made (OpenAI's `background: true`, then `GET
+    // /v1/responses/<id>`): its usage, or that pair was a way round the count (round 24)
+    const get = p.template.method === "GET";
+    charge(p, u ? u.input + u.output : get ? 0 : Math.ceil((asked + r.buf.length) / 4));
   }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);
