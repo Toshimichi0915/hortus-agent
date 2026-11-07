@@ -134,7 +134,9 @@ export function taintOf(db: DatabaseSync, task: string | null | undefined, c: Pi
     ? [
         ...taintOf(db, t.parent, c),
         ...(
-          db.prepare("SELECT taint FROM tasks WHERE parent = ? AND id != ? AND taint IS NOT NULL").all(t.parent, task) as {
+          db
+            .prepare("SELECT taint FROM tasks WHERE parent = ? AND id != ? AND taint IS NOT NULL")
+            .all(t.parent, task) as {
             taint: string;
           }[]
         ).flatMap((r) => JSON.parse(r.taint) as string[]),

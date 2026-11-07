@@ -475,7 +475,13 @@ export class FakeGitLab {
   pipeline(path: string, sha: string, status: string, o: { branch?: boolean; result?: string } = {}, d?: DeliverOpts) {
     const p = this.get(path);
     const mr = [...p.mrs.values()].find((t) => t.mr?.shas.includes(sha));
-    const pl = { id: this.ids++, sha: o.result ?? sha, ref: mr?.mr?.source_branch ?? "main", status, updated_at: this.ts() };
+    const pl = {
+      id: this.ids++,
+      sha: o.result ?? sha,
+      ref: mr?.mr?.source_branch ?? "main",
+      status,
+      updated_at: this.ts(),
+    };
     p.pipelines.unshift(pl);
     if (mr?.mr?.sha === sha) mr.mr.head_pipeline = { id: pl.id, status };
     const merge_request = mr && !o.branch ? { iid: mr.iid } : null;

@@ -3,12 +3,8 @@
   "credentials": {
     "ollama": {
       "type": "token",
-      "hosts": [
-        "ollama.com"
-      ],
-      "locations": [
-        "header:Authorization"
-      ]
+      "hosts": ["ollama.com"],
+      "locations": ["header:Authorization"]
     }
   },
   "consequential": [

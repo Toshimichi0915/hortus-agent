@@ -154,7 +154,9 @@ interface PrEnd {
  * task only commented on counts too, and its PR may stay open: then the task reads as not ended, the safe side.
  * ponytail: a scan of `events` per PR of an open task, each batch; an index on `refs` if open PRs ever number hundreds. */
 export function prTurns(db: DatabaseSync, id: string): { ref: string; end?: PrEnd }[] {
-  const turns = db.prepare("SELECT id, task_id, summary, trusted FROM events WHERE refs = json_array(?) ORDER BY id DESC");
+  const turns = db.prepare(
+    "SELECT id, task_id, summary, trusted FROM events WHERE refs = json_array(?) ORDER BY id DESC",
+  );
   const refs = db.prepare("SELECT ref FROM task_refs WHERE task_id = ? AND ref LIKE '%:!%'").all(id) as {
     ref: string;
   }[];

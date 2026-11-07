@@ -178,7 +178,13 @@ export async function publishLog(
     | undefined;
   const summary = t?.summary ?? readCapped(join(out, "summary.md"), MAX_SUMMARY)?.text ?? "No summary.\n";
   const keys = events ?? (t?.event_keys ? (JSON.parse(t.event_keys) as string[]) : undefined);
-  const header = { title, status, ...(keys ? { events: keys } : {}), ...(t?.created ? { opened: t.created } : {}), updated: now() };
+  const header = {
+    title,
+    status,
+    ...(keys ? { events: keys } : {}),
+    ...(t?.created ? { opened: t.created } : {}),
+    updated: now(),
+  };
   writeLog(
     db,
     taskId,

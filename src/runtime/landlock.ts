@@ -183,7 +183,12 @@ export function profile(
   const others = Object.values(config.projects ?? {})
     .map((p) => resolve(p.path))
     .filter((p) => kind === "unattended" && !(own && under(resolve(own), p)));
-  grant("/", base, base === "rw" ? [...denyRw, ...SHARED] : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"], out);
+  grant(
+    "/",
+    base,
+    base === "rw" ? [...denyRw, ...SHARED] : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"],
+    out,
+  );
   // a chat writes there but connects to nothing already listening: a tmux, screen or X server is the owner's own shell,
   // outside the domain with vault.json in reach. ponytail: where a tool puts one elsewhere (TMUX_TMPDIR), `policy.deny`
   if (kind === "chat") for (const p of SHARED) if (existsSync(p)) grant(p, "rn", denyRw, out);

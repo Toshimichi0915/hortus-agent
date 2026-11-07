@@ -315,7 +315,15 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const top: Change = { op: "put", path: at(p, t), frontmatter: fm, body: mr.description ?? "" };
     const result = heard && deps.hasRef(ref(p, t)) ? ciOf(mr.sha, checks, run) : undefined;
     const where = `${p}${t}`;
-    const routed = ciHeard({ path: at(p, t), ref: ref(p, t), type: "pipeline", where, sha: mr.sha, ci: result, at: when });
+    const routed = ciHeard({
+      path: at(p, t),
+      ref: ref(p, t),
+      type: "pipeline",
+      where,
+      sha: mr.sha,
+      ci: result,
+      at: when,
+    });
     return [top, ...files, ...routed];
   }
 

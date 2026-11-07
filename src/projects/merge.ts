@@ -50,7 +50,11 @@ export async function request(taskId: string): Promise<{ approval: number; url: 
   return serialized(name, () => entry(taskId, name, p));
 }
 
-async function entry(taskId: string, name: string, p: ReturnType<typeof project>): Promise<{ approval: number; url: string }> {
+async function entry(
+  taskId: string,
+  name: string,
+  p: ReturnType<typeof project>,
+): Promise<{ approval: number; url: string }> {
   const db = ctx().db;
   const dir = paths.project(name);
   const branch = `hortus/${taskId}`;

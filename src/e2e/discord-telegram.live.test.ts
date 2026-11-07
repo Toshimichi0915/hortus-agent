@@ -107,7 +107,11 @@ test("live Worker: Discord, a channel message → a reply to it", { skip: !live,
 
 test("live Worker: Discord, a thread channel → a post in the thread", { skip: !live, timeout: 300_000 }, async () => {
   dc.post("3100", { user: "200", text: "how is the build?" });
-  const session = await worker("discord", "discord:3000:3100 discord:3100:3100", "message_create in 3100 by alice: how is the build?");
+  const session = await worker(
+    "discord",
+    "discord:3000:3100 discord:3100:3100",
+    "message_create in 3100 by alice: how is the build?",
+  );
   const sent = dc.channels.get("3100")?.messages.find((x) => x.author.id === dc.botUser);
   console.log(`# discord thread: ${JSON.stringify(sent?.content)}`);
   assert.match(sent?.content ?? "", /green/i, session);

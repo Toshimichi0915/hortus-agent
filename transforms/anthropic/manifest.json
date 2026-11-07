@@ -3,18 +3,9 @@
   "credentials": {
     "anthropic": {
       "type": "token",
-      "hosts": [
-        "api.anthropic.com"
-      ],
-      "locations": [
-        "header:x-api-key"
-      ]
+      "hosts": ["api.anthropic.com"],
+      "locations": ["header:x-api-key"]
     }
   },
-  "consequential": [
-    "DELETE **",
-    "POST **/files",
-    "POST **/messages/batches",
-    "POST **/organizations/**"
-  ]
+  "consequential": ["DELETE **", "POST **/files", "POST **/messages/batches", "POST **/organizations/**"]
 }

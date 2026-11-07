@@ -136,7 +136,16 @@ test("a forum post's first message, whose id is its thread's, also names the thr
 });
 
 test("a brief shows every ref: a thread's `<thread>:<thread>` says where to answer", () => {
-  const e = { id: 1, dof: "discord", key: "k", ts: "t", summary: "s", trusted: 1, author: "a", refs: '["discord:3:7","discord:7:7"]' };
+  const e = {
+    id: 1,
+    dof: "discord",
+    key: "k",
+    ts: "t",
+    summary: "s",
+    trusted: 1,
+    author: "a",
+    refs: '["discord:3:7","discord:7:7"]',
+  };
   assert.match(renderEvent(Config.parse({}), e as unknown as EventRow), /^- \[e1\] discord:3:7 discord:7:7 \(/);
 });
 

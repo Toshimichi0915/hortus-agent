@@ -3,12 +3,8 @@
   "credentials": {
     "openai": {
       "type": "token",
-      "hosts": [
-        "api.openai.com"
-      ],
-      "locations": [
-        "header:Authorization"
-      ]
+      "hosts": ["api.openai.com"],
+      "locations": ["header:Authorization"]
     }
   },
   "consequential": [

@@ -119,8 +119,7 @@ define("task_create", {
       if (!names.has(n)) throw new RpcError("invalid", `unknown credential ${n}`);
     // without the image a project-less task runs on the host only when the owner said so, and the dispatcher does
     // that per start, so the same task boots a VM once the image is built
-    if (project === undefined && missingImage() && c.vm.fallback_host !== true)
-      throw new RpcError("failed", NO_IMAGE);
+    if (project === undefined && missingImage() && c.vm.fallback_host !== true) throw new RpcError("failed", NO_IMAGE);
     const runtime = project === undefined ? "vm" : (c.projects[project]?.runtime ?? "host");
     const full = `${brief}\n\n## Originating events\n${evs.map((e) => renderEvent(c, e)).join("\n")}`;
     const t = tasks.create({

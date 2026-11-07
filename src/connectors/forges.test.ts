@@ -949,19 +949,21 @@ for (const h of H) {
   /** a CI result on `sha` no hook delivers (an outage), or "pending" */
   const unseen = (sha: string, s: "success" | "failure" | "pending", drop = true) =>
     dof === "github"
-      ? gh.checkSuite(
-          P,
-          sha,
-          s === "pending" ? { status: "in_progress", conclusion: null } : { conclusion: s },
-          { drop },
-        )
+      ? gh.checkSuite(P, sha, s === "pending" ? { status: "in_progress", conclusion: null } : { conclusion: s }, {
+          drop,
+        })
       : dof === "gitlab"
         ? gl.pipeline(P, sha, s === "failure" ? "failed" : s === "pending" ? "running" : "success", {}, { drop })
         : bb.status(P, sha, s === "failure" ? "FAILED" : s === "pending" ? "INPROGRESS" : "SUCCESSFUL", { drop });
   const ciRows = (file: string) =>
     db
       .prepare("SELECT summary, refs, author, consumed FROM events WHERE dof = ? AND key LIKE ?")
-      .all(dof, `history:${file}:checks:%`) as { summary: string; refs: string; author: string | null; consumed: number }[];
+      .all(dof, `history:${file}:checks:%`) as {
+      summary: string;
+      refs: string;
+      author: string | null;
+      consumed: number;
+    }[];
 
   test(`${dof}: a CI result missed in an outage reaches its task once: a result, on a task's open PR, not twice`, async () => {
     await h.commit("hortus/ci-unseen", "ci-unseen.txt", "1\n"); // its own head: a result finds its PR by sha

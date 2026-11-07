@@ -210,7 +210,10 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
       const { check_suites } = await json<{ check_suites: Suite[] }>(`/repos/${repo}/commits/${sha}/check-suites`);
       // GitHub opens a suite per checks-writing App on every push: one that never ran stays `queued`, for ever
       const ran = check_suites.filter((s) => s.latest_check_runs_count !== 0);
-      const at = ran.map((s) => s.updated_at ?? "").sort().at(-1);
+      const at = ran
+        .map((s) => s.updated_at ?? "")
+        .sort()
+        .at(-1);
       return { checks: worst(ran), ...(at ? { at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: check suites of ${repo}@${sha} failed`, e);
@@ -254,7 +257,15 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     const top: Change = { op: "put", path: at(repo, t), frontmatter: fm, body: pr.body ?? "" };
     const result = heard && deps.hasRef(ref(repo, t)) ? ciOf(pr.head.sha, checks, when) : undefined;
     const where = `${repo}${t}`;
-    const routed = ciHeard({ path: at(repo, t), ref: ref(repo, t), type: "check_suite", where, sha: pr.head.sha, ci: result, at: when });
+    const routed = ciHeard({
+      path: at(repo, t),
+      ref: ref(repo, t),
+      type: "check_suite",
+      where,
+      sha: pr.head.sha,
+      ci: result,
+      at: when,
+    });
     return [top, ...files, ...routed];
   }
 

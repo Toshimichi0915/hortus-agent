@@ -237,8 +237,14 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
   async function checksOf(p: string, sha: string | undefined): Promise<{ checks: string | null; at?: string }> {
     if (!sha) return { checks: null };
     try {
-      const sts = await all<{ state: string; updated_on?: string }>(`${R(p)}/commit/${sha}/statuses?pagelen=100`, "values");
-      const at = sts.map((s) => s.updated_on ?? "").sort().at(-1);
+      const sts = await all<{ state: string; updated_on?: string }>(
+        `${R(p)}/commit/${sha}/statuses?pagelen=100`,
+        "values",
+      );
+      const at = sts
+        .map((s) => s.updated_on ?? "")
+        .sort()
+        .at(-1);
       return { checks: worst(sts.map((s) => suite(s.state))), ...(at ? { at } : {}) };
     } catch (e) {
       deps.log.error(`${name}: statuses of ${p}@${sha} failed`, e);
@@ -280,7 +286,15 @@ export async function create(deps: ConnectorDeps): Promise<Forge> {
     // a run is the statuses' newest time: a re-run moves it
     const result = heard && sha && deps.hasRef(ref(p, t)) ? ciOf(sha, checks, when) : undefined;
     const type = "repo:commit_status_updated";
-    const routed = ciHeard({ path: at(p, t), ref: ref(p, t), type, where: `${p}${t}`, sha: sha ?? "", ci: result, at: when });
+    const routed = ciHeard({
+      path: at(p, t),
+      ref: ref(p, t),
+      type,
+      where: `${p}${t}`,
+      sha: sha ?? "",
+      ci: result,
+      at: when,
+    });
     return [top, ...files, ...routed];
   }
 

@@ -3,12 +3,8 @@
   "credentials": {
     "openrouter": {
       "type": "token",
-      "hosts": [
-        "openrouter.ai"
-      ],
-      "locations": [
-        "header:Authorization"
-      ]
+      "hosts": ["openrouter.ai"],
+      "locations": ["header:Authorization"]
     }
   },
   "consequential": [
