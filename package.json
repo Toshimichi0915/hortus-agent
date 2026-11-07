@@ -16,8 +16,8 @@
   "scripts": {
     "build": "sh scripts/build.sh",
     "test": "sh scripts/build.sh && node --test 'dist/**/*.test.js'",
-    "lint": "biome lint",
-    "format": "biome format --write",
+    "lint": "biome check",
+    "format": "biome check --write",
     "web": "vite web",
     "web:build": "tsc -p web && vite build web"
   },
