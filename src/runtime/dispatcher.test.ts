@@ -149,9 +149,13 @@ test("a stop while a host session is starting ends it: a shim not yet in its cgr
   const tag = `hortus-mid-${process.pid}`;
   // never joins the cgroup, as the real shim has not in its first instant
   shim.path = join(paths.home(), "fake-shim");
-  writeFileSync(shim.path, `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\nexec -a ${tag} sleep 600\n`, {
-    mode: 0o755,
-  });
+  writeFileSync(
+    shim.path,
+    `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\n[ "$1" = --userns ] && exit 1\nexec -a ${tag} sleep 600\n`,
+    {
+      mode: 0o755,
+    },
+  );
   writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
   const ctx: Ctx = {
     config: Config.parse({ worker: { provider: "fake", model: "m" }, proxy: { https: 0, http: 0, dns: 0 } }),
@@ -182,7 +186,11 @@ test("a host session past its hours is killed: a tool that never returns reaches
   if (process.env.INNER !== "1")
     return assert.match(inScope(fileURLToPath(import.meta.url), "a host session past its hours"), /# pass 1/);
   shim.path = join(paths.home(), "fake-shim");
-  writeFileSync(shim.path, `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\nexec sleep 600\n`, { mode: 0o755 });
+  writeFileSync(
+    shim.path,
+    `#!/bin/bash\n[ "$1" = --abi ] && { echo 9; exit 0; }\n[ "$1" = --userns ] && exit 1\nexec sleep 600\n`,
+    { mode: 0o755 },
+  );
   writeFileSync(paths.vault(), JSON.stringify({ fake: { type: "token", value: "x" } }), { mode: 0o600 });
   const ctx: Ctx = {
     config: Config.parse({ worker: { provider: "fake", model: "m" }, proxy: { https: 0, http: 0, dns: 0 } }),

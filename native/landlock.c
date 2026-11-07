@@ -4,10 +4,18 @@
  *   ro <path> | rw <path>        grant read / read+write beneath <path> (missing path: skipped)
  *   rn <path>                    read+write without RESOLVE_UNIX: shared trees (/tmp) hold other daemons' sockets
  *   scope signal | scope abstract
+ *   pin <path>                   bind <path> onto itself: a mount point cannot be renamed, so neither can what holds a
+ *                                read-only tree (a renamed parent would let a session swap the tree)
+ *   rdonly <path>                bind <path> onto itself read-only
+ *   mask <path>                  hide <path>: an empty tmpfs on a directory, a nodev /dev/null on anything else
+ *   expose ro|rw <path>          put <path> back, as it was before any mask, inside a mask laid over it
  *   end                          required: a truncated profile never runs open
+ * Mount directives run in profile order, in a new user and mount namespace (own uid and gid mapped 1:1), before the
+ * Landlock rules are opened; they are mount points of that namespace only, and once exec drops the namespace's
+ * capabilities nothing in the session can unmount them (a nested namespace gets them locked). Missing paths: skipped.
  * Only `rw` grants RESOLVE_UNIX (ABI 9: connect to pathname sockets), so `ro` trees expose no daemon sockets.
- * hortus-landlock --abi prints the Landlock ABI version.
- * Exit: 64 bad profile/usage, 65 cgroup, 66 no Landlock, 67 exec failed (or a Landlock call failed).
+ * hortus-landlock --abi prints the Landlock ABI version; --userns exits 0 when the mount directives can run.
+ * Exit: 64 bad profile/usage, 65 cgroup, 66 no Landlock, 67 exec failed (or a Landlock call failed), 68 mount setup.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -16,6 +24,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sched.h>
+#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -68,6 +78,24 @@
 #endif
 #define RULE_PATH_BENEATH 1
 
+#ifndef __NR_open_tree
+#define __NR_open_tree 428
+#endif
+#ifndef __NR_move_mount
+#define __NR_move_mount 429
+#endif
+#ifndef __NR_mount_setattr
+#define __NR_mount_setattr 442
+#endif
+#define TREE_CLONE 1         /* OPEN_TREE_CLONE */
+#define MOVE_EMPTY_PATH 0x4  /* MOVE_MOUNT_F_EMPTY_PATH */
+#define RECURSIVE 0x8000     /* AT_RECURSIVE */
+#define ATTR_RDONLY 0x1
+#define ATTR_HIDDEN 0xf      /* RDONLY | NOSUID | NODEV | NOEXEC */
+struct mount_attr_v0 {
+  uint64_t attr_set, attr_clr, propagation, userns_fd;
+};
+
 /* Own copies of the uapi structs, so older headers build; trailing zero fields are accepted by older kernels. */
 struct ruleset_attr {
   uint64_t handled_access_fs, handled_access_net, scoped;
@@ -105,13 +133,77 @@ static int abi(void) {
   return (int)v;
 }
 
+/* A detached recursive clone of the tree at `p` (recursive: a clone may not uncover a locked mount). */
+static int clone_tree(const char *p) {
+  return (int)syscall(__NR_open_tree, AT_FDCWD, p, TREE_CLONE | RECURSIVE | O_CLOEXEC);
+}
+
+static void set_attr(int fd, const char *p, uint64_t attr) {
+  struct mount_attr_v0 a = {.attr_set = attr};
+  /* fd < 0: the mount at `p` alone (a mask's tmpfs, not what is exposed inside it) */
+  if (syscall(__NR_mount_setattr, fd < 0 ? AT_FDCWD : fd, fd < 0 ? p : "", fd < 0 ? 0 : AT_EMPTY_PATH | RECURSIVE, &a,
+              sizeof a) < 0)
+    die(68, "cannot make a mount read-only", p, errno);
+}
+
+static void attach(int fd, const char *p) {
+  if (syscall(__NR_move_mount, fd, "", AT_FDCWD, p, MOVE_EMPTY_PATH) < 0) die(68, "cannot mount", p, errno);
+  close(fd);
+}
+
+static void write_file(const char *path, const char *text) {
+  int fd = open(path, O_WRONLY | O_CLOEXEC);
+  ssize_t n = (ssize_t)strlen(text);
+  if (fd < 0 || write(fd, text, (size_t)n) != n) die(68, "cannot set up the user namespace", path, errno);
+  close(fd);
+}
+
+/* A user and mount namespace with our uid and gid, mounts no longer shared back to the owner's namespace. */
+static void enter_namespace(void) {
+  uid_t uid = getuid();
+  gid_t gid = getgid();
+  char map[64];
+  if (unshare(CLONE_NEWUSER | CLONE_NEWNS) < 0) die(68, "cannot create a user namespace", NULL, errno);
+  write_file("/proc/self/setgroups", "deny");
+  snprintf(map, sizeof map, "%u %u 1\n", uid, uid);
+  write_file("/proc/self/uid_map", map);
+  snprintf(map, sizeof map, "%u %u 1\n", gid, gid);
+  write_file("/proc/self/gid_map", map);
+  /* EPERM here, after unshare succeeded: Ubuntu's apparmor_restrict_unprivileged_userns took the capabilities */
+  if (mount(NULL, "/", NULL, MS_REC | MS_SLAVE, NULL) < 0) die(68, "cannot mount in the user namespace", NULL, errno);
+}
+
+/* mkdir -p of an expose point inside a mask (missing components only); a file's last component is created as one. */
+static void make_point(char *p, int dir) {
+  for (char *s = strchr(p + 1, '/');; s = strchr(s + 1, '/')) {
+    if (s) *s = 0;
+    struct stat st;
+    if (stat(p, &st) < 0) {
+      int r = s || dir ? mkdir(p, 0111) : close(open(p, O_CREAT | O_WRONLY | O_CLOEXEC, 0600));
+      if (r < 0) die(68, "cannot create a mount point", p, errno);
+    }
+    if (!s) return;
+    *s = '/';
+  }
+}
+
 static char profile[MAX_PROFILE + 1];
 static char *rules[MAX_RULES]; /* "ro <path>" / "rw <path>", pointing into profile */
 static int nrules;
+static char *mounts[MAX_RULES]; /* pin / rdonly / mask / expose lines, in order */
+static int nmounts;
+static int exposed[MAX_RULES]; /* per mounts[i]: an expose's clone, taken before any mask */
 
 int main(int argc, char **argv) {
   if (argc == 2 && strcmp(argv[1], "--abi") == 0) {
     printf("%d\n", abi());
+    return 0;
+  }
+  if (argc == 2 && strcmp(argv[1], "--userns") == 0) {
+    enter_namespace();
+    int fd = clone_tree("/");
+    if (fd < 0) die(68, "no open_tree (Linux 5.12 or later)", NULL, errno);
+    set_attr(fd, "/", ATTR_RDONLY);
     return 0;
   }
   if (argc < 3 || strcmp(argv[1], "--") != 0) die(64, "usage: hortus-landlock -- <cmd> [args...] (profile on fd 3)", NULL, 0);
@@ -143,6 +235,10 @@ int main(int argc, char **argv) {
     else if (strncmp(line, "ro /", 4) == 0 || strncmp(line, "rw /", 4) == 0 || strncmp(line, "rn /", 4) == 0) {
       if (nrules == MAX_RULES) die(64, "too many rules", NULL, 0);
       rules[nrules++] = line;
+    } else if (strncmp(line, "pin /", 5) == 0 || strncmp(line, "rdonly /", 8) == 0 || strncmp(line, "mask /", 6) == 0 ||
+               strncmp(line, "expose ro /", 11) == 0 || strncmp(line, "expose rw /", 11) == 0) {
+      if (nmounts == MAX_RULES) die(64, "too many mounts", NULL, 0);
+      mounts[nmounts++] = line;
     } else if (strcmp(line, "scope signal") == 0) scoped |= LANDLOCK_SCOPE_SIGNAL;
     else if (strcmp(line, "scope abstract") == 0) scoped |= LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET;
     else die(64, "unknown directive", line, 0);
@@ -159,7 +255,61 @@ int main(int argc, char **argv) {
     close(fd);
   }
 
-  /* 3. Ruleset with every right this ABI knows. */
+  /* 3. Mounts, in order: the Landlock rules below open their paths in this namespace. */
+  if (nmounts) {
+    enter_namespace();
+    for (int i = 0; i < nmounts; i++) {
+      exposed[i] = -1;
+      if (strncmp(mounts[i], "expose ", 7) != 0) continue;
+      exposed[i] = clone_tree(mounts[i] + 10);
+      if (exposed[i] < 0 && errno != ENOENT) die(68, "cannot clone", mounts[i] + 10, errno);
+      if (exposed[i] >= 0 && mounts[i][8] == 'o') set_attr(exposed[i], mounts[i] + 10, ATTR_RDONLY);
+    }
+    static const char *masks[MAX_RULES];
+    int nmasks = 0;
+    for (int i = 0; i < nmounts; i++) {
+      char *p = strchr(mounts[i], ' ') + 1;
+      if (mounts[i][0] == 'e') {
+        if (exposed[i] < 0) continue;
+        p += 3;
+        struct stat st;
+        if (fstat(exposed[i], &st) < 0) die(68, "cannot stat", p, errno);
+        /* inside a mask: its root lets the session through (0111: nothing to list) to what is put back */
+        for (int m = 0; m < nmasks; m++) {
+          size_t n = strlen(masks[m]);
+          if (strncmp(p, masks[m], n) == 0 && p[n] == '/' && chmod(masks[m], 0111) < 0)
+            die(68, "cannot chmod", masks[m], errno);
+        }
+        make_point(p, S_ISDIR(st.st_mode));
+        attach(exposed[i], p);
+        continue;
+      }
+      struct stat st;
+      if (stat(p, &st) < 0) {
+        if (errno == ENOENT) continue;
+        die(68, "cannot stat", p, errno);
+      }
+      if (mounts[i][0] == 'p' || mounts[i][0] == 'r') {
+        int fd = clone_tree(p);
+        if (fd < 0) die(68, "cannot clone", p, errno);
+        if (mounts[i][0] == 'r') set_attr(fd, p, ATTR_RDONLY);
+        attach(fd, p);
+      } else if (S_ISDIR(st.st_mode)) {
+        if (mount("tmpfs", p, "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=0,size=1m,nr_inodes=1k") < 0)
+          die(68, "cannot mask", p, errno);
+        masks[nmasks++] = p;
+      } else {
+        int fd = clone_tree("/dev/null");
+        if (fd < 0) die(68, "cannot clone", "/dev/null", errno);
+        set_attr(fd, p, ATTR_HIDDEN);
+        attach(fd, p);
+      }
+    }
+    /* last: the expose points are made, nothing more is written to a mask */
+    for (int m = 0; m < nmasks; m++) set_attr(-1, masks[m], ATTR_HIDDEN);
+  }
+
+  /* 4. Ruleset with every right this ABI knows. */
   int v = abi();
   uint64_t handled = READ_SET | WRITE_SET;
   if (v < 2) handled &= ~LANDLOCK_ACCESS_FS_REFER;
@@ -172,7 +322,7 @@ int main(int argc, char **argv) {
   int rs = (int)syscall(__NR_landlock_create_ruleset, &attr, v >= 6 ? sizeof attr : 2 * sizeof(uint64_t), 0);
   if (rs < 0) die(67, "landlock_create_ruleset failed", NULL, errno);
 
-  /* 4. One rule per existing path, rights masked to what applies to its type. */
+  /* 5. One rule per existing path, rights masked to what applies to its type. */
   for (int i = 0; i < nrules; i++) {
     const char *p = rules[i] + 3;
     int fd = open(p, O_PATH | O_CLOEXEC);
@@ -189,7 +339,7 @@ int main(int argc, char **argv) {
     close(fd);
   }
 
-  /* 5. Restrict and exec. */
+  /* 6. Restrict and exec. */
   if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0) die(67, "PR_SET_NO_NEW_PRIVS failed", NULL, errno);
   if (syscall(__NR_landlock_restrict_self, rs, 0) < 0) die(67, "landlock_restrict_self failed", NULL, errno);
   close(rs);

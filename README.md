@@ -69,6 +69,17 @@ each other's files there, or a VM; a device goes in the same list (`/dev/ttyUSB0
 `java.io.tmpdir` point into the task's own directories, and `~/.m2/settings.xml` is denied, so a Worker's Maven runs
 without your mirrors and servers there.
 
+A chat session hides what exists of the deny set behind mounts in its own user namespace: an empty, read-only directory
+or file in its place, with hortusd's `dist/` and `node_modules` and `~/.config/systemd` mounted read-only and their
+parents unrenameable. The directories holding them take new entries (a new checkout beside a dev copy of hortus); each
+such parent is a mount point, so a rename into or out of one is a copy (`EXDEV`), as across disks. Files owned by other users
+show as `nobody`. A deny entry that does not exist, like `~/.aws` on a machine without one, cannot be mounted over, so
+its directory (`~`, nearly always) takes no new entries. Ubuntu 23.10 and later refuse that namespace to unprivileged
+programs (`kernel.apparmor_restrict_unprivileged_userns`). hortusd's log says `chat sessions without mount masks`, and
+chats fall back to that rule for every deny entry. To let the shim through, load a profile with `userns,` for
+`dist/hortus-landlock` (see `apparmor.d(5)`). Worker VMs' virtiofsd sandbox and DOF view (`unshare --user`) run into the
+same restriction.
+
 The console is `http://127.0.0.1:7700`. `hortus help` lists the CLI commands (`tasks`, `chat`, `approvals`, `search`,
 `schedules`, `pause`, …). A login is finished in the console (`hortus approvals approve` refuses it: only the login view
 signs in), and a transform's missing credentials are entered there.

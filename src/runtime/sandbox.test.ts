@@ -5,8 +5,10 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  accessSync,
   chmodSync,
   closeSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,7 +22,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Writable } from "node:stream";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,7 +31,7 @@ import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
 import { caches, sandboxEnv, spawnSandboxed } from "./host.ts";
-import { abi, denySet, profile, readOnlySet, shim } from "./landlock.ts";
+import { abi, denySet, profile, readOnlySet, shim, usernsBlocked } from "./landlock.ts";
 
 const inScope = process.env.HORTUS_TEST_SCOPE === "1";
 const hasSystemdRun = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
@@ -495,6 +497,62 @@ function suite(): void {
       const w = await shimSh(prof(), `: >> ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`);
       assert.match(w.err, /Permission denied|Text file busy/, w.err);
       ok(await shimSh(prof(), `test -r ${fileURLToPath(new URL("../hortus-landlock", import.meta.url))}`));
+    });
+  });
+
+  describe("chat domain, masked (a mount namespace)", async () => {
+    const blocked = await usernsBlocked();
+    const prof = () => profile("chat", task, config, true);
+    const pkg = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
+    const shut = (r: Ran) =>
+      assert.match(r.err, /Permission denied|No such file|Read-only|Operation not permitted/, r.err);
+    test("the deny set and HORTUS_HOME stay closed, carve-outs keep their modes", { skip: blocked }, async () => {
+      shut(await shimSh(prof(), `cat ${homedir()}/.ssh/id_ed25519 > /dev/null`));
+      shut(await shimSh(prof(), `cat ${homedir()}/.hortus/secrets.json > /dev/null`));
+      shut(await shimSh(prof(), `cat ${H}/vault.json`));
+      shut(await shimSh(prof(), `ls ${H}/tasks`));
+      shut(await shimSh(prof(), `cat ${secret}/f`));
+      shut(await shimSh(prof(), `cat ${H}/dof/github/o/r/issues/1.md`));
+      ok(await shimSh(prof(), `cat ${H}/dof/slack/C1/channel.md ${H}/dof/slack.git/HEAD`));
+      ok(await shimSh(prof(), `touch ${H}/tasks/T/out/x ${H}/clones/T/x`));
+      shut(await shimSh(prof(), `touch ${H}/tasks/T/ctl/x`));
+      shut(await shimSh(prof(), `touch ${H}/dof/slack/x`));
+      shut(await shimSh(prof(), `cat ${homedir()}/.hortus-f4-nonexistent-deny 2>&1; mkdir ${H}/x`));
+      const late = shimSh(prof(), `sleep 0.3; cat ${H}/late-masked.txt`);
+      writeFileSync(join(H, "late-masked.txt"), "x");
+      shut(await late);
+    });
+    test("hortusd's own code is read-only and its parents cannot be renamed; beside it takes new entries", {
+      skip: blocked,
+    }, async () => {
+      const lines = prof().split("\n");
+      for (let a = dirname(pkg); a !== dirname(a); a = dirname(a)) {
+        let writable = true;
+        try {
+          accessSync(dirname(a), constants.W_OK);
+        } catch {
+          writable = false;
+        }
+        assert.equal(lines.includes(`pin ${a}`), writable, a);
+      }
+      assert.ok(lines.includes(`pin ${pkg}`) && lines.includes(`rdonly ${join(pkg, "dist")}`));
+      shut(await shimSh(prof(), `: >> ${join(pkg, "dist/hortus-landlock")}`));
+      // the walked profile could not: the checkout's parent holds dist/, so only its existing entries were granted
+      const r = await shimSh(prof(), `d=$(mktemp -d ${dirname(pkg)}/.hortus-f4-XXXXXX) && rmdir "$d" && echo made`);
+      ok(r);
+      assert.equal(r.out.trim(), "made");
+      denied(await shimSh(profile("chat", task, config), `mktemp -d ${dirname(pkg)}/.hortus-f4-XXXXXX`));
+    });
+    test("pins resist rename, masks resist umount, even from a nested namespace", { skip: blocked }, async () => {
+      const t = join(root, "ns");
+      mkdirSync(join(t, "pkg/dist"), { recursive: true });
+      mkdirSync(join(t, "sec"));
+      writeFileSync(join(t, "sec/f"), "s");
+      const p = `pin ${t}/pkg\nrdonly ${t}/pkg/dist\nmask ${t}/sec\nrw /\nend\n`;
+      assert.match((await shimSh(p, `mv ${t}/pkg ${t}/pkg2`)).err, /busy/);
+      assert.ok(existsSync(join(t, "pkg")));
+      shut(await shimSh(p, `touch ${t}/pkg/dist/x`));
+      shut(await shimSh(p, `umount ${t}/sec 2>&1 || unshare -Urm umount ${t}/sec; cat ${t}/sec/f`));
     });
   });
 

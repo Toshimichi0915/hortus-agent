@@ -4,7 +4,7 @@
  * along the way to a denied path except the denied one: what is created later under a walked directory is unreachable.
  */
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,22 @@ export function abi(): Promise<number> {
     abiCache = { path: shim.path, result };
   }
   return abiCache.result;
+}
+
+let nsCache: { path: string; result: Promise<string | undefined> } | undefined;
+
+/** Why the shim cannot mount in its own user namespace (undefined: it can, so a chat's deny set is masked rather than
+ * walked); Ubuntu's `apparmor_restrict_unprivileged_userns` is the usual reason. Cached per shim path, never throws. */
+export function usernsBlocked(): Promise<string | undefined> {
+  if (nsCache?.path !== shim.path) {
+    // a timeout: a shim that hangs here (a stand-in in a test, say) would hold every chat start
+    const result = promisify(execFile)(shim.path, ["--userns"], { timeout: 5000 }).then(
+      () => undefined,
+      (e: { stderr?: string; message: string }) => (e.stderr ?? "").trim() || e.message,
+    );
+    nsCache = { path: shim.path, result };
+  }
+  return nsCache.result;
 }
 
 /** Realpath, resolving as much of the path as exists (a denied path that does not exist yet still guards its parent). */
@@ -143,6 +159,66 @@ function grant(dir: string, mode: Mode, deny: string[], out: string[]): void {
   }
 }
 
+interface Mount {
+  dev: string;
+  root: string;
+  at: string;
+}
+
+/** This namespace's mounts (`/proc/self/mountinfo`: major:minor, the root within the filesystem, the mount point). */
+function mountTable(): Mount[] {
+  const octal = (s: string) => s.replace(/\\(\d{3})/g, (_, o: string) => String.fromCharCode(Number.parseInt(o, 8)));
+  return readFileSync("/proc/self/mountinfo", "utf8")
+    .split("\n")
+    .map((l) => l.split(" "))
+    .filter((f) => f.length > 4)
+    .map((f) => ({ dev: f[2] ?? "", root: octal(f[3] ?? ""), at: octal(f[4] ?? "") }));
+}
+
+/** `p` and the paths the same file has through every other mount of its filesystem (a bind mount, a btrfs subvolume
+ * mounted twice): a mask on `p` alone would leave them open. */
+function aliases(p: string, table: Mount[]): string[] {
+  const m = table
+    .filter((m) => under(p, m.at))
+    .reduce<Mount | undefined>(
+      (a, b) => (!a || b.at.length >= a.at.length ? b : a), // the last one mounted at the deepest point is what `p` is
+      undefined,
+    );
+  if (!m) return [p];
+  const rel = join(m.root, p.slice(m.at.length));
+  const other = table.filter((n) => n !== m && n.dev === m.dev && under(rel, n.root));
+  return [p, ...other.map((n) => join(n.at, rel.slice(n.root.length)))];
+}
+
+const depth = (p: string) => (p === "/" ? 0 : p.split("/").length - 1);
+
+/** A chat's mount directives (the shim's namespace): the existing deny set masked, the read-only set and every parent a
+ * session could rename (and so swap the tree under) bound in place, the carve-outs put back inside the masks. Deeper
+ * paths after shallower ones, so each lands on what is above it. What does not exist cannot be mounted on: the caller
+ * still walks it (`grant`). */
+function nsMounts(deny: string[], ro: string[], carve: [string, Mode][]): string[] {
+  const table = mountTable();
+  const writable = (d: string) => {
+    try {
+      accessSync(d, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const ops = new Map<string, [number, string]>(); // line → [order within a depth, path]
+  const add = (rank: number, op: string, p: string) => {
+    if (!p.includes("\n")) ops.set(`${op} ${p}`, [rank, p]);
+  };
+  for (const p of ro.filter((p) => existsSync(p))) {
+    for (let a = dirname(p); a !== "/" && a !== dirname(a); a = dirname(a)) if (writable(dirname(a))) add(0, "pin", a);
+    for (const q of aliases(p, table)) add(1, "rdonly", q);
+  }
+  for (const p of deny.filter((p) => existsSync(p))) for (const q of aliases(p, table)) add(1, "mask", q);
+  for (const [p, mode] of carve) add(2, `expose ${mode === "ro" ? "ro" : "rw"}`, p);
+  return [...ops].sort(([, [ra, a]], [, [rb, b]]) => depth(a) - depth(b) || ra - rb).map(([line]) => line);
+}
+
 /** All an unattended session sees of `$HOME`: where toolchains install, none a credential store.
  * Not `.gitconfig`: git takes a hidden one silently, but dies on a shown one's `include` of a hidden file. */
 export const HOME_READ = `.local/bin .local/lib .local/share/pnpm .local/share/mise .local/share/fnm .local/share/pipx
@@ -160,11 +236,14 @@ const SHARED = ["/tmp", "/var/tmp", "/run/screen"].map(resolve);
 
 const RW_DEV = ["null", "zero", "full", "random", "urandom", "tty", "shm"].map((d) => `/dev/${d}`);
 
-/** The directive text for one task under `kind`. */
+/** The directive text for one task under `kind`. `ns` (a chat, `usernsBlocked()` clear): what exists of the deny and
+ * read-only sets is mounted over in the shim's namespace instead of walked around, so the directories holding it
+ * (`~/Desktop/projects` above a dev checkout) take new entries. */
 export function profile(
   kind: Kind,
   task: ProfileTask,
   config: Pick<Config, "policy"> & Partial<Pick<Config, "projects">>,
+  ns = false,
 ): string {
   // ponytail: /dev/pts is the owner's terminals and /dev/input their keyboard (the `input` group, or a seat's ACL), keys
   // read with no ioctl, and Landlock cannot tell a session's pty from theirs: no pty on a host Worker, chat or not (script,
@@ -175,6 +254,7 @@ export function profile(
   const out: string[] = [];
   if (task.cgroup) out.push(`cgroup ${task.cgroup}`);
   const base: Mode = kind === "chat" ? "rw" : "ro";
+  const masked = ns && kind === "chat";
   // unattended: of /dev, only RW_DEV: `ro` opened /dev/fb0 (the screen) and the owner's console /dev/tty<n>. /dev/stdout
   // and /dev/fd are links, which need no rule. ponytail: a chat keeps the rest, the owner's boards and /dev/kvm with them
   // unattended: of `$HOME` only what is listed, not `ro` less what is hidden: the stores on one machine cannot be listed
@@ -183,10 +263,13 @@ export function profile(
   const others = Object.values(config.projects ?? {})
     .map((p) => resolve(p.path))
     .filter((p) => kind === "unattended" && !(own && under(resolve(own), p)));
+  // ponytail: a missing deny entry (~/.aws on a machine without one) cannot be masked, so its parent is still walked and
+  // takes no new entry: `~` itself, nearly always. Creating it would let the session plant what the owner's tool fills
+  const walked = masked ? denyRw.filter((p) => !existsSync(p)) : denyRw;
   grant(
     "/",
     base,
-    base === "rw" ? [...denyRw, ...SHARED] : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"],
+    base === "rw" ? [...walked, ...SHARED] : [...deny, ...others, home, ...HIDDEN.map(resolve), "/dev"],
     out,
   );
   // a chat writes there but connects to nothing already listening: a tmux, screen or X server is the owner's own shell,
@@ -218,6 +301,10 @@ export function profile(
     [kind === "unattended" ? paths.cache() : undefined, "rn"],
   ];
   for (const [p, mode] of carve) if (p && existsSync(p)) grant(resolve(p), mode, rest, out);
+  if (masked) {
+    const shown = carve.flatMap(([p, mode]): [string, Mode][] => (p && existsSync(p) ? [[resolve(p), mode]] : []));
+    out.unshift(...nsMounts(deny, ro, shown));
+  }
   out.push("scope signal", "scope abstract", "end");
   return `${out.join("\n")}\n`;
 }

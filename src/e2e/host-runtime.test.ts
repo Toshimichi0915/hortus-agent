@@ -241,7 +241,7 @@ test("chat: open → Worker → replies + SSE → waiting; resume keeps the cont
 
   // F4: a chat session (rw everywhere else) cannot open the vault
   await turn(id, `!bash cat ${join(home, "vault.json")}`);
-  assert.match(texts(await card(id)), /tool said: .*Permission denied/s);
+  assert.match(texts(await card(id)), /tool said: .*(Permission denied|No such file)/s);
 });
 
 test("stop: STOP after the running tool → waiting; the next message resumes it", { skip }, async () => {

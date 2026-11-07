@@ -12,7 +12,7 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import type { TaskJson } from "../types.ts";
 import * as cgroup from "./cgroup.ts";
-import { abi, HOME_READ, type Kind, profile, shim } from "./landlock.ts";
+import { abi, HOME_READ, type Kind, profile, shim, usernsBlocked } from "./landlock.ts";
 import * as sessionNet from "./session-net.ts";
 
 export interface SpawnOpts {
@@ -254,6 +254,7 @@ export async function spawnSandboxed(o: SpawnOpts): Promise<Child> {
       cgroup: cgroup.path(id),
     },
     o.config,
+    o.kind === "chat" && !(await usernsBlocked()),
   );
   // first: a planted link or FIFO there is replaced, and a failure leaves no cgroup, address or child behind
   const logFd = openAppend(join(out, "console.log"));

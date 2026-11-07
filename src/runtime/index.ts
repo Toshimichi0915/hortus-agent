@@ -1,12 +1,12 @@
 /** Host runtime: Landlock profiles, cgroups, the network layer, sandboxed spawn. */
 import type { Module } from "../ctx.ts";
-import { abi } from "./landlock.ts";
+import { abi, usernsBlocked } from "./landlock.ts";
 import * as net from "./net.ts";
 
 export * as cgroup from "./cgroup.ts";
 export { dispatcherModule, exitHooks, isStopping, runPlanner, wake } from "./dispatcher.ts";
 export { agentCmd, type Child, type Exit, type SpawnOpts, sandboxEnv, spawnSandboxed } from "./host.ts";
-export { abi, denySet, type Kind, type ProfileTask, profile, shim } from "./landlock.ts";
+export { abi, denySet, type Kind, type ProfileTask, profile, shim, usernsBlocked } from "./landlock.ts";
 export * as sessionNet from "./session-net.ts";
 export * as tasks from "./tasks.ts";
 export * as vm from "./vm.ts";
@@ -21,6 +21,10 @@ export const runtimeModule: Module = {
     Object.assign(net.ports, ctx.config.proxy);
     try {
       log.info("landlock", { abi: await abi() });
+      const blocked = await usernsBlocked();
+      // a chat then walks around its deny set as before: the directories holding one (~, a dev checkout's parent) take
+      // no new entries
+      if (blocked) log.info("chat sessions without mount masks", { reason: blocked });
     } catch (e) {
       log.error("host sessions disabled", e);
     }
