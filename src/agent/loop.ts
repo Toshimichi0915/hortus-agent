@@ -7,8 +7,8 @@ import { dirname, join } from "node:path";
 import { createAgent, listSessions, type Message, openSession, type Plugin, type Session } from "@hortus/core";
 import { AUX_TOKENS, MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, readCapped, readDir } from "../hostile.ts";
 import { logger } from "../log.ts";
-import type { TaskJson } from "../types.ts";
-import { drain, marker, pending, quote } from "./inbox.ts";
+import { budgetTokens, type TaskJson } from "../types.ts";
+import { drain, marker, ownerMessages, pending, quote } from "./inbox.ts";
 import { writeOutbox } from "./outbox.ts";
 import { formatScript, runScript } from "./script.ts";
 import { out, outMessage } from "./stdout.ts";
@@ -41,7 +41,8 @@ export function scan(dir: string): { tokens: number; cursor: number } {
         continue; // empty, or cut short by a crash
       }
       const m = e?.type === "message" ? e.message : undefined;
-      if (m?.role === "assistant") tokens += n(m.usage?.input) + n(m.usage?.output);
+      if (m?.role === "assistant")
+        tokens += budgetTokens({ input: n(m.usage?.input), output: n(m.usage?.output), cached: n(m.usage?.cached) });
       if (m?.role === "user" && !first && typeof m.content === "string")
         cursor = Math.max(cursor, marker(m.content) ?? 0);
       if (m?.role === "user") first = false;
@@ -124,7 +125,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       tool_call: (c) => out({ type: "tool_call", id: c.id, name: c.name, input: c.input }),
       message: async (m) => {
         if (m.role === "assistant") {
-          tokens += (m.usage?.input ?? 0) + (m.usage?.output ?? 0);
+          if (m.usage) tokens += budgetTokens(m.usage);
           lastUsage = m.usage;
           errors = 0;
         }
@@ -231,9 +232,16 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
           session = await openSession(null, sessionsDir);
           lastUsage = undefined;
           out({ type: "status", text: "context full: continuing in a new session" });
-          await append([
-            { role: "user", content: `${task.brief}\n\n# PROGRESS.md (your notes so far)\n\n${progress}` },
-          ]);
+          // the owner's steering verbatim, not as the handoff remembered it: a correction left out of PROGRESS.md sent
+          // the new session back to what the brief first said. ~20% of the window, at 4 chars a token
+          const owner = ownerMessages(dir, cursor, window * 0.8);
+          const first = [task.brief];
+          if (owner.text)
+            first.push(
+              `# The owner's messages so far (verbatim, oldest first${owner.dropped ? `; ${owner.dropped} older ones left out for length` : ""})\n\n${owner.text}`,
+            );
+          first.push(`# PROGRESS.md (your notes so far)\n\n${progress}`);
+          await append([{ role: "user", content: first.join("\n\n") }]);
         } catch (e) {
           out({ type: "error", message: `handoff failed: ${errorText(e)}` });
         }

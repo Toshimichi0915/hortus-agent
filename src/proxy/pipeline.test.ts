@@ -92,7 +92,7 @@ const fake = http.createServer((req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       if (kind === "openai")
         res.write(
-          'data: {"choices":[]}\n\ndata: {"usage":{"prompt_tokens":70,"completion_tokens":7}}\n\ndata: [DONE]\n\n',
+          'data: {"choices":[]}\n\ndata: {"usage":{"prompt_tokens":70,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":60}}}\n\ndata: [DONE]\n\n',
         );
       if (kind === "anthropic")
         res.write(
@@ -960,8 +960,12 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
   };
   try {
     assert.equal(await charged("json"), 120, "as core adds them: input + output");
-    assert.equal(await charged("openai"), 77);
-    assert.equal(await charged("anthropic"), 64, "cache reads are input; output is the last, cumulative figure");
+    assert.equal(await charged("openai"), 10 + 6 + 7, "cache reads count at CACHED_WEIGHT");
+    assert.equal(
+      await charged("anthropic"),
+      5 + 5 + 9,
+      "cache reads at CACHED_WEIGHT; output is the last, cumulative figure",
+    );
     assert.equal(await charged("cut"), 35, "a stream cut before its last usage: a token a delta at least");
     assert.equal(await charged("none"), Math.ceil((2 + 29) / 4), "no usage in a body: its bytes, request and response");
     assert.ok((await charged("ndjson")) >= 1300, "Ollama's native stream on the same key is counted too");

@@ -14,7 +14,7 @@ import zlib from "node:zlib";
 import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
 import type { Config } from "../config.ts";
-import type { Manifest, Req, ResponseResult, Template } from "../types.ts";
+import { budgetTokens, type Manifest, type Req, type ResponseResult, type Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import {
   HANDLE,
@@ -1080,14 +1080,18 @@ export const overdrawn = (tokens: number, c: Pick<Config, "worker">): number => 
  * providers), so a call the agent also logs counts the same. ponytail: the two shipped shapes, in the proxy rather than
  * in `transforms/` because a stream skips `response()`; a custom provider's other shape is not counted.
  */
-function usageOf(v: unknown): { input: number; output: number } | undefined {
+function usageOf(v: unknown): { input: number; output: number; cached: number } | undefined {
   const o = v as { usage?: unknown; message?: { usage?: unknown }; response?: { usage?: unknown } } | null;
   const u = (o?.usage ?? o?.message?.usage ?? o?.response?.usage) as Record<string, unknown> | null | undefined;
   if (!u || typeof u !== "object") return undefined;
-  const n = (k: string) => (typeof u[k] === "number" && u[k] > 0 && u[k] < 1e12 ? u[k] : 0);
+  const n = (k: string, x: Record<string, unknown> = u) =>
+    typeof x[k] === "number" && x[k] > 0 && x[k] < 1e12 ? x[k] : 0;
+  // OpenAI's chat completions and responses put the cache reads in a details object
+  const details = (u.prompt_tokens_details ?? u.input_tokens_details) as Record<string, unknown> | null | undefined;
   return {
     input: n("prompt_tokens") || n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
     output: n("completion_tokens") || n("output_tokens"),
+    cached: n("cache_read_input_tokens") || (details && typeof details === "object" ? n("cached_tokens", details) : 0),
   };
 }
 
@@ -1106,6 +1110,7 @@ function meterStream(p: Prepared, r: Readable): void {
   let bytes = p.raw.body?.length ?? 0;
   let input = 0;
   let output = 0;
+  let cached = 0;
   let seen = false;
   // at least a token each: Anthropic's last `output_tokens` comes at the end, so a client that hangs up before it had the
   // text and `message_start`'s 1
@@ -1119,6 +1124,7 @@ function meterStream(p: Prepared, r: Readable): void {
       seen = true;
       input = Math.max(input, u.input); // Anthropic's arrive in two events, each cumulative
       output = Math.max(output, u.output);
+      cached = Math.max(cached, u.cached);
     } catch {} // not JSON: nothing to count
   };
   r.on("data", (b: Buffer) => {
@@ -1129,7 +1135,7 @@ function meterStream(p: Prepared, r: Readable): void {
   });
   r.once("close", () => {
     line(carry);
-    charge(p, seen ? input + Math.max(output, deltas) : Math.ceil(bytes / 4));
+    charge(p, seen ? budgetTokens({ input, cached, output: Math.max(output, deltas) }) : Math.ceil(bytes / 4));
   });
 }
 
@@ -1223,7 +1229,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     // every quiet schedule run), but it fetches what a background call made (OpenAI's `background: true`, then `GET
     // /v1/responses/<id>`): its usage, or that pair was a way round the count
     const get = p.template.method === "GET";
-    charge(p, u ? u.input + u.output : get ? 0 : Math.ceil((asked + r.buf.length) / 4));
+    charge(p, u ? budgetTokens(u) : get ? 0 : Math.ceil((asked + r.buf.length) / 4));
   }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);

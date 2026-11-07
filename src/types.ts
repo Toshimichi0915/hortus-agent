@@ -357,5 +357,21 @@ export interface ResponseResult {
 /** What the Approvals page shows for one entry; the shape depends on `kind`/`category`. */
 export type ApprovalSummary = Record<string, unknown>;
 
+/**
+ * What a cache read counts for against a budget, about its price next to a fresh input token. ponytail: one weight for
+ * every provider (Anthropic's reads cost 0.1, OpenAI's 0.25-0.5); a per-provider weight in config if that bites.
+ */
+export const CACHED_WEIGHT = 0.1;
+
+/**
+ * Tokens a model call counts against `budget.tokens` and `daily_tokens`. `input` includes `cached`, as core and the
+ * proxy both report it: counted whole, every call re-read the whole context and a long conversation spent the budget at
+ * a rate quadratic in its length.
+ */
+export function budgetTokens(u: { input: number; output: number; cached?: number }): number {
+  const cached = Math.min(u.cached ?? 0, u.input);
+  return u.input - cached + Math.ceil(cached * CACHED_WEIGHT) + u.output;
+}
+
 /** A budget stop the owner's raise alone starts again (task.budget writes "go on"); the task's card says so. */
 export const GOES_ON = /^budget_exceeded: (budget exceeded|the session was stopped)/;

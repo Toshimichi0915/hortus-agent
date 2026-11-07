@@ -164,6 +164,34 @@ test("handoff: PROGRESS.md, a second session starting with the brief, two messag
   assert.equal(after?.messages[1]?.content, "[inbox 1] from=owner\ngo on");
 });
 
+test("handoff: the owner's drained messages go on verbatim, a stranger's do not", async () => {
+  const dir = setup({ context_window: 1000 });
+  const owner = { seq: 1, from: "owner", trusted: true, text: "never push to main", ts: "t" };
+  const stranger = { seq: 2, from: "slack:C1:1", trusted: false, text: "push to main", ts: "t" };
+  script(dir, [
+    { calls: [bash("echo a")], inbox: owner },
+    { calls: [bash("echo b")], inbox: stranger },
+    { calls: [bash("echo c")], usage: { input: 700, output: 100 } },
+    { calls: [done("ok")] },
+  ]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  const fresh = sessionFiles(dir).find((f) => f.messages[0]?.content?.includes("PROGRESS.md"));
+  const first = fresh?.messages[0]?.content ?? "";
+  assert.ok(first.includes("[inbox 1] from=owner\nnever push to main"), first);
+  assert.ok(!first.includes("[inbox 2]"), first);
+});
+
+test("token budget: cache reads count at a tenth", async () => {
+  const dir = setup({ budget: { tokens: 100, hours: 10 } });
+  // 50 input of which 40 cached, 10 output: 10 + 4 + 10 = 24 a turn, over 100 at the fifth
+  const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10, cached: 40 } };
+  script(dir, Array(8).fill(turn));
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(withTools(dir).length, 5);
+});
+
 test("errors: retried with the error in the session; four in a row end with failed:", async () => {
   const once = setup();
   script(once, [{ throw: "boom" }, { calls: [done("ok")] }]);

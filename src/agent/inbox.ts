@@ -62,3 +62,30 @@ export function drain(dir: string, cursor: number): { seq: number; text: string 
     }
   });
 }
+
+/**
+ * The owner's messages up to `cursor`, rendered as drained, oldest first: the newest that fit in `max` chars (a handoff
+ * passes them on verbatim). Anyone else's are left out, so nothing a stranger wrote comes back as the owner's.
+ */
+export function ownerMessages(dir: string, cursor: number, max: number): { text: string; dropped: number } {
+  const all = pending(dir, 0)
+    .filter((seq) => seq <= cursor)
+    .flatMap((seq) => {
+      try {
+        const path = join(dir, "ctl", "inbox", `${String(seq).padStart(6, "0")}.json`);
+        const m = InboxSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+        return m.from === "owner" ? [render(seq, m)] : [];
+      } catch {
+        return []; // drained as `unreadable`: nothing to pass on
+      }
+    });
+  const kept: string[] = [];
+  let left = max;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const t = all[i] as string;
+    if (t.length > left) break;
+    kept.unshift(t);
+    left -= t.length;
+  }
+  return { text: kept.join("\n\n"), dropped: all.length - kept.length };
+}

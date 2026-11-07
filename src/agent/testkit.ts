@@ -44,7 +44,7 @@ export default { providers: { fake: { create: () => ({ complete, listModels: asy
 export interface Turn {
   text?: string;
   calls?: { name: string; input: unknown }[];
-  usage?: { input: number; output: number };
+  usage?: { input: number; output: number; cached?: number };
   throw?: string;
   kill?: boolean;
   inbox?: Record<string, unknown>;
