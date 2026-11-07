@@ -98,13 +98,19 @@ export function jar(db: DatabaseSync, task: string, origin?: string): Cookie[] {
   return [...out.values()];
 }
 
-/** The Credentials page's list: origin, cookie and token count, last use. */
+/**
+ * The Credentials page's list: origin, cookie and token count, last use, and whether any of it may hold a login: all
+ * but what a Worker got browsing anonymously (an ad network's id, a site's session for a visitor).
+ */
 export function origins(
   db: DatabaseSync,
-): { origin: string; cookies: number; tokens: number; last_use: string | null }[] {
-  return db
+): { origin: string; cookies: number; tokens: number; last_use: string | null; login: boolean }[] {
+  const rows = db
     .prepare(
-      "SELECT origin, sum(kind = 'cookie') AS cookies, sum(kind IS NOT 'cookie') AS tokens, max(last_use) AS last_use FROM captured GROUP BY origin ORDER BY origin",
+      `SELECT origin, sum(kind = 'cookie') AS cookies, sum(kind IS NOT 'cookie') AS tokens, max(last_use) AS last_use,
+        max(json_extract(meta, '$.via') IS NOT 'worker' OR json_extract(meta, '$.anonymous') IS NOT 1) AS login
+      FROM captured GROUP BY origin ORDER BY origin`,
     )
-    .all() as { origin: string; cookies: number; tokens: number; last_use: string | null }[];
+    .all() as { origin: string; cookies: number; tokens: number; last_use: string | null; login: number }[];
+  return rows.map((r) => ({ ...r, login: r.login === 1 }));
 }

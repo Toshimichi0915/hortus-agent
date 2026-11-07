@@ -307,6 +307,8 @@ export interface Captured {
   cookies: number;
   tokens: number;
   last_use: string | null;
+  /** may hold a login: not only what a Worker got browsing anonymously */
+  login: boolean;
 }
 
 export interface Source {

@@ -763,8 +763,19 @@ test("idle: the view closes after IDLE with the entry pending; reopening (also a
 
 test("Credentials: captured origins listed; forget deletes them and old placeholders then 403", async () => {
   // Settings › Credentials › Captured logins
-  const listed = (await api("captured.list", {})) as unknown as { origin: string }[];
+  const add = (origin: string, meta: object) =>
+    ctx.db
+      .prepare("INSERT INTO captured(name, value, origin, kind, created, meta) VALUES (?, 'v', ?, 'cookie', '', ?)")
+      .run(`c-${origin}`, origin, JSON.stringify(meta));
+  add("login.test", { via: "login", task: "T" });
+  add("ads.test", { via: "worker", anonymous: true, task: "T" });
+  add("mixed.test", { via: "worker", task: "T" });
+  const listed = (await api("captured.list", {})) as unknown as { origin: string; login: boolean }[];
+  const login = (o: string) => listed.find((c) => c.origin === o)?.login;
   assert.ok(listed.some((c) => c.origin === "site.test"));
+  assert.equal(login("login.test"), true, "signed in through the login view");
+  assert.equal(login("ads.test"), false, "a Worker's anonymous browsing");
+  assert.equal(login("mixed.test"), true, "a Worker's capture that rode with a credential");
   const row = cookieRow("site.test", "session");
   assert.ok(row);
   assert.deepEqual(await api("captured.forget", { origin: "site.test" }), { deleted: 2 });
@@ -778,13 +789,28 @@ test("Credentials: captured origins listed; forget deletes them and old placehol
     )
     .run();
   await api("captured.forget", { origin: "forgot.test" });
-  const login = (await call(
+  const signin = (await call(
     "browser.login",
     { url: "http://forgot.test/", why: "forgotten" },
     { role: "worker", task: "T4" },
   )) as { kind: string; approval: number };
-  assert.equal(login.kind, "login", JSON.stringify(login));
-  await api("login.reject", { id: login.approval });
+  assert.equal(signin.kind, "login", JSON.stringify(signin));
+  await api("login.reject", { id: signin.approval });
+  // Reset all: every site, and every origin grant (a credential's grant stays)
+  const grant = (category: string) =>
+    ctx.db
+      .prepare(
+        "INSERT INTO approvals(kind, category, hash, task_id, status) VALUES ('grant', ?, 'grant:' || ?, 'T4', 'approved') RETURNING id",
+      )
+      .get(category, category) as { id: number };
+  const g1 = grant("origin:ads.test");
+  const g2 = grant("credential:keep");
+  await api("captured.reset", {});
+  assert.deepEqual(await api("captured.list", {}), []);
+  const status = (id: number) =>
+    (ctx.db.prepare("SELECT status FROM approvals WHERE id = ?").get(id) as { status: string }).status;
+  assert.equal(status(g1.id), "expired");
+  assert.equal(status(g2.id), "approved");
   rmSync(fixtures, { recursive: true, force: true });
 });
 

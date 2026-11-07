@@ -18,6 +18,8 @@ import {
   SectionHead,
   SelectField,
   Spinner,
+  Switch,
+  Tabs,
   TextField,
   useAction,
   useLocation,
@@ -265,25 +267,55 @@ export function CredentialDialog({
 
 function SiteLogins() {
   const sites = useCall<Captured[]>("captured.list", {}, ["settings"]);
+  const [all, setAll] = useState(false);
   const [forget] = useAction((origin: string) => call("captured.forget", { origin }), "Forgotten");
+  const [reset] = useAction(() => call("captured.reset", {}), "Every site forgotten");
+  const shown = sites.data?.filter((s) => all || s.login);
   return (
     <Card
       title="Website logins"
-      description="Cookies and tokens sites set when you signed in through the login view. Forgetting a site signs every task out of it."
+      description="Cookies and tokens sites set: when you signed in through the login view, and what Workers picked up browsing. Forgetting a site signs every task out of it."
+      actions={
+        <Button
+          size="sm"
+          variant="quiet-danger"
+          disabled={!sites.data?.length}
+          onClick={async () => {
+            if (
+              await confirmAction({
+                title: "Forget every site?",
+                body: `All ${sites.data?.length ?? 0} sites' cookies and tokens go, and every task is signed out. The next one that needs a site asks you to sign in again.`,
+                confirm: "Forget all",
+                danger: true,
+              })
+            )
+              reset();
+          }}
+        >
+          Reset all
+        </Button>
+      }
     >
-      {!sites.data ? (
+      <Switch
+        checked={all}
+        onChange={setAll}
+        label="Show every site"
+        hint="Off: only sites that may hold a login. On: also the cookies Workers got browsing anonymously (ad networks, visitor sessions)."
+      />
+      {!shown ? (
         <Spinner />
-      ) : sites.data.length ? (
+      ) : shown.length ? (
         <ul className="divide-y">
-          {sites.data.map((s) => (
+          {shown.map((s) => (
             <li
               key={s.origin}
               className="flex items-center gap-3 px-1 py-3 first:pt-1 last:pb-1 [&>svg]:text-muted-foreground"
             >
               <Icon name="globe" />
               <div className="min-w-0 flex-1">
-                <p className="flex flex-wrap items-center gap-2 font-medium [&_code]:rounded-md [&_code]:border [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-px [&_code]:text-xs">
-                  {new URL(s.origin).host}
+                <p className="flex flex-wrap items-center gap-2 font-medium">
+                  {s.origin}
+                  {all && !s.login && <Pill title="Only what a Worker got browsing anonymously">anonymous</Pill>}
                 </p>
                 <p className="text-muted-foreground text-[13px]">
                   {s.cookies} cookies{s.tokens ? `, ${s.tokens} token${s.tokens === 1 ? "" : "s"}` : ""} · last used{" "}
@@ -296,7 +328,7 @@ function SiteLogins() {
                 onClick={async () => {
                   if (
                     await confirmAction({
-                      title: `Forget ${new URL(s.origin).host}?`,
+                      title: `Forget ${s.origin}?`,
                       body: "Every task is signed out of it. The next one that needs it asks you to sign in again.",
                       confirm: "Forget",
                       danger: true,
@@ -312,7 +344,9 @@ function SiteLogins() {
         </ul>
       ) : (
         <p className="text-muted-foreground">
-          None yet. When a task needs to sign in to a site, you do it in a live view and it shows up here.
+          {sites.data?.length
+            ? `No site holds a login. ${sites.data.length} only have cookies from anonymous browsing: show every site to see them.`
+            : "None yet. When a task needs to sign in to a site, you do it in a live view and it shows up here."}
         </p>
       )}
     </Card>
@@ -323,6 +357,7 @@ export function Credentials({ d }: { d: Draft }) {
   const list = useCall<Credential[]>("credential.list", {}, ["settings"]);
   const { query } = useLocation();
   const [dialog, setDialog] = useState<Preset | null>(query.get("add") === "provider" ? { provider: true } : null);
+  const [tab, setTab] = useState<"vault" | "sites">(query.get("tab") === "sites" ? "sites" : "vault");
   const [remove] = useAction((name: string) => call("credential.delete", { name }), "Deleted");
   const c = d.saved;
   const usedBy = (name: string) =>
@@ -337,91 +372,106 @@ export function Credentials({ d }: { d: Draft }) {
         title="Credentials"
         description="API keys and tokens live only in hortusd's vault. Workers see placeholders; the proxy puts the real value in only where its transform says it goes, and only after the Approval Gate."
         action={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button icon="sparkle" onClick={() => setDialog({ provider: true })}>
-              Add a model provider
-            </Button>
-            <Button variant="primary" icon="plus" onClick={() => setDialog({})}>
-              Add a credential
-            </Button>
-          </div>
-        }
-      />
-      <Card flush>
-        {!list.data ? (
-          <div className="px-5 py-4">
-            <Spinner />
-          </div>
-        ) : list.data.length ? (
-          <ul className="divide-y px-4 py-1">
-            {list.data.map((x) => {
-              const users = usedBy(x.name);
-              return (
-                <li
-                  key={x.name}
-                  className="flex items-center gap-3 px-1 py-3 first:pt-1 last:pb-1 [&>svg]:text-muted-foreground"
-                >
-                  <Icon name="key" />
-                  <div className="min-w-0 flex-1">
-                    <p className="flex flex-wrap items-center gap-2 font-medium [&_code]:rounded-md [&_code]:border [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-px [&_code]:text-xs">
-                      <code>{x.name}</code>
-                      {x.enabled && (
-                        <Pill tone="accent" title="Its durable grant is given: the judge passes its routine requests">
-                          judge enabled
-                        </Pill>
-                      )}
-                      {coreOnly(x) && <Pill title="Used by hortusd itself, never offered to a task">hortusd only</Pill>}
-                    </p>
-                    <p className="text-muted-foreground text-[13px]">
-                      {kindLabel(x.type)}
-                      {x.transform && <> · {TRANSFORMS[x.transform]?.label ?? x.transform}</>}
-                      {x.hosts && <> · to {x.hosts.join(", ")}</>}
-                      {users.length > 0 && <> · used by {users.join(", ")}</>} · last used{" "}
-                      <RelTime iso={x.last_use} empty="never" />
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" onClick={() => setDialog({ name: x.name, type: x.type, replace: true })}>
-                      Replace
-                    </Button>
-                    <IconButton
-                      label={`Delete ${x.name}`}
-                      icon="trash"
-                      size="sm"
-                      onClick={async () => {
-                        if (
-                          await confirmAction({
-                            title: `Delete ${x.name}?`,
-                            body: users.length
-                              ? `It is in use by ${users.join(" and ")}: change that first, or hortus refuses.`
-                              : "Tasks can no longer use it. Values cannot be recovered.",
-                            confirm: "Delete",
-                            danger: true,
-                          })
-                        )
-                          remove(x.name);
-                      }}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <Empty
-            icon="key"
-            title="No credentials yet"
-            action={
-              <Button variant="primary" onClick={() => setDialog({ provider: true })}>
+          tab === "vault" && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button icon="sparkle" onClick={() => setDialog({ provider: true })}>
                 Add a model provider
               </Button>
-            }
-          >
-            Start with a model provider's API key: the Planner and Workers need one.
-          </Empty>
-        )}
-      </Card>
-      <SiteLogins />
+              <Button variant="primary" icon="plus" onClick={() => setDialog({})}>
+                Add a credential
+              </Button>
+            </div>
+          )
+        }
+      />
+      <Tabs
+        label="Credentials"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: "vault", label: "Credentials", count: list.data?.length },
+          { value: "sites", label: "Website logins" },
+        ]}
+      />
+      {tab === "sites" && <SiteLogins />}
+      {tab === "vault" && (
+        <Card flush>
+          {!list.data ? (
+            <div className="px-5 py-4">
+              <Spinner />
+            </div>
+          ) : list.data.length ? (
+            <ul className="divide-y px-4 py-1">
+              {list.data.map((x) => {
+                const users = usedBy(x.name);
+                return (
+                  <li
+                    key={x.name}
+                    className="flex items-center gap-3 px-1 py-3 first:pt-1 last:pb-1 [&>svg]:text-muted-foreground"
+                  >
+                    <Icon name="key" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex flex-wrap items-center gap-2 font-medium [&_code]:rounded-md [&_code]:border [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-px [&_code]:text-xs">
+                        <code>{x.name}</code>
+                        {x.enabled && (
+                          <Pill tone="accent" title="Its durable grant is given: the judge passes its routine requests">
+                            judge enabled
+                          </Pill>
+                        )}
+                        {coreOnly(x) && (
+                          <Pill title="Used by hortusd itself, never offered to a task">hortusd only</Pill>
+                        )}
+                      </p>
+                      <p className="text-muted-foreground text-[13px]">
+                        {kindLabel(x.type)}
+                        {x.transform && <> · {TRANSFORMS[x.transform]?.label ?? x.transform}</>}
+                        {x.hosts && <> · to {x.hosts.join(", ")}</>}
+                        {users.length > 0 && <> · used by {users.join(", ")}</>} · last used{" "}
+                        <RelTime iso={x.last_use} empty="never" />
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button size="sm" onClick={() => setDialog({ name: x.name, type: x.type, replace: true })}>
+                        Replace
+                      </Button>
+                      <IconButton
+                        label={`Delete ${x.name}`}
+                        icon="trash"
+                        size="sm"
+                        onClick={async () => {
+                          if (
+                            await confirmAction({
+                              title: `Delete ${x.name}?`,
+                              body: users.length
+                                ? `It is in use by ${users.join(" and ")}: change that first, or hortus refuses.`
+                                : "Tasks can no longer use it. Values cannot be recovered.",
+                              confirm: "Delete",
+                              danger: true,
+                            })
+                          )
+                            remove(x.name);
+                        }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <Empty
+              icon="key"
+              title="No credentials yet"
+              action={
+                <Button variant="primary" onClick={() => setDialog({ provider: true })}>
+                  Add a model provider
+                </Button>
+              }
+            >
+              Start with a model provider's API key: the Planner and Workers need one.
+            </Empty>
+          )}
+        </Card>
+      )}
       <CredentialDialog
         open={!!dialog}
         preset={dialog ?? {}}

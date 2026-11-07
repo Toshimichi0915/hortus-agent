@@ -443,17 +443,27 @@ define("captured.list", {
 define("captured.forget", {
   roles: [...owner],
   input: z.object({ origin: z.string().min(1).max(253) }),
-  run({ origin }) {
-    const r = ctx().db.prepare("DELETE FROM captured WHERE origin = ?").run(origin);
-    ctx()
-      .db.prepare(
-        "UPDATE approvals SET status = 'expired', reason = 'the site was forgotten' WHERE kind = 'grant' AND category = ? AND status = 'approved'",
-      )
-      .run(`origin:${origin}`);
-    bus.emit("settings");
-    return { deleted: Number(r.changes) };
-  },
+  run: ({ origin }) => ({ deleted: forget(origin) }),
 });
+
+/** Every site at once: Settings › Credentials › Website logins › Reset all. */
+define("captured.reset", {
+  roles: [...owner],
+  input: z.unknown(),
+  run: () => ({ deleted: forget() }),
+});
+
+function forget(origin?: string): number {
+  const db = ctx().db;
+  const r = origin
+    ? db.prepare("DELETE FROM captured WHERE origin = ?").run(origin)
+    : db.prepare("DELETE FROM captured").run();
+  db.prepare(
+    "UPDATE approvals SET status = 'expired', reason = 'the site was forgotten' WHERE kind = 'grant' AND category LIKE 'origin:%' AND (?1 IS NULL OR category = 'origin:' || ?1) AND status = 'approved'",
+  ).run(origin ?? null);
+  bus.emit("settings");
+  return Number(r.changes);
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 
