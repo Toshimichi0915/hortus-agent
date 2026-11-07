@@ -196,7 +196,7 @@ test("a host session past its hours is killed: a tool that never returns reaches
   await proxyModule.start(ctx);
   await dispatcherModule.start(ctx);
   const { id } = tasks.create({
-    kind: "chat",
+    kind: "unattended" /* a chat has no budget */,
     title: "t",
     brief: "b",
     scope: { credentials: [] },

@@ -203,15 +203,22 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
         // the guest clones the origin itself, so sync it first (a host task's prepareClone does); without
         // it a VM task cloned an empty origin (or a stale main) and its merge was refused as "not based on main"
         if (task.scope.project && task.paths.clone) await startSync(task.scope.project, say);
-        const deadlineMs = Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
-        const child = await startVm({ task, config: c, deadlineMs });
+        // a chat has no budget: its owner's STOP ends it
+        const deadlineMs = kind.chat ? undefined : Math.max(0, (task.budget.hours - row.hours) * 3.6e6);
+        const child = await startVm({ task, config: c, ...(deadlineMs !== undefined && { deadlineMs }) });
         entry.child = child;
         if (stopping || tasks.closing.has(row.id)) await child.kill(); // while it booted: no child to kill yet
         const exit = await child.wait();
         // startVm SIGKILLs QEMU at the deadline: the Worker could not write budget_exceeded, so hortusd notes it
         // a boot timeout: the card's error says so above the serial output's tail (slice(-2000) keeps both)
         ended = exit.error && `${exit.error}\n${tail(consoleLog, 1500)}`;
-        await finish(row, exit, startedAt, ended, exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs);
+        await finish(
+          row,
+          exit,
+          startedAt,
+          ended,
+          deadlineMs !== undefined && exit.signal === "SIGKILL" && Date.now() - startedAt >= deadlineMs,
+        );
         return;
       }
       const { env, loopback } = await loopbackLink(row.id, row.kind === "planner" ? "planner" : "worker");
@@ -256,10 +263,12 @@ function start(row: tasks.TaskRow, vm: boolean, note?: string): void {
       // the agent checks its `hours` after a tool result, and a bash `timeout` is the model's to set: a foreground server,
       // or a loop of model calls no budget counts, ran for good. As QEMU's deadline, with a moment for its own report
       let over = false;
-      const cancel = deadline(Math.max(0, task.budget.hours - row.hours) * 3.6e6 + HOST_GRACE.ms, () => {
-        over = true;
-        void child.kill();
-      });
+      const cancel = kind.chat
+        ? () => {}
+        : deadline(Math.max(0, task.budget.hours - row.hours) * 3.6e6 + HOST_GRACE.ms, () => {
+            over = true;
+            void child.kill();
+          });
       const exit = await child.wait();
       cancel();
       flushThinking();

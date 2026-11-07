@@ -132,8 +132,8 @@ test("token budget: exceeded after the second turn, reported once", async () => 
   );
 });
 
-test("token budget: a chat has none, its hours only", async () => {
-  const dir = setup({ kind: "chat", budget: { tokens: 100, hours: 10 } });
+test("budget: a chat has none, tokens or hours", async () => {
+  const dir = setup({ kind: "chat", budget: { tokens: 100, hours: 1 }, hours_used: 2 });
   const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
   script(dir, [turn, turn, turn, turn, { calls: [done("ok")] }]);
   const r = await run(dir);

@@ -40,7 +40,6 @@ import {
   TaskProblem,
   TaskStatus,
   taskHref,
-  tokenLimit,
   tokensLine,
   used,
 } from "./tasks.tsx";
@@ -525,18 +524,9 @@ export function Conversation({ id }: { id: string }) {
                 <RelTime iso={t.created} />
               </dd>
             </dl>
-            <Meter value={used(t)} max={tokenLimit(t)} label="Tokens" detail={tokensLine(t)} />
-            <Meter
-              value={t.hours}
-              max={t.budget.hours}
-              label="Hours"
-              detail={`${+t.hours.toFixed(1)} of ${t.budget.hours} h`}
-            />
-            {isOpen(t) && (
-              <Button size="sm" onClick={() => setBudget(true)}>
-                Change budget
-              </Button>
-            )}
+            {/* a chat has no budget: what it spent, no limit */}
+            <Meter value={used(t)} max={0} label="Tokens" detail={tokensLine(t)} />
+            <Meter value={t.hours} max={0} label="Hours" detail={`${+t.hours.toFixed(1)} h, no limit`} />
             {d.data.schedules.length > 0 && (
               <div>
                 <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Schedules</p>

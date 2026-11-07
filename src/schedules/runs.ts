@@ -46,10 +46,10 @@ export function local(at: Date, tz: string): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: tz, dateStyle: "short", timeStyle: "short" }).format(at);
 }
 
-/** Tokens or hours spent (runs included); the tick does not fire rows of such a task. A chat has hours only. */
+/** Tokens or hours spent (runs included); the tick does not fire rows of such a task. A chat has no budget. */
 export function overBudget(t: tasks.TaskRow): boolean {
   const b = parse(t.budget, { tokens: Number.POSITIVE_INFINITY, hours: Number.POSITIVE_INFINITY });
-  return (t.kind !== "chat" && tokensOf(t) >= b.tokens) || (t.hours ?? 0) >= b.hours;
+  return t.kind !== "chat" && (tokensOf(t) >= b.tokens || (t.hours ?? 0) >= b.hours);
 }
 
 /** What a firing tells the Worker, so it can ask for more in time. */
@@ -78,11 +78,11 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     event_keys: [`schedule:${row.id}`],
     scope: parse(p.scope, {}),
     ...(p.project ? { project: p.project } : {}),
-    // a run is unattended, so a chat's (which has no token limit) is held to the chat's budget.tokens on its own
-    budget: {
-      tokens: p.kind === "chat" ? b.tokens : Math.max(0, b.tokens - tokensOf(p)),
-      hours: Math.max(0, b.hours - (p.hours ?? 0)),
-    },
+    // a run is unattended, so a chat's (which has no budget) is held to the chat's whole budget on its own
+    budget:
+      p.kind === "chat"
+        ? { tokens: b.tokens, hours: b.hours }
+        : { tokens: Math.max(0, b.tokens - tokensOf(p)), hours: Math.max(0, b.hours - (p.hours ?? 0)) },
   });
   // read by taskJson at the run's start (the dispatcher starts it on a later tick, never synchronously)
   if (row.script) writeFileSync(join(paths.ctl(run.id), "script.sh"), row.script);

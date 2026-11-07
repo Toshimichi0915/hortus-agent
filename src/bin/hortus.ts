@@ -26,8 +26,9 @@ function budget(t: Row): string {
   const u = (t.usage ?? {}) as Row;
   // usage is written when a session ends; the proxy's count (plus its runs') is the spend so far
   const used = Math.max(Number(u.tokens) || 0, (Number(t.metered) || 0) + (Number(u.runs) || 0));
-  const cap = t.kind === "chat" ? "" : `/${tokens(Number(b.tokens) || 0)}`;
-  return `${tokens(used)}${cap} tok, ${Math.round(Number(t.hours ?? 0) * 10) / 10}/${s(b.hours) || 0} h`;
+  const h = Math.round(Number(t.hours ?? 0) * 10) / 10;
+  if (t.kind === "chat") return `${tokens(used)} tok, ${h} h`; // a chat has no budget
+  return `${tokens(used)}/${tokens(Number(b.tokens) || 0)} tok, ${h}/${s(b.hours) || 0} h`;
 }
 
 /** A stream event or a replies row (`{seq, body}`) as one printed line; null for lines the REPL does not show. */
