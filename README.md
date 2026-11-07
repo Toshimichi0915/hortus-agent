@@ -25,7 +25,7 @@ for Worker VMs; Chromium for browser tools and the login view.
 
 ```sh
 pnpm install
-pnpm build                 # dist/, including dist/hortus-landlock, the transforms and the console's static files
+pnpm build                 # dist/, including dist/hortus-landlock, the transforms and the console's web UI (dist/web)
 dist/bin/hortus.js install        # writes /etc/systemd/system/hortusd.service with sudo, then prints the next steps
 sudo systemctl enable --now hortusd
 ```
@@ -154,7 +154,11 @@ Read from the connectors and the services' documentation, not yet tried on a rea
 pnpm build && pnpm lint
 pnpm test                  # build, then node --test over dist/**/*.test.js
 pnpm build && node --test dist/db.test.js   # one file
+pnpm web                   # the console's web UI (web/) in Vite, reloading on edits, against a running daemon
 ```
+
+`pnpm web` proxies `/api` and `/events` to `127.0.0.1:$HORTUS_CONSOLE_PORT` (default 7700, the installed daemon's): to
+work against a development daemon, start that one with `HORTUS_CONSOLE_PORT` set and run `pnpm web` with the same value.
 
 `HORTUS_HOME` relocates all of `hortusd`'s state (default `~/.hortus`); use a scratch one in development, never your
 real one. Two ways to run a development daemon:
@@ -175,13 +179,17 @@ The default suite runs unit tests and the end-to-end tests (`src/e2e/`: a real `
 delegated user scope, fake upstream services from `src/test/fakes/` behind `dev.upstreams`, a fake model provider).
 Opt-in suites, skipped otherwise:
 
-- `HORTUS_TEST_NET=1`: nftables and session addresses (passwordless sudo; run with `--test-concurrency=1`).
+- `HORTUS_TEST_NET=1`: nftables and session addresses (passwordless sudo; run with `--test-concurrency=1`). Stop any
+  running hortusd first: the suite deletes the `inet hortus` nft table and the `hortus0` link before and after.
 - `HORTUS_TEST_LLM=1`: live model calls (`HORTUS_TEST_MODEL` picks the model).
 - `HORTUS_TEST_VM=1`: boots Worker VMs (`HORTUS_TEST_IMAGES`, default `$HORTUS_HOME/images`; needs `/dev/kvm`).
 - `HORTUS_TEST_SOAK=1`: the soak test at full speed for `HORTUS_TEST_SOAK_MIN` minutes (default 60; the default suite runs 1.5 min of it).
 - `HORTUS_TEST_CHAOS=1`: owner orders through the Planner, Workers and closes with the daemon SIGKILLed at random points (`HORTUS_TEST_CHAOS_KILLS`, the number of kills).
 
 `KEEP=1` keeps an end-to-end test's temp directory (with its `hortusd.log`).
+
+No suite covers real phones and passkeys (the tests use a software WebAuthn authenticator) or real sites with
+CAPTCHAs or one-time codes in the login view: try those by hand after changing the remote console or the login view.
 
 ## Where things are
 

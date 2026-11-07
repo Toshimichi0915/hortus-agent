@@ -57,13 +57,6 @@ function get({ port }: Console, path: string, method = "GET"): Promise<Res> {
   });
 }
 
-test("the bundle leaves the mock out (web/src/api.ts tests VITE_MOCK where the bundler can see it)", () => {
-  assert.deepEqual(
-    readdirSync(new URL("assets/", dist)).filter((f) => f.startsWith("mock")),
-    [],
-  );
-});
-
 test("the assets on the list are served with their types and the console's CSP", async () => {
   const files = readdirSync(new URL("assets/", dist));
   for (const [ext, type] of [

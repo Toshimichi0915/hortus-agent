@@ -1,28 +1,19 @@
 /**
- * What hortusd.json takes, for the forms: config.ts's defaults and rules, so a mistake is named at its field before
- * Save rather than by the daemon after it.
- *
- * ponytail: a copy of src/config.ts's defaults and patterns (config.ts reads files at import, so the browser cannot load
- * it); import the schema itself once it is split from its I/O.
+ * What hortusd.json takes, for the forms: src/config-schema.ts's defaults and rules, so a mistake is named at its field
+ * before Save rather than by the daemon after it.
  */
-import type { Config } from "./api.ts";
+import { Config, DOF_NAME, Effort, PROJECT_NAME } from "../../src/config-schema.ts";
 
-export const DOF_NAME = /^(?!.*\.\.)(?!.*\.git$)(?!(logs|transforms)$)[A-Za-z0-9][\w.-]{0,63}$/;
+export { DOF_NAME, PROJECT_NAME };
 export const DOF_NAME_HINT = "letters, digits, . _ - (no .., no .git ending, not logs or transforms)";
-export const PROJECT_NAME = /^(?!.*\.\.)[A-Za-z0-9][\w.-]{0,63}$/;
 export const PROJECT_NAME_HINT = "letters, digits, . _ - only, starting with a letter or digit";
 export const CREDENTIAL_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const CREDENTIAL_NAME_HINT = "lowercase letters, digits, _ and -";
 export const HOSTNAME = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
-export const EFFORTS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
+export const EFFORTS = Effort.options;
 
-export const DEFAULTS = {
-  planner: { effort: "low", batch_max: 50, daily_tokens: 5_000_000 },
-  worker: { budget: { tokens: 2_000_000, hours: 4 }, context_window: 131_072 },
-  vm: { cpus: 2, mem_mb: 4096, max_concurrent: 4, boot_timeout_s: 120, fallback_host: true },
-  proxy: { https: 8443, http: 8080, dns: 8053 },
-} as const;
+export const DEFAULTS: Config = Config.parse({});
 
 /** Categories the Approval Gate always puts to the owner, whatever `policy` says (config.ts › policyFor). */
 export const ALWAYS_ASKS = [
@@ -55,22 +46,8 @@ export function splitListen(listen: string): { address: string; port: number } {
   return { address: i < 0 ? "" : listen.slice(0, i).replace(/^\[|\]$/g, ""), port: Number(listen.slice(i + 1)) };
 }
 
-/** hortusd.json's top-level keys (config.ts › Config): settings.set keeps others, and says so. */
-export const KNOWN_KEYS: readonly string[] = [
-  "owner",
-  "dofs",
-  "planner",
-  "worker",
-  "origins",
-  "vm",
-  "chat",
-  "proxy",
-  "console",
-  "projects",
-  "policy",
-  "judge_notes",
-  "dev",
-];
+/** hortusd.json's top-level keys: settings.set keeps others, and says so. */
+export const KNOWN_KEYS: readonly string[] = Object.keys(Config.shape);
 
 /** The paths the forms show an error at (`*`: one segment); settings.set's issues go to the one they fall under. */
 export const FIELDS = [

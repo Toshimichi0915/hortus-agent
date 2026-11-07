@@ -130,6 +130,24 @@ test("RPCs: task.get stays a page, a list's pending counts stay cheap", async ()
   assert.equal(card.schedules.length, 50);
 });
 
+test("RPCs: task.messages pages a task's outbox back past task.get's newest 50", async () => {
+  const seqs = async (input: object) =>
+    ((await call("task.messages", { id: "o1", box: "outbox", ...input }, owner)) as { seq: number }[]).map(
+      (m) => m.seq,
+    );
+  const first = await seqs({});
+  assert.equal(first.length, 50);
+  assert.deepEqual([first[0], first.at(-1)], [119, 70]);
+  // the oldest is reachable
+  assert.deepEqual(
+    await seqs({ skip: 100 }),
+    Array.from({ length: 20 }, (_, i) => 19 - i),
+  );
+  assert.deepEqual(await seqs({ box: "inbox" }), []);
+  await assert.rejects(call("task.messages", { id: "o1", box: "outbox", limit: 501 }, owner));
+  await assert.rejects(call("task.messages", { id: "o1", box: "replies" }, owner));
+});
+
 test("CLI: hortus tasks says what it cut; --all lists every one", async () => {
   const run = async (...args: string[]) =>
     (

@@ -1,6 +1,7 @@
 /** Tasks: the list, one task's card, and the task widgets the chat shares (status, budget, session log). */
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { useEffect, useState } from "react";
+import { errorLine } from "../../../src/console/text.ts";
 import { GOES_ON } from "../../../src/types.ts";
 import { call, type Msg, type Row, streamRows, type Task, type TaskDetail, useCall, usePaged } from "../api.ts";
 import { Markdown } from "../markdown.tsx";
@@ -45,15 +46,11 @@ export const KIND: Record<string, { label: string; icon: IconName }> = {
 export const isOpen = (t: Pick<Task, "status">): boolean =>
   t.status === "queued" || t.status === "running" || t.status === "waiting";
 
-/** task.list's two lists (src/console/pages/tasks.ts › OPEN, CLOSED) */
+/** task.list's two lists (src/console/rows.ts › OPEN_SQL, CLOSED_SQL) */
 const PARTS = { open: isOpen, closed: (t: Task) => !isOpen(t) };
 
 /** The spend so far: usage is written when a session ends, the proxy's count (plus its runs') is live. */
 export const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0) + (t.usage?.runs ?? 0));
-
-/** A task error's headline: its last line, but hortusd's own reason when a VM's serial tail follows it. */
-export const errorLine = (e: string): string =>
-  (/^(boot timeout|guest died):/.test(e) ? e.split("\n")[0] : e.split("\n").at(-1)) ?? "";
 
 export const taskHref = (t: Pick<Task, "id" | "kind">): string =>
   t.kind === "chat" ? `/chat/${t.id}` : `/tasks/${t.id}`;
@@ -362,6 +359,29 @@ const FROM: Record<string, string> = {
   cookies: "Login",
 };
 
+const ALL = { all: () => true };
+
+/** A task's inbox or outbox, newest first, a page at a time (task.get has only the newest 50, for the tab counts). */
+function MsgPages({ id, box, empty }: { id: string; box: "inbox" | "outbox"; empty: string }) {
+  const [page, setPage] = useState(0);
+  const list = usePaged<Msg, "all">("task.messages", page, ["tasks"], ALL, (m) => m.seq, { id, box });
+  if (!list.ready)
+    return (
+      <div className="grid place-items-center p-6 text-muted-foreground">
+        <Spinner />
+      </div>
+    );
+  const { rows, more } = list.lists.all;
+  return (
+    <>
+      <MsgList msgs={rows} empty={page ? "Nothing older." : empty} />
+      <div className="px-4.5 pb-3 empty:hidden">
+        <Pager page={page} more={more} onPage={setPage} />
+      </div>
+    </>
+  );
+}
+
 function MsgList({ msgs, empty }: { msgs: Msg[]; empty: string }) {
   if (!msgs.length) return <p className="text-muted-foreground px-5 py-4">{empty}</p>;
   return (
@@ -546,8 +566,8 @@ export function TaskPage({ id }: { id: string }) {
               ) : (
                 <p className="text-muted-foreground px-5 py-4">Nothing yet.</p>
               ))}
-            {tab === "sent" && <MsgList msgs={outbox} empty="It hasn't sent anything yet." />}
-            {tab === "inbox" && <MsgList msgs={inbox} empty="Its inbox is empty." />}
+            {tab === "sent" && <MsgPages id={id} box="outbox" empty="It hasn't sent anything yet." />}
+            {tab === "inbox" && <MsgPages id={id} box="inbox" empty="Its inbox is empty." />}
             {tab === "console" && (
               <pre className="max-h-105 overflow-auto bg-muted/50 px-4.5 py-3.5 font-mono text-xs leading-relaxed whitespace-pre-wrap">
                 {d.data.console_log}

@@ -18,7 +18,7 @@
     "test": "sh scripts/build.sh && node --test 'dist/**/*.test.js'",
     "lint": "biome lint",
     "format": "biome format --write",
-    "web": "VITE_MOCK=1 vite web",
+    "web": "vite web",
     "web:build": "tsc -p web && vite build web"
   },
   "dependencies": {

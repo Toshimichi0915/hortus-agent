@@ -1,11 +1,10 @@
 /**
  * The console API as the pages use it, and the one door to it. `call(method, input)` is `POST /api/<method>` (role
  * owner, `X-Hortus: 1`); `subscribe(topics)` and `streamRows` share the page's one SSE stream (src/console/live.ts).
- * `loginStream` is the login view's own. `VITE_MOCK=1` (`pnpm web`) answers from the pretend hortusd in mock.ts instead,
- * which a production bundle leaves out.
+ * `loginStream` is the login view's own.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Config } from "../../src/config.ts";
+import type { Config } from "../../src/config-schema.ts";
 import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
 import { pageAt, pageWindow } from "../../src/console/forms.ts";
 import { liveStream } from "../../src/console/live.ts";
@@ -27,19 +26,9 @@ export class ApiError extends Error {
 
 const BATCH_MS = 30;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 const CODES: Record<number, ApiError["code"]> = { 400: "invalid", 403: "forbidden", 404: "not_found" };
 
 export async function call<T = unknown>(method: string, input: unknown = {}): Promise<T> {
-  // spelled out each time: the bundler drops the mock's chunk only for this exact test
-  if (import.meta.env.VITE_MOCK === "1") {
-    const { handlers } = await import("./mock.ts");
-    await sleep(80 + Math.random() * 160);
-    const h = handlers[method] as ((i: unknown) => unknown) | undefined;
-    if (!h) throw new ApiError("not_found", `no method ${method}`);
-    return structuredClone(await h(input)) as T;
-  }
   let status: number;
   let text: string;
   try {
@@ -66,7 +55,7 @@ export async function call<T = unknown>(method: string, input: unknown = {}): Pr
   return body.result as T;
 }
 
-/** Each topic's events (`tasks`, `approvals`, `settings`, `chat:<id>`), from the stream or from mock.ts. */
+/** Each topic's events (`tasks`, `approvals`, `settings`, `chat:<id>`), from the stream. */
 export const bus = new EventTarget();
 /** The page's stream is down, and retrying. */
 export const reconnecting = store(false);
@@ -75,16 +64,15 @@ const down = (d: boolean) => {
   reconnecting.set(d);
   if (d) call("remote.status").catch(() => {});
 };
-const watch =
-  import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), down, 3000, document);
+const watch = liveStream(bus, (url) => new EventSource(url), down, 3000, document);
 
 /** Calls `f` on each event of `topics`. */
 export function subscribe(topics: string[], f: (e: Event) => void): () => void {
   for (const t of topics) bus.addEventListener(t, f);
-  const release = watch?.(topics);
+  const release = watch(topics);
   return () => {
     for (const t of topics) bus.removeEventListener(t, f);
-    release?.();
+    release();
   };
 }
 
@@ -108,19 +96,7 @@ export function streamRows(id: string, onRows: (rows: Row[]) => void): () => voi
       onRows(rows);
     }, BATCH_MS);
   };
-  // the mock has no replay, and its `task.get` is read after any row that lands meanwhile
-  let ready = import.meta.env.VITE_MOCK !== "1";
-  const off = subscribe([`chat:${id}`], (e) => {
-    if (ready) add((e as CustomEvent<Row>).detail);
-  });
-  if (import.meta.env.VITE_MOCK === "1")
-    call<{ replies: Row[] }>("task.get", { id }).then(
-      (d) => {
-        ready = true;
-        d.replies.forEach(add);
-      },
-      () => {},
-    );
+  const off = subscribe([`chat:${id}`], (e) => add((e as CustomEvent<Row>).detail));
   return () => {
     live = false;
     clearTimeout(timer);
@@ -148,17 +124,6 @@ export function loginStream(
   on: (e: LoginEvent) => void,
   onDown: (down: boolean | "lost") => void,
 ): () => void {
-  if (import.meta.env.VITE_MOCK === "1") {
-    let off: (() => void) | undefined;
-    let live = true;
-    import("./mock.ts").then((m) => {
-      if (live) off = m.loginStream(id, on);
-    });
-    return () => {
-      live = false;
-      off?.();
-    };
-  }
   const s = new EventSource(`/events/login?id=${id}`);
   s.onopen = () => onDown(false);
   s.onerror = () => onDown(s.readyState === EventSource.CLOSED ? "lost" : true);
@@ -214,7 +179,7 @@ export function useCall<T>(method: string | null, input: unknown = {}, topics: s
 export const PAGE = 50;
 
 /**
- * Page `page` (from 0) of `task.list` or `approval.list`: their answer is newest-first lists one after the other (open
+ * Page `page` (from 0) of `task.list`, `approval.list` or `task.messages` (`extra`: its other input): their answer is newest-first lists one after the other (open
  * then closed, pending then decided), each paged alike by `limit`/`skip`; `parts` tells a row's list. Past the first
  * page each list holds still while rows land or leave above it (src/console/forms.ts › pageAt). `exact`: the whole
  * list is in the answer, so its length is its count.
@@ -225,9 +190,10 @@ export function usePaged<T, K extends string>(
   topics: string[],
   parts: Record<K, (r: T) => boolean>,
   key: (r: T) => string | number,
+  extra: object = {},
 ) {
   const skip = page * PAGE;
-  const input = pageWindow(skip, PAGE);
+  const input = { ...extra, ...pageWindow(skip, PAGE) };
   const res = useCall<T[]>(method, input, topics);
   const anchors = useRef<{ page: number; at: Partial<Record<K, string | number>> }>({ page, at: {} });
   if (anchors.current.page !== page) anchors.current = { page, at: {} };

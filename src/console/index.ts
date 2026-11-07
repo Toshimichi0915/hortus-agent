@@ -109,6 +109,23 @@ define("task.get", {
   },
 });
 
+/** One task's inbox or outbox, newest first, from `skip`: task.get has only the newest PAGE. */
+define("task.messages", {
+  roles: [...owner],
+  input: z.object({
+    id: z.string(),
+    box: z.enum(["inbox", "outbox"]),
+    limit: z.number().int().positive().max(500).default(50),
+    skip: z.number().int().nonnegative().default(0),
+  }),
+  run({ id, box, limit, skip }) {
+    const rows = ctx()
+      .db.prepare(`SELECT * FROM ${box} WHERE task_id = ? ORDER BY seq DESC LIMIT ? OFFSET ?`)
+      .all(id, limit, skip) as unknown as { body: string }[];
+    return rows.map((m) => ({ ...m, body: line(m.body) }));
+  },
+});
+
 define("settings.get", {
   roles: [...owner],
   input: z.unknown(),
