@@ -631,7 +631,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const llmCall = llm !== undefined && llmEntry !== undefined && (llmEntry.transform ?? llm) === tf?.name;
 
   // 5. raw secrets anywhere
-  const scrub = scrubber(host);
+  const scrub = scrubber(host, client.task);
   for (const s of everything(raw)) {
     const hit = scrub.find(s);
     if (hit) return refuse(403, "raw credential", { host, placeholder: hit });
@@ -796,12 +796,12 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase())));
   // a page's own fetch (a beacon, an XHR) that only carries cookies this task got browsing anonymously holds nothing of
   // the owner's: it goes without them, as any anonymous request may, instead of asking the owner for each one. Dropping
-  // a credential only takes authority away, so a forged Sec-Fetch-Mode gains nothing
+  // a credential only takes authority away, so a forged Sec-Fetch-Mode gains nothing, and a streamed body (Clarity's
+  // gzipped `/collect`) is blind only while it carries one
   const mode = template.headers["sec-fetch-mode"];
   if (
     consequential &&
     capturedOnly &&
-    !blind &&
     client.role === "worker" &&
     mode !== undefined &&
     mode !== "navigate" &&
@@ -876,7 +876,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       if (n.startsWith("c-"))
         ctx().db.prepare("UPDATE captured SET meta = json_remove(meta, '$.anonymous') WHERE name = ?").run(n);
   // a token minted just now must be in the set that scrubs this very response
-  const s = tokens.size ? scrubber(host) : scrub;
+  const s = tokens.size ? scrubber(host, client.task) : scrub;
   return {
     client,
     host,
@@ -1188,7 +1188,7 @@ export function takeCookies(p: Prepared, res: http.IncomingMessage): Scrubber {
   const r = transforms.response(COOKIE, { status: res.statusCode ?? 502, headers: raw, body: null }, p.raw);
   if (!r.capture?.length) return p.scrub;
   store(p, r.capture);
-  return scrubber(p.host);
+  return scrubber(p.host, p.client.task);
 }
 
 export async function respond(p: Prepared, res: http.IncomingMessage): Promise<Out> {
@@ -1293,7 +1293,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
   }
   if (capture.length) {
     store(p, capture);
-    scrub = scrubber(p.host);
+    scrub = scrubber(p.host, p.client.task);
   }
   addRefs(p, result.refs, result.repos);
   headers = {};

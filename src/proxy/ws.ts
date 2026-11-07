@@ -61,7 +61,7 @@ const MAX_REFUSAL = 1024 * 1024;
 
 /** A client text frame → the text to send upstream, or why it is refused. */
 export function frameOut(p: Prepared, text: string): { text: string } | { refuse: string } {
-  if (scrubber(p.host).find(text)) return { refuse: "raw credential" };
+  if (scrubber(p.host, p.client.task).find(text)) return { refuse: "raw credential" };
   if (text.search(HANDLE) !== -1) return { refuse: "handle syntax: use hortus-secret-<name> placeholders" };
   let body = text;
   if (text.includes(PREFIX) && p.tf) {
@@ -130,7 +130,7 @@ function frameRelay(p: Prepared, client: Duplex, up: Duplex, head: Buffer, upHea
   // throw in a handler ends this relay, not the process.
   const ctl = (b: Buffer, max = 125) => (b.length > max ? b.subarray(0, max) : b);
   // read per frame: this relay outlives its handshake, and a value rotated meanwhile goes up in the next frame
-  const scrub = () => scrubber(p.host);
+  const scrub = () => scrubber(p.host, p.client.task);
   const reason = (s: string) => ctl(Buffer.from(s), 123);
   const safe =
     <A extends unknown[]>(f: (...a: A) => void) =>

@@ -22,7 +22,7 @@ import * as paths from "../paths.ts";
 import { tempDir } from "../test/until.ts";
 import { caCert } from "../vault/ca.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
-import { write as writeVault } from "../vault/vault.ts";
+import { scrubber, write as writeVault } from "../vault/vault.ts";
 import { links, listen, proxyModule } from "./index.ts";
 import { hashTemplate } from "./pipeline.ts";
 
@@ -381,9 +381,30 @@ test("a page's beacon with only cookies the task got anonymously goes without th
   const r = await post("no-cors");
   assert.equal(r.status, 200, r.body);
   assert.equal(seen.at(-1)?.cookie, "plain=1");
+  const streamed = await curl(
+    "cdn.test",
+    "/beacon",
+    ...["-H", `cookie: sid=${sid}`, "-H", "sec-fetch-mode: cors", "-H", "content-type: application/octet-stream"],
+    ...["--data-binary", "x"],
+  );
+  assert.equal(streamed.status, 200, `a streamed beacon too: ${streamed.body}`);
   assert.equal(JSON.parse((await post("navigate")).body).category, "origin:cdn.test");
   ctx.db.prepare("UPDATE captured SET meta = json_remove(meta, '$.anonymous')").run();
   assert.equal(JSON.parse((await post("no-cors")).body).category, "origin:cdn.test", "not known anonymous: asks");
+});
+
+test("a value two tasks got reads back as the reader's own placeholder, not the first task's", () => {
+  const add = (name: string, task: string) =>
+    ctx.db
+      .prepare(
+        "INSERT INTO captured(name, value, origin, kind, created, meta) VALUES (?, 'same-constant-value', 'cdn.test', 'cookie', '', ?)",
+      )
+      .run(name, JSON.stringify({ task }));
+  add("c-900", "U");
+  add("c-901", "T");
+  assert.equal(scrubber("cdn.test", "T").text("same-constant-value"), "hortus-secret-c-901");
+  assert.equal(scrubber("cdn.test", "U").text("same-constant-value"), "hortus-secret-c-900");
+  ctx.db.prepare("DELETE FROM captured WHERE name IN ('c-900', 'c-901')").run();
 });
 
 // last: it taints the task

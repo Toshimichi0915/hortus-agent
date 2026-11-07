@@ -5,6 +5,7 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Ctx } from "../ctx.ts";
+import { family } from "../db.ts";
 import * as paths from "../paths.ts";
 import type { Manifest, VaultEntry } from "../types.ts";
 import { Scrubber } from "./scrub.ts";
@@ -95,9 +96,11 @@ export function captured(name: string): CapturedRow | undefined {
 /**
  * Every secret value with the placeholder that replaces it in responses. Captured values (cookies, site tokens) only
  * for `host` within their origin: any site sets any cookie, and a value like `assistant` held globally would scrub
- * every session's model replies and refuse every request quoting it as a raw credential.
+ * every session's model replies and refuse every request quoting it as a raw credential. Two tasks that got the same
+ * value (a site's constant `test_cookie=CheckForPermission`) each read back their own placeholder: `task`'s family
+ * first, as the Scrubber keeps the first of equal values. Another's would be a capture the task must ask a grant for.
  */
-export function secretValues(host?: string): { value: string; placeholder: string }[] {
+export function secretValues(host?: string, task?: string): { value: string; placeholder: string }[] {
   const out: { value: string; placeholder: string }[] = [];
   for (const [name, e] of Object.entries(read())) {
     const p = placeholder(name);
@@ -110,9 +113,11 @@ export function secretValues(host?: string): { value: string; placeholder: strin
   if (bound && host) {
     const rows = ctx()
       .db.prepare(
-        "SELECT name, value FROM captured WHERE origin = ?1 OR substr(?1, -length(origin) - 1) = '.' || origin",
+        "SELECT name, value, json_extract(meta, '$.task') AS task FROM captured WHERE origin = ?1 OR substr(?1, -length(origin) - 1) = '.' || origin",
       )
-      .all(host) as { name: string; value: string }[];
+      .all(host) as { name: string; value: string; task: string | null }[];
+    const own = new Set(task ? family(ctx().db, task) : []);
+    rows.sort((a, b) => Number(own.has(b.task ?? "")) - Number(own.has(a.task ?? "")));
     for (const r of rows) out.push({ value: r.value, placeholder: placeholder(r.name) });
   }
   return out;
@@ -121,21 +126,22 @@ export function secretValues(host?: string): { value: string; placeholder: strin
 /** per host (captured values differ by origin); dropped whole when vault.json, `captured` or minted tokens change */
 let scrubCache: { key: string; byHost: Map<string, Scrubber> } | undefined;
 
-/** The scrub set for traffic to `host` (none: vault and minted values only). */
-export function scrubber(host = ""): Scrubber {
+/** The scrub set for traffic to `host` (none: vault and minted values only), for `task`'s traffic. */
+export function scrubber(host = "", task?: string): Scrubber {
   const c = bound
     ? (ctx().db.prepare("SELECT count(*) AS n, max(id) AS m FROM captured").get() as { n: number; m: number | null })
     : { n: 0, m: 0 };
   read();
   const key = `${cache?.mtime ?? 0}:${c.n}:${c.m}:${mintedVersion}`;
   if (scrubCache?.key !== key) scrubCache = { key, byHost: new Map() };
-  let s = scrubCache.byHost.get(host);
+  const at = `${host}\0${task ?? ""}`;
+  let s = scrubCache.byHost.get(at);
   if (!s) {
     // ponytail: one Scrubber per host until the next change; a session picking endless hosts grows it to 4096, then
     // it is dropped whole
     if (scrubCache.byHost.size >= 4096) scrubCache.byHost.clear();
-    s = new Scrubber(secretValues(host));
-    scrubCache.byHost.set(host, s);
+    s = new Scrubber(secretValues(host, task));
+    scrubCache.byHost.set(at, s);
   }
   return s;
 }
