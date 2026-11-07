@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!**/dist", "!.claude", "!**/node_modules", "!web/src/components/ui"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!.claude",
+      "!**/node_modules",
+      "!web/src/components/ui",
+      "!pnpm-lock.yaml",
+      "!**/*.md"
+    ]
   },
   "formatter": {
     "enabled": true,
