@@ -272,6 +272,16 @@ export function approvalOut(db: DatabaseSync, r: ApprovalRow) {
   };
 }
 
+/** What a list (approval.list, task.get) carries of a merge: its patch's first 40 lines (at most 8 KB), and `cut`, the
+ * line count, when that is not all of it. approval.get has the entry's 64 KB: 50 merges were 3 MB on each event. */
+export function excerpt(a: ReturnType<typeof approvalOut>) {
+  const s = a.summary as { patch?: unknown } | null;
+  if (a.category !== "merge" || typeof s?.patch !== "string") return a;
+  const lines = s.patch.split("\n");
+  const patch = lines.slice(0, 40).join("\n").slice(0, 8192);
+  return patch === s.patch ? a : { ...a, summary: { ...s, patch, cut: lines.length } };
+}
+
 /** `grant`: also approve the entry's category for its task (a `grantable` entry only), see `taintGranted`. */
 export function decide(
   id: number,

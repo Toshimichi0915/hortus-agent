@@ -1,228 +1,325 @@
 /**
- * app.js in a headless Chromium (keyboard and feedback): an action is busy while in flight (a
- * second click sends nothing), Esc disarms a confirm, a re-render keeps keyboard focus, phone-width cells carry their
- * column name, the chat shows its stream's connection state. Skipped without Chromium.
+ * The web UI (dist/web) in a headless Chromium against the console on a seeded database: every page renders with
+ * hostile text in every field and nothing of it runs, no page falls to the page guard, the CSP refuses nothing, a
+ * phone's width scrolls no page sideways; an approvals burst is a few fetches, not one each; a stale Approve says so;
+ * a typed credential survives a refresh; open tabs never starve a fetch. Skipped without Chromium.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { z } from "zod";
 import { type Browser, type Cdp, CHROMIUM, connect, launch, page } from "../browser/cdp.ts";
 import { load } from "../config.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
-import { define } from "../rpc.ts";
+import { schedulesModule } from "../schedules/schedules.ts";
 import { tempDir } from "../test/until.ts";
-import { RpcError } from "../types.ts";
+import "../vault/index.ts"; // approval.*, credential.list, transforms.list, merge.diff
+import { bind } from "../vault/vault.ts";
 import { bus } from "./events.ts";
 import { consoleModule } from "./index.ts";
-import { approvalEntry } from "./pages/approvals.ts";
 
 const skip = !existsSync(CHROMIUM) && `no ${CHROMIUM}`;
 const home = tempDir("hortus-app-");
 process.env.HORTUS_HOME = home;
 process.env.HORTUS_CONSOLE_PORT = "0";
 const ctx: Ctx = { config: load(), db: openDb(paths.db()), paths, log: logger, async reload() {} };
-const closes: string[] = [];
-define("task.close", {
-  roles: ["owner"],
-  input: z.object({ id: z.string(), outcome: z.string() }),
-  async run({ id }) {
-    closes.push(id);
-    await sleep(400);
-    return { ok: true };
-  },
-});
+
+/** Each would set `window.pwned` if it ran as markup. */
+const XSS = `<img src=x onerror="window.pwned=1"><script>window.pwned=1</script>"'&`;
+const THREAD = "C1/1700000000.0001#t";
 
 let browser: Browser;
 let cdp: Cdp;
 let session: string;
 let base = "";
-const ev = async <T>(expression: string): Promise<T> => {
+const problems: string[] = [];
+const ids: Record<string, number> = {};
+
+const ev = async <T>(expression: string, s = session): Promise<T> => {
   const r = await cdp.send<{ result: { value: T }; exceptionDetails?: unknown }>(
     "Runtime.evaluate",
     { expression, awaitPromise: true, returnByValue: true },
-    session,
+    s,
   );
   assert.equal(r.exceptionDetails, undefined, expression);
   return r.result.value;
 };
 const until = async (expression: string, ms = 5000) => {
   for (let t = 0; t < ms; t += 50) {
-    if (await ev(expression)) return;
+    if (await ev(expression).catch(() => false)) return;
     await sleep(50);
   }
-  assert.fail(`timed out: ${expression}`);
+  assert.fail(`timed out: ${expression}: ${await ev("document.body.innerText")}`);
 };
 const go = async (path: string) => {
   await cdp.send("Page.navigate", { url: base + path }, session);
-  await until("document.readyState === 'complete' && !!document.querySelector('#msg')");
+  await until(`document.readyState === "complete" && !!document.querySelector("#main")`);
 };
-const key = async (key: string, code: number) => {
-  await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, windowsVirtualKeyCode: code }, session);
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, windowsVirtualKeyCode: code }, session);
-};
+const button = (text: string) =>
+  `[...document.querySelectorAll("button")].find((b) => b.textContent.includes(${JSON.stringify(text)}))`;
 
 before(async () => {
   if (skip) return;
+  const db = ctx.db;
   const now = new Date().toISOString();
-  ctx.db
-    .prepare(
-      "INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('t1', 'chat', 'one', 'waiting', ?, ?)",
-    )
-    .run(now, now);
+  const task = db.prepare(
+    `INSERT INTO tasks(id, kind, title, status, project, budget, usage, summary, brief, error, created, updated)
+     VALUES (?, ?, ?, ?, 'p', '{"tokens":2000000,"hours":4}', '{"tokens":1200000}', ?, ?, ?, ?, ?)`,
+  );
+  task.run("t1", "chat", XSS, "waiting", XSS, XSS, null, now, now);
+  task.run("t2", "unattended", XSS, "waiting", XSS, XSS, `boot timeout: ${XSS}\n${XSS}`, now, now);
+  task.run("t3", "unattended", XSS, "done", XSS, XSS, null, now, now);
+  const reply = db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('t1', ?, ?, ?)");
+  for (const [i, b] of [
+    { type: "owner", text: XSS },
+    { type: "text", text: `# ${XSS}\n\n[link](javascript:window.pwned=1) ${XSS}` },
+    { type: "thinking", text: XSS },
+    { type: "tool_call", id: "c1", name: "bash", input: { command: XSS } },
+    { type: "tool_result", id: "c1", output: XSS, isError: true },
+    { type: "error", message: XSS },
+    { type: "status", text: XSS },
+  ].entries())
+    reply.run(i + 1, JSON.stringify(b), now);
+  reply.run(8, "not json <b>", now);
+  for (const box of ["inbox", "outbox"])
+    db.prepare(`INSERT INTO ${box}(task_id, seq, body, created) VALUES ('t2', 1, ?, ?)`).run(
+      JSON.stringify({ from: "owner", type: "reply", text: XSS }),
+      now,
+    );
+  db.prepare(
+    "INSERT INTO events(dof, key, author, trusted, task_id, refs, summary) VALUES ('slack', 'k', ?, 0, 't2', ?, ?)",
+  ).run(XSS, JSON.stringify([`slack:${XSS}:1`]), XSS);
+  const sid = Number(
+    db
+      .prepare(
+        "INSERT INTO schedules(task_id, fire_at, every_sec, text, last_run, created) VALUES ('t2', ?, 3600, ?, ?, ?)",
+      )
+      .run(new Date(Date.now() + 3600e3).toISOString(), XSS, now, now).lastInsertRowid,
+  );
+  mkdirSync(paths.schedule(sid), { recursive: true });
+  writeFileSync(join(paths.schedule(sid), "last-summary.md"), `## ${XSS}\n${XSS}`);
+  const ap = db.prepare(
+    "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload, decided_by, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const add = (name: string, ...v: unknown[]) => {
+    ids[name] = Number(ap.run(...(v as string[])).lastInsertRowid);
+  };
+  const req = { method: "POST", host: XSS, path: `/${XSS}`, headers: { [XSS]: XSS }, bodyPreview: XSS };
+  add(
+    "request",
+    "request",
+    `credential:${XSS}`,
+    "h1",
+    "t2",
+    JSON.stringify(req),
+    "pending",
+    now,
+    JSON.stringify({ judge: XSS, untrusted: [XSS] }),
+    null,
+    null,
+  );
+  const patch = Array.from({ length: 60 }, (_, i) => `+${XSS} ${i}`).join("\n");
+  add(
+    "merge",
+    "request",
+    "merge",
+    "h2",
+    "t2",
+    JSON.stringify({
+      project: XSS,
+      branch: XSS,
+      main_sha: XSS,
+      sha: XSS,
+      patch,
+      files: 1,
+      added: 60,
+      removed: 0,
+      stat: XSS,
+      truncated: true,
+    }),
+    "pending",
+    now,
+    null,
+    null,
+    null,
+  );
+  add(
+    "transforms",
+    "request",
+    "transforms",
+    "h3",
+    null,
+    JSON.stringify({ name: "n", new: true, manifest: XSS, missing: [{ name: "n", type: "token" }] }),
+    "pending",
+    now,
+    null,
+    null,
+    null,
+  );
+  add(
+    "login",
+    "login",
+    "login",
+    "h4",
+    "t2",
+    JSON.stringify({ origin: XSS, url: XSS, why: XSS }),
+    "rejected",
+    now,
+    null,
+    "owner",
+    XSS,
+  );
+  add("judged", "request", "credential:x", "h5", "t2", JSON.stringify(req), "allowed", now, null, "judge", XSS);
+  const thread = join(paths.dof("slack"), THREAD);
+  mkdirSync(thread, { recursive: true });
+  writeFileSync(join(thread, "a.md"), `---\nauthor: ${XSS}\n---\n${XSS}\n`);
+  writeFileSync(join(thread, `${XSS.replace(/[/\\]/g, "")}.md`), XSS);
+
+  bind(ctx);
+  await schedulesModule.start(ctx);
   await consoleModule.start(ctx);
   base = `http://127.0.0.1:${consoleModule.port()}`;
   browser = await launch({ userDataDir: join(home, "chromium") });
   cdp = await connect(browser);
   session = await page(cdp);
-  await cdp.send("Page.enable", {}, session);
+  for (const m of ["Page.enable", "Runtime.enable", "Log.enable"]) await cdp.send(m, {}, session);
+  // a page that broke: an uncaught error, a console.error, the CSP refusing something (a failed RPC is the network's)
+  cdp.on("Runtime.exceptionThrown", (p) => problems.push(JSON.stringify(p.exceptionDetails)));
+  cdp.on("Runtime.consoleAPICalled", (p) => {
+    if (p.type === "error") problems.push(JSON.stringify(p.args));
+  });
+  cdp.on("Log.entryAdded", (p) => {
+    const e = p.entry as { level: string; source: string; text: string };
+    if (e.level === "error" && e.source !== "network") problems.push(`${e.source}: ${e.text}`);
+  });
 });
 after(async () => {
   if (skip) return;
   cdp.close();
   await browser.close();
   await consoleModule.stop();
+  await schedulesModule.stop();
 });
 
-test("an action is busy while in flight; Esc disarms a confirm; focus survives the re-render", { skip }, async () => {
-  await go("/");
-  const close = `document.querySelector('button[data-call="task.close"]')`;
-  // Esc cancels the armed confirm
-  await ev(`${close}.focus(), ${close}.click()`);
-  assert.equal(await ev(`${close}.textContent`), "Confirm: Close");
-  await key("Escape", 27);
-  assert.equal(await ev(`${close}.textContent`), "Close");
-  // armed, confirmed, then clicked again while in flight: one call
-  await ev(`${close}.click(), ${close}.click()`);
-  assert.equal(await ev(`${close}.getAttribute("aria-disabled")`), "true");
-  await ev(`${close}.click(), ${close}.click()`);
-  await until(`document.querySelector('#msg').textContent === "done"`);
-  assert.deepEqual(closes, ["t1"]);
-  // the list was re-rendered (a new button): focus is on its twin, not lost to <body>
-  await sleep(200);
-  assert.equal(await ev(`document.activeElement.dataset.call`), "task.close");
-  assert.equal(await ev(`${close}.hasAttribute("aria-disabled")`), false);
+const ROUTES = () => [
+  "/",
+  "/chat/t1",
+  "/chat/none",
+  "/approvals",
+  `/approvals/${ids.request}`,
+  `/approvals/${ids.merge}`,
+  `/approvals/${ids.transforms}`,
+  `/approvals/${ids.judged}`,
+  `/approvals/${ids.login}/login`,
+  "/approvals/9999",
+  "/tasks",
+  "/tasks/t1",
+  "/tasks/t2",
+  "/tasks/t3",
+  "/tasks/none",
+  "/schedules",
+  "/search",
+  `/search?q=${encodeURIComponent(XSS)}`,
+  `/dof/slack/C1/${encodeURIComponent("1700000000.0001#t")}/a.md`,
+  "/dof/slack/..%2F..%2Fhortusd.json",
+  ...[
+    "general",
+    "planner",
+    "workers",
+    "approvals",
+    "sources",
+    "projects",
+    "credentials",
+    "sandbox",
+    "network",
+    "vms",
+    "remote",
+    "advanced",
+  ].map((s) => `/settings/${s}`),
+  // the old console's addresses, moved
+  "/chat",
+  "/settings",
+  "/credentials",
+  "/nowhere",
+];
+
+test("every page, hostile text everywhere: it renders, nothing runs, no guard, no CSP error, no sideways scroll at 390 px", {
+  skip,
+}, async () => {
+  for (const width of [1280, 390]) {
+    await cdp.send(
+      "Emulation.setDeviceMetricsOverride",
+      { width, height: 844, deviceScaleFactor: 1, mobile: width < 500 },
+      session,
+    );
+    for (const path of ROUTES()) {
+      problems.length = 0;
+      await go(path);
+      await sleep(400); // its calls answered and rendered
+      const [guard, pwned, imgs, wide, inner] = await ev<[boolean, string, number, number, number]>(
+        `[document.body.innerText.includes("This page could not be shown"), typeof window.pwned, document.querySelectorAll('img[src="x"], script:not([src])').length, document.documentElement.scrollWidth, innerWidth]`,
+      );
+      assert.deepEqual([path, width, guard, pwned, imgs, problems], [path, width, false, "undefined", 0, []]);
+      assert.ok(wide <= inner, `${path} at ${width}: ${wide} px wide`);
+    }
+  }
+  await cdp.send("Emulation.clearDeviceMetricsOverride", {}, session);
+  // and the text shows as text
+  await go("/chat/t1");
+  await until(`document.body.innerText.includes('onerror="window.pwned=1"')`);
+  await go(`/approvals/${ids.request}`);
+  await until(`document.body.innerText.includes('onerror="window.pwned=1"')`);
 });
 
-test("a re-render keeps a credential being typed and an open fold", { skip }, async () => {
-  const summary = JSON.stringify({ name: "n", new: true, manifest: "{}", missing: [{ name: "n", type: "token" }] });
-  const { lastInsertRowid: id } = ctx.db
-    .prepare(
-      "INSERT INTO approvals(kind, category, summary, status, requested_at) VALUES ('request', 'transforms', ?, 'pending', 'x')",
-    )
-    .run(summary);
+test("a typed credential and the page around it survive a refresh of its list", { skip }, async () => {
   await go("/approvals");
-  const field = `document.querySelector('[name="credentials.n.value"]')`;
-  const fold = `document.querySelector('#a${id} details')`;
-  await ev(`${field}.value = "sk-typed", ${fold}.open = true`);
-  await ev(`${field}.dataset.old = "1"`);
+  const field = `document.querySelector('[aria-labelledby="ap${ids.transforms}"] input[type=password]')`;
+  await until(`!!${field}`);
+  await ev(`${field}.focus()`);
+  await cdp.send("Input.insertText", { text: "sk-typed" }, session);
+  await ev(`${field}.dataset.mark = "1"`);
   bus.emit("approvals", {});
-  await until(`!${field}.dataset.old`); // the swap happened: a new element
+  await sleep(500);
   assert.equal(await ev(`${field}.value`), "sk-typed");
-  assert.equal(await ev(`${fold}.open`), true);
-  ctx.db.prepare("DELETE FROM approvals WHERE id = ?").run(id);
-});
-
-// decided elsewhere (another tab, the CLI, the phone) while this page's stream was down
-define("approval.decide", {
-  roles: ["owner"],
-  input: z.object({ id: z.number() }),
-  run({ id }) {
-    ctx.db.prepare("UPDATE approvals SET status = 'approved', decided_by = 'owner' WHERE id = ?").run(id);
-    throw new RpcError("invalid", "already decided");
-  },
+  assert.equal(await ev(`${field}.dataset.mark`), "1", "the same element: React kept it");
 });
 
 test("a stale page: Approve on an entry decided elsewhere says so and shows the decision", { skip }, async () => {
-  const r = ctx.db
-    .prepare(
-      "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES ('request', 'credential:x', 'stale', 't1', '{}', 'pending', ?, '{}')",
-    )
-    .run(new Date().toISOString());
-  await go(`/approvals/${r.lastInsertRowid}`);
-  await ev(`document.querySelector('button[data-call="approval.decide"]').click()`);
-  await until(`document.querySelector('#msg').textContent === "already decided"`);
-  await until(`document.querySelector('#list .decided')?.textContent.startsWith("approved by owner")`);
-  assert.equal(await ev(`document.querySelectorAll('#list button[data-call="approval.decide"]').length`), 0);
+  const id = ids.request as number;
+  await go(`/approvals/${id}`);
+  await until(`!!${button("Approve")}`);
+  // decided in another tab, the CLI, the phone, while this page's stream was down: no event
+  ctx.db.prepare("UPDATE approvals SET status = 'approved', decided_by = 'owner' WHERE id = ?").run(id);
+  await ev(`${button("Approve")}.click()`);
+  await until(`document.body.innerText.includes("This was already decided")`);
+  await until(`document.body.innerText.includes("Approved by you")`);
+  assert.equal(await ev(`!!${button("Approve")}`), false);
 });
 
-test("a decided merge entry folds its patch excerpt; a pending one shows it", () => {
-  const row = (status: string) => ({
-    id: 1,
-    kind: "merge",
-    category: "merge",
-    task_id: "t1",
-    summary: JSON.stringify({ project: "p", patch: "+x", files: 1 }),
-    status,
-    requested_at: null,
-    decided_at: null,
-    decided_by: null,
-    reason: null,
-  });
-  assert.match(approvalEntry(row("replaced")).html, /<details><summary>the change<\/summary><p class="req">/);
-  assert.doesNotMatch(approvalEntry(row("pending")).html, /the change/);
-});
-
-test("200 approvals in a burst: the open Approvals page re-renders a few times, not 200", { skip }, async () => {
+test("200 approvals in a burst: the open Approvals page fetches a few times, not 200", { skip }, async () => {
   await go("/approvals");
-  await sleep(300); // the stream is open
-  const fetches = `performance.getEntriesByType("resource").filter((e) => new URL(e.name).pathname === "/approvals").length`;
+  await sleep(500); // its stream is open
+  const fetches = `performance.getEntriesByType("resource").filter((e) => new URL(e.name).pathname === "/api/approval.list").length`;
   const before = await ev<number>(fetches);
   const ins = ctx.db.prepare(
     "INSERT INTO approvals(kind, category, hash, task_id, summary, status, requested_at, payload) VALUES ('request', 'credential:x', ?, 't1', ?, 'pending', ?, '{}')",
   );
   for (let i = 0; i < 200; i++) {
     const r = ins.run(
-      `h${i}`,
+      `b${i}`,
       JSON.stringify({ method: "POST", host: "api.example", path: `/p/${i}` }),
       new Date().toISOString(),
     );
     bus.emit("approvals", { id: Number(r.lastInsertRowid), task: "t1" }); // as gate.check does
   }
-  // the page shows the newest 50 and says how many there are
-  await until(`document.querySelector('#list .more')?.textContent.includes("of 200 pending")`, 15_000);
-  assert.equal(await ev(`document.querySelectorAll('[data-call="approval.decide"]').length`), 100);
-  await sleep(500);
+  await sleep(1500);
   const n = (await ev<number>(fetches)) - before;
-  const t0 = performance.now();
-  const page = await (await fetch(`${base}/approvals`)).text();
-  const ms = performance.now() - t0;
-  console.log(
-    `# load approvals: 200 pending, page ${(page.length / 1024).toFixed(0)} KB in ${ms.toFixed(0)} ms; ${n} re-fetches`,
-  );
-  assert.ok(n <= 3, `${n} page re-fetches for one burst`);
-  assert.ok(ms < 500, `${ms} ms`);
-});
-
-test("a schedule's next fire stays relative; a date never wraps at 390 px", {
-  skip,
-}, async () => {
-  const now = Date.now();
-  ctx.db
-    .prepare(
-      "INSERT INTO schedules(task_id, fire_at, every_sec, text, last_run, created) VALUES ('t1', ?, 3600, 'x', ?, ?)",
-    )
-    .run(new Date(now + 3600e3).toISOString(), new Date(now).toISOString(), new Date(now).toISOString());
-  await cdp.send(
-    "Emulation.setDeviceMetricsOverride",
-    { width: 390, height: 800, deviceScaleFactor: 1, mobile: true },
-    session,
-  );
-  try {
-    await go("/schedules");
-    assert.match(await ev<string>(`document.querySelector('time[data-rel]').textContent`), /^in (59|60) min$/);
-    assert.equal(
-      await ev(`[...document.querySelectorAll('time')].every((t) => t.getClientRects().length === 1)`),
-      true,
-    );
-  } finally {
-    await cdp.send("Emulation.clearDeviceMetricsOverride", {}, session);
-  }
+  console.log(`# approvals burst: 200 events, ${n} approval.list fetches`);
+  assert.ok(n >= 1 && n <= 3, `${n} fetches for one burst`);
 });
 
 test("open tabs never starve a fetch: one stream a page, none while hidden (HTTP/1.1: 6 connections an origin)", {
@@ -235,61 +332,34 @@ test("open tabs never starve a fetch: one stream a page, none while hidden (HTTP
     tabs.push({ targetId, session: sessionId });
     return sessionId;
   };
-  const inTab = async <T>(tab: string, expression: string) =>
-    (
-      await cdp.send<{ result: { value: T } }>(
-        "Runtime.evaluate",
-        { expression, awaitPromise: true, returnByValue: true },
-        tab,
-      )
-    ).result.value;
-  const answers = `Promise.race([fetch("/static/app.css").then((r) => r.ok), new Promise((r) => setTimeout(() => r(false), 3000))])`;
+  const answers = `Promise.race([fetch("/api/pause.get", { method: "POST", headers: { "content-type": "application/json", "x-hortus": "1" }, body: "{}" }).then((r) => r.ok), new Promise((r) => setTimeout(() => r(false), 3000))])`;
   const hide = (hidden: boolean) =>
-    `Object.defineProperty(document, "hidden", { configurable: true, value: ${hidden} }); document.dispatchEvent(new Event("visibilitychange")); 1`;
+    `Object.defineProperty(document, "hidden", { configurable: true, value: ${hidden} }); Object.defineProperty(document, "visibilityState", { configurable: true, value: ${JSON.stringify(hidden ? "hidden" : "visible")} }); document.dispatchEvent(new Event("visibilitychange")); 1`;
   try {
     await go("/chat/t1");
     const second = await open("/chat/t1");
     await open("/tasks/t1");
-    await sleep(500);
-    assert.equal(await ev(answers), true, "two chats and a task card: a page's fetch still answers");
+    await sleep(800);
+    assert.equal(await ev(answers), true, "two chats and a task page: a page's fetch still answers");
     // more tabs than connections: the hidden ones hold none, and one coming back catches up from its cursor
-    for (const p of ["/approvals", "/", "/tasks/t1", "/approvals", "/"]) {
+    for (const p of ["/approvals", "/", "/tasks/t2", "/approvals", "/"]) {
       const t = await open(p);
-      await sleep(100);
-      await inTab(t, hide(true));
+      await sleep(300);
+      await ev(hide(true), t);
     }
-    await inTab(second, hide(true));
-    await sleep(500);
+    await ev(hide(true), second);
+    await sleep(800);
     assert.equal(await ev(answers), true, "eight tabs, six of them hidden");
-    const seq = (ctx.db.prepare("SELECT COUNT(*) AS n FROM replies WHERE task_id = 't1'").get() as { n: number }).n + 1;
+    const seq = (ctx.db.prepare("SELECT max(seq) AS n FROM replies WHERE task_id = 't1'").get() as { n: number }).n + 1;
     ctx.db
-      .prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('t1', ?, ?, '')")
-      .run(seq, JSON.stringify({ type: "text", text: "while hidden" }));
-    await inTab(second, hide(false));
-    for (
-      let i = 0;
-      i < 100 && !(await inTab(second, `document.querySelector("#stream").textContent.includes("while hidden")`));
-      i++
-    )
+      .prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('t1', ?, ?, ?)")
+      .run(seq, JSON.stringify({ type: "text", text: "while hidden" }), new Date().toISOString());
+    bus.emit("chat:t1");
+    await ev(hide(false), second);
+    for (let i = 0; i < 100 && !(await ev(`document.body.innerText.includes("while hidden")`, second)); i++)
       await sleep(50);
-    assert.equal(await inTab(second, `document.querySelector("#stream").textContent.includes("while hidden")`), true);
+    assert.equal(await ev(`document.body.innerText.includes("while hidden")`, second), true);
   } finally {
     for (const t of tabs) await cdp.send("Target.closeTarget", { targetId: t.targetId });
   }
-});
-
-test("a stream the server ended for good (a remote session's 401) reloads the page", { skip }, async () => {
-  await go("/chat/t1");
-  await until(`document.querySelector('#conn').textContent === ""`);
-  await ev(`window.stale = 1; es.close(); es.dispatchEvent(new Event("error")); 1`);
-  await until(`document.readyState === "complete" && window.stale === undefined`);
-});
-
-test("cells carry their column name; the chat shows its stream's state", { skip }, async () => {
-  await go("/");
-  assert.equal(await ev(`document.querySelector('#list tbody td').dataset.label`), "Status");
-  await go("/chat/t1");
-  await until(`document.querySelector('#conn').textContent === ""`);
-  await consoleModule.stop();
-  await until(`document.querySelector('#conn').textContent === "reconnecting…"`);
 });

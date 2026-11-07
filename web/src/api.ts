@@ -9,6 +9,7 @@ import type { Config } from "../../src/config.ts";
 import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
 import { pageAt, pageWindow } from "../../src/console/forms.ts";
 import { liveStream } from "../../src/console/live.ts";
+import { loginHref } from "../../src/console/next.ts";
 import { errorText, store } from "./ui.tsx";
 
 export type { Config, CredentialType, SearchHit, TaskKind, TaskStatus };
@@ -52,8 +53,9 @@ export async function call<T = unknown>(method: string, input: unknown = {}): Pr
   } catch {
     throw new ApiError("failed", "hortusd is not answering");
   }
-  // the remote listener without a live session: its sign-in page (which calls nothing here, so it cannot loop)
-  if (status === 401 && location.pathname !== "/login" && location.pathname !== "/enroll") location.replace("/login");
+  // the remote listener without a live session: its sign-in page (which calls nothing here, so it cannot loop), and back
+  if (status === 401 && location.pathname !== "/login" && location.pathname !== "/enroll")
+    location.replace(loginHref(location.pathname + location.search));
   // the guards in front of the router answer in plain text
   let body: { result?: T; error?: { code: ApiError["code"]; message: string; data?: unknown } } | undefined;
   try {
@@ -73,7 +75,8 @@ const down = (d: boolean) => {
   reconnecting.set(d);
   if (d) call("remote.status").catch(() => {});
 };
-const watch = import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), down);
+const watch =
+  import.meta.env.VITE_MOCK === "1" ? undefined : liveStream(bus, (url) => new EventSource(url), down, 3000, document);
 
 /** Calls `f` on each event of `topics`. */
 export function subscribe(topics: string[], f: (e: Event) => void): () => void {
@@ -168,8 +171,8 @@ export function loginStream(
 }
 
 /**
- * `method(input)`, again on each event of `topics`; `null` calls nothing. An answer to an older input never replaces
- * a newer one; until the newer one's lands, `current` is false and `data` is the older input's.
+ * `method(input)`, again after each event of `topics` (a burst once); `null` calls nothing. An answer to an older
+ * input never replaces a newer one; until the newer one's lands, `current` is false and `data` is the older input's.
  */
 export function useCall<T>(method: string | null, input: unknown = {}, topics: string[] = []) {
   const key = JSON.stringify(input);
@@ -191,7 +194,18 @@ export function useCall<T>(method: string | null, input: unknown = {}, topics: s
   useEffect(() => {
     setState((s) => ({ ...s, loading: true }));
     load();
-    return subscribe(topicKey ? topicKey.split(",") : [], load);
+    // a burst (200 approvals at once, an event each) is one call, not one an event
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = subscribe(topicKey ? topicKey.split(",") : [], () => {
+      timer ??= setTimeout(() => {
+        timer = undefined;
+        load();
+      }, BATCH_MS);
+    });
+    return () => {
+      clearTimeout(timer);
+      off();
+    };
   }, [load, topicKey]);
   return { ...state, current: state.of === key, reload: load };
 }
@@ -284,7 +298,16 @@ export interface TaskDetail {
   console_log?: string;
 }
 
-export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "landed" | "replaced";
+export type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "allowed"
+  | "used"
+  | "installing"
+  | "rejected"
+  | "expired"
+  | "landed"
+  | "replaced";
 
 export interface Approval {
   id: number;

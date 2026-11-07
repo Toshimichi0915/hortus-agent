@@ -208,9 +208,11 @@ test("chat from the web UI: dof search → curl chat.postMessage → 403 approva
   mark(`task.open ${id}`);
   const approval = await until(async () => (await card(id)).approvals[0], 300_000, "a pending approval");
   mark(`approval #${approval.id} ${approval.category} pending`);
-  const page = await (await fetch(`http://127.0.0.1:${port}/approvals`)).text();
-  assert.match(page, new RegExp(`id="a${approval.id}"`));
-  assert.match(page, /slack\.com/);
+  // the Approvals page lists it, a request to slack.com
+  const listed = (await api<{ id: number; summary: { host?: string } }[]>("approval.list")).find(
+    (a) => a.id === approval.id,
+  );
+  assert.match(listed?.summary.host ?? "", /slack\.com/);
   // the model may probe (auth.test) before it posts: approve whatever this task asks for until the post lands
   const post = await until(
     async () => {
@@ -256,8 +258,8 @@ test("edit README.md of project foo in place; reopen the chat: context kept; hor
   assert.ok(/README\.md/.test(st) || Number(commits) > 2, `${st} ${commits}`);
   mark("README.md edited in place");
 
-  const page = await (await fetch(`http://127.0.0.1:${port}/chat/${id}`)).text();
-  assert.match(page, /README/);
+  // the chat page's rows
+  assert.match(JSON.stringify((await card(id)).replies), /README/);
   const before = lastSeq(id);
   await api("task.send", { id, text: "Which exact line did you just add, and to which file? Answer in one sentence." });
   await until(() => lastSeq(id) > before + 2, 60_000, "the turn started");

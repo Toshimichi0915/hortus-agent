@@ -1,4 +1,4 @@
-/** `HORTUS_WEB=1`: the new UI from dist/web (built by `pnpm build`), and the old console without it. */
+/** The web UI from dist/web (built by `pnpm build`), next to /api and /events. */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
@@ -18,20 +18,13 @@ const ctx: Ctx = { config: load(), db: openDb(paths.db()), paths, log: logger, a
 const dist = new URL("../web/", import.meta.url);
 const index = readFileSync(new URL("index.html", dist), "utf8");
 let web: Console;
-let old: Console;
 
 define("web.ping", { roles: ["owner"], input: z.unknown(), run: () => ({ pong: true }) });
 
 before(async () => {
-  process.env.HORTUS_WEB = "1";
   web = await startServer(ctx, 0);
-  delete process.env.HORTUS_WEB;
-  old = await startServer(ctx, 0);
 });
-after(async () => {
-  await web.close();
-  await old.close();
-});
+after(() => web.close());
 
 interface Res {
   status: number;
@@ -84,7 +77,10 @@ test("the assets on the list are served with their types and the console's CSP",
     assert.equal(r.type, type);
     assert.equal(r.body, readFileSync(new URL(`assets/${file}`, dist), "utf8"));
   }
-  assert.equal((await get(web, "/")).csp, (await get(old, "/")).csp);
+  assert.equal(
+    (await get(web, "/")).csp,
+    "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'",
+  );
 });
 
 test("no request path reaches the filesystem", async () => {
@@ -118,36 +114,24 @@ test("any other GET is the app: a hard reload of a deep link", async () => {
   assert.equal((await get(web, "/tasks/abc", "DELETE")).status, 405);
 });
 
-test("/api and /events do not change", async () => {
+test("/api and /events are not the app", async () => {
   const pong = await get(web, "/api/web.ping", "POST");
   assert.deepEqual(JSON.parse(pong.body), { result: { pong: true } });
-  for (const [path, method] of [
-    ["/api/web.ping", "POST"],
-    ["/api/nope", "POST"],
-    ["/api/web.ping", "GET"],
-    ["/api", "GET"],
-    ["/events", "GET"],
-    ["/events/nope", "GET"],
-    ["/events/a/b", "GET"],
-    ["/static/app.css", "GET"],
-    ["/tasks/abc/log", "GET"],
+  for (const [path, method, status] of [
+    ["/api/nope", "POST", 404],
+    ["/api/web.ping", "GET", 404],
+    ["/api", "GET", 404],
+    ["/events", "GET", 404],
+    ["/events/nope", "GET", 404],
+    ["/events/a/b", "GET", 404],
+    ["/tasks/abc/log", "GET", 404],
+    ["/static/app.css", "GET", 200], // the old console's: no such file now, so the app (its Not found)
   ] as const) {
-    const [a, b] = [await get(web, path, method), await get(old, path, method)];
-    assert.deepEqual([path, a], [path, b]);
+    const r = await get(web, path, method);
+    assert.deepEqual([path, r.status, r.body === index], [path, status, status === 200]);
   }
   const stream = new AbortController();
   const r = await fetch(`http://127.0.0.1:${web.port}/events/tasks`, { signal: stream.signal });
   assert.equal(r.headers.get("content-type"), "text/event-stream");
   stream.abort();
-});
-
-test("without HORTUS_WEB the old console answers", async () => {
-  const home = await get(old, "/");
-  assert.equal(home.status, 200);
-  assert.match(home.body, /\/static\/app\.css/);
-  assert.notEqual(home.body, index);
-  const [file] = readdirSync(new URL("assets/", dist));
-  assert.equal((await get(old, `/assets/${file}`)).status, 404);
-  assert.equal((await get(old, "/nope")).status, 404);
-  assert.equal((await get(web, "/nope")).body, index);
 });

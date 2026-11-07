@@ -206,13 +206,15 @@ test(`vault and proxy (${NET ? "hortus0, 10.77.1.9:443 via DNAT" : "loopback"}):
   assert.equal(pending.url, `http://127.0.0.1:${consolePort}/approvals/${pending.approval}`);
   assert.equal(authTests(), before);
 
-  // (d) the Approvals page shows the entry with where it goes
-  const page = await (await consoleReq("/approvals")).text();
-  const entry = page.slice(page.indexOf(`id="a${pending.approval}"`));
-  assert.match(entry, /credential:slack/);
-  assert.match(entry, /slack\.com/);
-  assert.match(entry, /\/api\/auth\.test/);
-  assert.match(entry, /data-call="approval\.decide"/);
+  // (d) the Approvals page gets the entry with where it goes, pending
+  const list = (await (await consoleReq("/api/approval.list", {})).json()) as {
+    result: { id: number; category: string; status: string; summary: { host: string; path: string } }[];
+  };
+  const entry = list.result.find((a) => a.id === pending.approval);
+  assert.deepEqual(
+    [entry?.category, entry?.status, entry?.summary.host, entry?.summary.path],
+    ["credential:slack", "pending", "slack.com", "/api/auth.test"],
+  );
 
   const decided = await consoleReq("/api/approval.decide", { id: pending.approval, decision: "approve" });
   assert.equal(decided.status, 200, await decided.clone().text());
@@ -230,7 +232,11 @@ test(`vault and proxy (${NET ? "hortus0, 10.77.1.9:443 via DNAT" : "loopback"}):
   assert.notEqual(again.approval, pending.approval);
   assert.equal(authTests(), before + 1);
 
-  const after = await (await consoleReq(`/approvals/${pending.approval}`)).text();
-  assert.match(after, /approved by owner at/);
-  assert.doesNotMatch(after, /data-call="approval\.decide"/);
+  // "Approved by you", and no buttons: it is no longer pending
+  const after = (await (await consoleReq("/api/approval.get", { id: pending.approval })).json()) as {
+    result: { status: string; decided_by: string; decided_at: string | null };
+  };
+  assert.notEqual(after.result.status, "pending");
+  assert.equal(after.result.decided_by, "owner");
+  assert.ok(after.result.decided_at);
 });

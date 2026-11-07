@@ -8,6 +8,7 @@ import { existsSync, rmSync } from "node:fs";
 import { Cron } from "croner";
 import { z } from "zod";
 import { bus } from "../console/events.ts";
+import { type ScheduleListRow, withSummaries } from "../console/rows.ts";
 import { crashPoint } from "../crash.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import * as paths from "../paths.ts";
@@ -242,15 +243,19 @@ define("schedule.unset", {
   },
 });
 
+/** With each row's last run's summary, as the Schedules page shows it. */
 define("schedule.list", {
   roles: ["owner"],
   input: z.object({}).passthrough(),
   run: () =>
-    db()
-      .prepare(
-        "SELECT s.*, t.title FROM schedules s LEFT JOIN tasks t ON t.id = s.task_id ORDER BY s.task_id, s.fire_at",
-      )
-      .all(),
+    withSummaries(
+      ctx as Ctx,
+      db()
+        .prepare(
+          "SELECT s.*, t.title FROM schedules s LEFT JOIN tasks t ON t.id = s.task_id ORDER BY s.task_id, s.fire_at",
+        )
+        .all() as unknown as ScheduleListRow[],
+    ),
 });
 
 const drop = <T>(list: T[], x: T) => {

@@ -126,6 +126,17 @@ const pending = () =>
   db((d) =>
     d.prepare("SELECT id, kind, task_id, payload FROM approvals WHERE status = 'pending' ORDER BY id").all(),
   ) as unknown as Entry[];
+/** What the Approvals page fetches (approval.list), in bytes. */
+const approvalsBytes = async () =>
+  (
+    await (
+      await fetch(`http://127.0.0.1:${port}/api/approval.list`, {
+        method: "POST",
+        headers: { "X-Hortus": "1", "Content-Type": "application/json" },
+        body: "{}",
+      })
+    ).text()
+  ).length;
 const grantable = (e: Entry) => {
   const p = JSON.parse(e.payload) as { consequential?: boolean; judge?: string };
   return e.kind === "request" && !!e.task_id && !p.consequential && !!p.judge?.startsWith("tainted:");
@@ -290,8 +301,9 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
         seen.add(e.id);
         decisions++;
         const want = grantable(e);
-        const page = await (await fetch(`http://127.0.0.1:${port}/approvals/${e.id}`)).text();
-        if (page.includes("&quot;grant&quot;:true") !== want) wrongButton.push(e.id);
+        // the entry's "Approve, and allow … for this task" button
+        if ((await api<{ grantable: boolean }>("approval.get", { id: e.id })).grantable !== want)
+          wrongButton.push(e.id);
         if (want) grants++;
         if (want && grants === 1) {
           const r = hortus("approvals", "approve", "--grant", String(e.id));
@@ -301,8 +313,7 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
             (x: Error) => errors.push(x.message),
           );
       }
-      const list = await (await fetch(`http://127.0.0.1:${port}/approvals`)).text();
-      maxPage = Math.max(maxPage, list.length);
+      maxPage = Math.max(maxPage, await approvalsBytes());
       await sleep(100);
     }
   })().catch((e: Error) => void (stop || errors.push(`owner loop: ${e.message}`)));
@@ -360,7 +371,7 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
     d.prepare("SELECT task_id, decided_by, kind FROM approvals WHERE kind = 'request'").all(),
   ) as { task_id: string; decided_by: string }[];
   const byOwner = (id: string) => entries.filter((e) => e.task_id === id && e.decided_by === "owner").length;
-  const page = await (await fetch(`http://127.0.0.1:${port}/approvals`)).text();
+  const page = { length: await approvalsBytes() };
   console.log(
     `# day (real daemon): ${decisions} decisions (${grants} task grants), ${dms().length} DMs, ${judged} judge calls, ` +
       `${tainted.length} tainted, scope.dofs ${JSON.stringify(perScope)}, Approvals page ${page.length} B ` +
@@ -428,9 +439,13 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
   assert.equal(await send("chat.delete"), 403, "a delete still asks");
   const del = pending().at(-1);
   assert.ok(del && !grantable(del));
-  const tabA = await (await fetch(`http://127.0.0.1:${port}/approvals`)).text();
-  const tabB = await (await fetch(`http://127.0.0.1:${port}/approvals`)).text();
-  for (const tab of [tabA, tabB]) assert.match(tab, new RegExp(`id="a${del.id}"`));
+  // two tabs on the Approvals page: each lists it
+  for (let tab = 0; tab < 2; tab++)
+    assert.ok(
+      (await api<{ id: number; status: string }[]>("approval.list")).some(
+        (a) => a.id === del.id && a.status === "pending",
+      ),
+    );
   await api("approval.decide", { id: del.id, decision: "approve" });
   await assert.rejects(api("approval.decide", { id: del.id, decision: "reject" }), /already decided/);
   const cli = hortus("approvals", "approve", String(del.id));

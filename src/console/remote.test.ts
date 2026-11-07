@@ -131,7 +131,14 @@ const token = (r: Res): string => {
   const c = [r.headers["set-cookie"] ?? []].flat()[0] ?? "";
   return /^__Host-hortus=([^;]+)/.exec(c)?.[1] ?? "";
 };
-const isLogin = (r: Res) => r.body.includes("Sign in with passkey") && !r.body.includes("<nav>");
+const index = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+/** Sent to sign in: a redirect to `/login`, nothing of the console in it; `next`, the path it carries. */
+const toLogin = (r: Res, next?: string) =>
+  r.status === 302 &&
+  r.body === "" &&
+  r.headers.location === (next ? `/login?next=${encodeURIComponent(next)}` : "/login");
+/** Signed in: the app. */
+const isApp = (r: Res) => r.status === 200 && r.body === index;
 const newCode = async () => (await call("enroll.code", {}, { role: "owner" })) as { code: string; url: string };
 
 const auth = () => new SoftAuthenticator(origin);
@@ -147,20 +154,21 @@ async function signIn(a: SoftAuthenticator, rpId?: string): Promise<Res> {
   return remote("/webauthn/login/verify", { body: { response: a.get(o, { rpId }) } });
 }
 
-test("without the cookie: the login page, 401 for the API and SSE", async () => {
+test("without the cookie: sent to sign in, the deep link carried; 401 for the API and SSE", async () => {
   const home = await remote("/");
-  assert.equal(home.status, 200);
-  assert.ok(isLogin(home));
+  assert.ok(toLogin(home));
   assert.match(home.headers["content-security-policy"] as string, /script-src 'self'/);
-  assert.ok(isLogin(await remote("/settings")));
+  assert.ok(toLogin(await remote("/approvals/7?x=1"), "/approvals/7?x=1"));
+  assert.ok(toLogin(await remote("//evil.test/x")));
+  const login = await remote("/login?next=%2Fapprovals%2F7");
+  assert.equal(login.body, index);
   const api = await remote("/api/task.list", { body: {} });
   assert.equal(api.status, 401);
-  assert.ok(isLogin(api));
+  assert.equal(api.body, "sign in first");
   assert.equal((await remote("/events/chat?task=t1")).status, 401);
-  assert.equal((await remote("/static/webauthn.js")).status, 200);
-  assert.ok(isLogin(await remote("/static/app.js")));
-  assert.ok(isLogin(await remote("/enroll?code=nope")));
-  assert.equal((await remote("/", { cookie: "forged" })).body.includes("<nav>"), false);
+  assert.ok(toLogin(await remote("/static/app.js"), "/static/app.js"));
+  assert.ok(toLogin(await remote("/enroll?code=nope")));
+  assert.ok(toLogin(await remote("/", { cookie: "forged" })));
 });
 
 test("guards: Host must be console.host with the port", async () => {
@@ -172,16 +180,12 @@ test("TLS: without console.tls the leaf is minted from the hortus CA for console
   const r = await remote("/");
   assert.equal(r.cert?.subjectaltname, `DNS:${HOST}`);
   assert.equal(r.cert?.issuer.CN, "hortus CA");
-  // a phone without the CA has no way in, and WebAuthn refuses a click-through: Settings says so
-  assert.match((await loopback("/settings")).body, /Each device must trust <code>[^<]*ca\.crt<\/code>/);
 });
 
 test("enrolment: a live code, a passkey row, a session; the code is single use and expires", async () => {
   const { code, url } = await newCode();
   assert.equal(url, `${origin}/enroll?code=${code}`);
-  const page = await remote(`/enroll?code=${code}`);
-  assert.equal(page.status, 200);
-  assert.match(page.body, /Create passkey/);
+  assert.equal((await remote(`/enroll?code=${code}`)).body, index);
 
   const a = auth();
   const o = json(await remote("/webauthn/register/options", { body: { code } }));
@@ -196,11 +200,10 @@ test("enrolment: a live code, a passkey row, a session; the code is single use a
   const row = ctx.db.prepare("SELECT * FROM passkeys").get() as { device: string; transports: string };
   assert.equal(row.device, "phone");
   assert.deepEqual(JSON.parse(row.transports), ["internal"]);
-  const tasks = await remote("/", { cookie: token(r) });
-  assert.match(tasks.body, /<nav>/);
+  assert.ok(isApp(await remote("/", { cookie: token(r) })));
 
-  // used: the page is the login page, a second ceremony is refused
-  assert.ok(isLogin(await remote(`/enroll?code=${code}`)));
+  // used: sent to sign in, a second ceremony is refused
+  assert.ok(toLogin(await remote(`/enroll?code=${code}`)));
   assert.equal((await remote("/webauthn/register/options", { body: { code } })).status, 400);
   assert.equal(
     (await remote("/webauthn/register/verify", { body: { code, device: "x", response: auth().create(o) } })).status,
@@ -210,7 +213,7 @@ test("enrolment: a live code, a passkey row, a session; the code is single use a
   // expired
   const late = await newCode();
   ctx.db.prepare("UPDATE enroll_codes SET expires_at = ?").run(new Date(Date.now() - 1000).toISOString());
-  assert.ok(isLogin(await remote(`/enroll?code=${late.code}`)));
+  assert.ok(toLogin(await remote(`/enroll?code=${late.code}`)));
 });
 
 test("login: a correct assertion signs in; replay, stale counter, wrong RP ID or origin are refused", async () => {
@@ -218,7 +221,7 @@ test("login: a correct assertion signs in; replay, stale counter, wrong RP ID or
   assert.equal((await enrol(a, "laptop")).status, 200);
   const r = await signIn(a);
   assert.equal(r.status, 200, r.body);
-  assert.match((await remote("/", { cookie: token(r) })).body, /<nav>/);
+  assert.ok(isApp(await remote("/", { cookie: token(r) })));
   const used = ctx.db.prepare("SELECT counter FROM passkeys WHERE device = 'laptop'").get() as { counter: number };
   assert.equal(used.counter, 1);
 
@@ -278,10 +281,9 @@ test("enroll.code is loopback only; session.revoke makes the revoked session's n
   assert.equal((await remote("/api/session.revoke", { body: { id: other.id }, cookie: one })).status, 200);
   assert.equal((await remote("/api/session.list", { body: {}, cookie: two })).status, 401);
 
-  // the remote Settings page: sessions, no enrolment code
-  const settings = await remote("/settings", { cookie: one });
-  assert.match(settings.body, /this one/);
-  assert.match(settings.body, /made at the machine/);
+  // what the remote Settings page reads: this session marked, and that it came through the remote listener
+  const status = json(await remote("/api/remote.status", { body: {}, cookie: one })).result as { remote: boolean };
+  assert.equal(status.remote, true);
 });
 
 test("passkey.delete: its assertion is refused, its sessions end, other devices stay; the last one may go", async () => {
@@ -293,7 +295,8 @@ test("passkey.delete: its assertion is refused, its sessions end, other devices 
   const list = (await call("passkey.list", {}, { role: "owner" })) as { id: string; device: string }[];
   const id = list.find((k) => k.device === "lost")?.id;
   assert.ok(id);
-  assert.match((await remote("/settings", { cookie: kept })).body, /Passkeys[\s\S]*lost/);
+  const keys = json(await remote("/api/passkey.list", { body: {}, cookie: kept })).result as { device: string }[];
+  assert.ok(keys.some((k) => k.device === "lost"));
   assert.equal((await remote("/api/passkey.delete", { body: { id }, cookie: kept })).status, 200);
   assert.equal((await remote("/api/session.list", { body: {}, cookie: lost })).status, 401);
   assert.equal((await remote("/api/session.list", { body: {}, cookie: kept })).status, 200);
@@ -374,16 +377,16 @@ test("idle sessions: last_seen is touched at most once a minute; 31 days idle â†
     .run(new Date(Date.now() - 31 * 86400e3).toISOString());
   hourly();
   assert.equal(seen(), undefined);
-  assert.ok(isLogin(await remote("/", { cookie: t })));
+  assert.ok(toLogin(await remote("/", { cookie: t })));
 });
 
-test("loopback: no cookie needed; Settings shows the code, its URL and the QR", async () => {
-  const { url } = await newCode();
-  const r = await loopback("/settings");
+test("loopback: no cookie needed; the app, and the enrolment code with its URL and expiry", async () => {
+  const made = (await call("enroll.code", {}, { role: "owner" })) as { code: string; url: string; expires_at: string };
+  assert.equal(made.url, `${origin}/enroll?code=${made.code}`);
+  assert.ok(Date.parse(made.expires_at) > Date.now());
+  const r = await loopback("/settings/remote");
   assert.equal(r.status, 200);
-  assert.ok(r.body.includes(url));
-  assert.match(r.body, /<svg [^>]*aria-label="QR code"/);
-  assert.match(r.body, /data-expires=/);
+  assert.equal(r.body, index);
 });
 
 test("console.tls: the configured chain is served, a world-readable key warns, a changed file is re-read", async () => {

@@ -2,8 +2,8 @@
  * The remote console: "a chat opened from the phone edits a
  * project in place like one opened at the machine". The real daemon (HORTUS_NO_NET=1, delegated user scope) with
  * `console.listen` on; the only things done at the machine are the enrolment code (socket) and reading the disk.
- * Everything else goes through the TLS listener with the phone's cookie and `Host`: the requests app.js makes, then
- * (Chromium present) app.js itself at 390 px. A chat neither clones, pushes nor merges: the edit is in the checkout at
+ * Everything else goes through the TLS listener with the phone's cookie and `Host`: the requests the web UI makes, then
+ * (Chromium present) the web UI itself at 390 px. A chat neither clones, pushes nor merges: the edit is in the checkout at
  * once and "the next sync carries its commits"; a Worker's merge is what the phone approves.
  * The fake model is host-runtime.test.ts's: directive lines, `$CWD` = the directory the system prompt names, text in word deltas.
  */
@@ -110,15 +110,16 @@ function ask(path: string, method: string, headers: Record<string, string>, body
 const NAV = { "sec-fetch-site": "none", "sec-fetch-mode": "navigate" };
 const FETCH = { "x-hortus": "1", "content-type": "application/json", "sec-fetch-site": "same-origin" };
 
-/** A page load or an app.js call, as the phone's browser sends it. */
+/** A page load or an API call, as the phone's browser sends it. */
 const phone = (path: string, body?: unknown): Promise<Res> =>
   body === undefined ? ask(path, "GET", NAV) : ask(path, "POST", { ...FETCH, origin }, JSON.stringify(body));
 
+const dist = new URL("../web/", import.meta.url);
+const index = readFileSync(new URL("index.html", dist), "utf8");
+/** A page load signed in: the app's shell. */
 const page200 = async (path: string) => {
   const r = await phone(path);
-  assert.equal(r.status, 200, `${path}: ${r.body}`);
-  assert.ok(!r.body.includes("Sign in with passkey"), `${path}: the login page`);
-  return r.body;
+  assert.deepEqual([path, r.status, r.body === index], [path, 200, true], r.body.slice(0, 200));
 };
 
 const api = async <T = Record<string, unknown>>(method: string, body: unknown = {}): Promise<T> => {
@@ -129,7 +130,13 @@ const api = async <T = Record<string, unknown>>(method: string, body: unknown = 
   return j.result as T;
 };
 
-/** The chat stream as EventSource reads it: resolves with the SSE text once `done` matches it. */
+/** A chat row as the page shows its text: a tool call as `$ command`, a result its output, the rest their text. */
+const rowText = (b: Record<string, unknown>) =>
+  b.type === "tool_call"
+    ? `\n$ ${String((b.input as { command?: string } | undefined)?.command ?? "")}\n`
+    : String(b.text ?? b.output ?? "");
+
+/** The chat stream as EventSource reads it: resolves with its rows' text once `done` matches it. */
 function chatStream(id: string, done: RegExp): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = raw(`/events/chat?task=${id}&after=-1`, {
@@ -143,10 +150,10 @@ function chatStream(id: string, done: RegExp): Promise<string> {
       res.setEncoding("utf8");
       res.on("data", (c) => {
         sse += c;
-        const html = [...sse.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1] as string).html).join("");
-        if (!done.test(html.replace(/<[^>]+>/g, ""))) return;
+        const text = [...sse.matchAll(/^data: (.+)$/gm)].map((m) => rowText(JSON.parse(m[1] as string).body)).join("");
+        if (!done.test(text)) return;
         clearTimeout(timer);
-        resolve(html);
+        resolve(text);
         r.destroy();
       });
     });
@@ -224,9 +231,9 @@ before(async () => {
   await boot();
 });
 
-/** hortusd in its own scope on `home`; `web`: with HORTUS_WEB=1. Resolves once the remote listener answers. */
-async function boot(web = false): Promise<void> {
-  const unit = `hortusd-3d-${process.pid}${web ? "-web" : ""}`;
+/** hortusd in its own scope on `home`; `again`: a second boot. Resolves once the remote listener answers. */
+async function boot(again = false): Promise<void> {
+  const unit = `hortusd-3d-${process.pid}${again ? "-again" : ""}`;
   units.push(unit);
   daemon = spawn(
     "systemd-run",
@@ -249,7 +256,6 @@ async function boot(web = false): Promise<void> {
         HORTUS_HOME: home,
         HORTUS_CONSOLE_PORT: String(port),
         HORTUS_NO_NET: "1",
-        ...(web ? { HORTUS_WEB: "1" } : {}),
       },
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -258,7 +264,7 @@ async function boot(web = false): Promise<void> {
   await until(
     () =>
       phone("/").then(
-        (r) => r.status === (web && !cookie ? 302 : 200),
+        (r) => r.status === (cookie ? 200 : 302),
         () => false,
       ),
     15_000,
@@ -293,16 +299,16 @@ test("the phone enrols at the machine's code and signs in with its passkey", { s
   assert.equal(signed.status, 200, signed.body);
   cookie = setCookie(signed);
   assert.ok(cookie);
-  assert.match(await page200("/"), /<nav>/);
+  await page200("/");
 });
 
 test("a chat opened from the phone edits a git project in place; the next sync carries its commit", {
   skip,
 }, async () => {
-  // what the Chat page offers: the project picker, the call and where it goes next
-  const form = await page200("/chat");
-  assert.match(form, /data-call="task\.open"/);
-  const cwd = /<option value="([^"]+)">repo<\/option>/.exec(form)?.[1];
+  // what the new chat's project picker offers (chat.tsx › Home): settings.get's projects, by path
+  await page200("/");
+  const { config } = await api<{ config: { projects: Record<string, { path: string }> } }>("settings.get");
+  const cwd = config.projects.repo?.path;
   assert.equal(cwd, repo);
 
   const { id } = await api<{ id: string }>("task.open", {
@@ -310,7 +316,7 @@ test("a chat opened from the phone edits a git project in place; the next sync c
     text: `add a line to the README\n!bash cd $CWD && echo 'from the phone' >> README.md && cat README.md`,
   });
   const stream = await chatStream(id, /tool said: # repo\s+from the phone/);
-  assert.match(stream, /cd .*repo &amp;&amp; echo/);
+  assert.match(stream, /\$ cd .*repo && echo/);
   const c = await idle(id);
   assert.equal(c.task.project, "repo");
   assert.equal(c.task.runtime, "host");
@@ -321,13 +327,13 @@ test("a chat opened from the phone edits a git project in place; the next sync c
   assert.equal(git(repo, "status", "--porcelain"), "M README.md");
   assert.ok(!existsSync(paths.clone(id)));
 
-  const chatView = await page200(`/chat/${id}`);
-  assert.match(chatView, /add a line to the README/);
-  assert.match(chatView.replace(/<[^>]+>/g, ""), /tool said: # repo\s+from the phone/);
-  const taskCard = await page200(`/tasks/${id}`);
-  assert.match(taskCard, /<th>Project<\/th><td>repo<\/td>/);
-  assert.match(taskCard.replace(/<[^>]+>/g, ""), /tool said: # repo\s+from the phone/);
-  assert.match(await page200("/"), new RegExp(`/chat/${id}`));
+  // what the chat and its task page read (task.get), and the sidebar's chats (task.list)
+  await page200(`/chat/${id}`);
+  await page200(`/tasks/${id}`);
+  const shown = c.replies.map((r) => rowText(r.body)).join("");
+  assert.match(shown, /add a line to the README/);
+  assert.match(shown, /tool said: # repo\s+from the phone/);
+  assert.ok((await api<{ id: string }[]>("task.list")).some((t) => t.id === id));
 
   // a second turn from the phone commits; a chat never pushes: the sync carries it to the origin
   await api("project.sync", { name: "repo" });
@@ -341,7 +347,7 @@ test("a chat opened from the phone edits a git project in place; the next sync c
 
   // closing the chat from the phone keeps the work
   await api("task.close", { id, outcome: "done" });
-  assert.match(await page200(`/chat/${id}`), /This chat is closed/);
+  assert.equal((await card(id)).task.status, "done"); // "This chat is closed."
   assert.match(readFileSync(join(repo, "README.md"), "utf8"), /from the phone/);
 });
 
@@ -383,6 +389,7 @@ interface Entry {
   status: string;
   reason: string | null;
   task_id: string;
+  decided_by: string | null;
   category: string;
 }
 const mergeOf = async (task: string) =>
@@ -400,9 +407,12 @@ test("the phone approves a Worker's merge; a chat's dirty checkout holds it unti
     30_000,
     "the merge entry",
   );
-  const list = await page200("/approvals");
-  assert.match(list, /data-call="approval\.decide"/);
-  assert.match(await page200(`/approvals/${entry.id}`), /\+1 −0 in 1 file/);
+  await page200("/approvals");
+  await page200(`/approvals/${entry.id}`);
+  const one = await api<{ summary: { added: number; removed: number; files: number } }>("approval.get", {
+    id: entry.id,
+  });
+  assert.deepEqual([one.summary.added, one.summary.removed, one.summary.files], [1, 0, 1]); // "+1 −0 in 1 file"
 
   // a chat left the checkout dirty: the approval does not land, the reason and Retry are on the phone's page
   const { id: chat } = await api<{ id: string }>("task.open", {
@@ -411,28 +421,26 @@ test("the phone approves a Worker's merge; a chat's dirty checkout holds it unti
   });
   await idle(chat);
   await api("approval.decide", { id: entry.id, decision: "approve" });
-  assert.match((await mergeOf(id))?.reason ?? "", /not clean/);
-  const held = await page200(`/approvals/${entry.id}`);
-  assert.match(held, /checkout is not clean/);
-  assert.match(held, /data-call="merge\.retry"/);
+  // "Approved, but not merged: …" and its Retry (approvals.tsx › stuck)
+  const held = await mergeOf(id);
+  assert.deepEqual([held?.status, held?.decided_by], ["approved", "owner"]);
+  assert.match(held?.reason ?? "", /checkout is not clean/);
 
   await turn(chat, "!bash cd $CWD && git checkout README.md");
   await api("merge.retry", { id: entry.id });
   assert.equal((await mergeOf(id))?.status, "landed");
   assert.equal(readFileSync(join(repo, "worker.txt"), "utf8"), "hi\n");
-  assert.match(await page200(`/approvals/${entry.id}`), /landed <code>/);
   await api("task.close", { id: chat, outcome: "done" });
   await api("task.close", { id, outcome: "done" });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// the same path in a browser: app.js, the phone's width, its cookie
+// the same path in a browser: the web UI, the phone's width, its cookie
 
-test("app.js at 390 px: pick the project, send, watch the reply arrive, the task card, a merge approved by tapping", {
-  skip: noBrowser,
-}, async (t) => {
+/** Chromium at 390 px with a virtual passkey, the listener's leaf trusted; its `ev`, `wait` and `button`. */
+async function phoneBrowser(t: { after: (f: () => unknown) => void }, dir: string) {
   const browser: Browser = await launch({
-    userDataDir: join(fake, "chromium"),
+    userDataDir: join(fake, dir),
     caCert: join(paths.ca(), "hosts", `${HOST}.crt`), // the leaf: the listener serves no chain to pin the CA by
     args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`],
   });
@@ -440,13 +448,32 @@ test("app.js at 390 px: pick the project, send, watch the reply arrive, the task
   const cdp: Cdp = await connect(browser);
   t.after(() => cdp.close());
   const session = await page(cdp);
-  for (const m of ["Page.enable", "Network.enable", "Runtime.enable"]) await cdp.send(m, {}, session);
+  for (const m of ["Page.enable", "Network.enable", "Runtime.enable", "Log.enable", "WebAuthn.enable"])
+    await cdp.send(m, {}, session);
   await cdp.send(
-    "Emulation.setDeviceMetricsOverride",
-    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    "WebAuthn.addVirtualAuthenticator",
+    {
+      options: {
+        protocol: "ctap2",
+        transport: "internal",
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    },
     session,
   );
-  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true }, session);
+  // a page that broke: an uncaught error, a console.error, the CSP refusing something (a failed request is the network's)
+  const problems: string[] = [];
+  cdp.on("Runtime.exceptionThrown", (p) => problems.push(JSON.stringify(p.exceptionDetails)));
+  cdp.on("Runtime.consoleAPICalled", (p) => {
+    if (p.type === "error") problems.push(JSON.stringify(p.args));
+  });
+  cdp.on("Log.entryAdded", (p) => {
+    const e = p.entry as { level: string; source: string; text: string };
+    if (e.level === "error" && e.source !== "network") problems.push(`${e.source}: ${e.text}`);
+  });
   const ev = async <T>(expression: string): Promise<T> => {
     const r = await cdp.send<{ result: { value: T }; exceptionDetails?: unknown }>(
       "Runtime.evaluate",
@@ -467,127 +494,117 @@ test("app.js at 390 px: pick the project, send, watch the reply arrive, the task
       await sleep(50);
     }
     await shot("timeout");
-    assert.fail(`timed out: ${expression}; body: ${await ev("document.body.innerText")}`);
+    assert.fail(`timed out: ${expression}; at ${await ev("location.href")}: ${await ev("document.body.innerText")}`);
   };
+  const button = (text: string, within = "document") =>
+    `[...${within}.querySelectorAll("button")].find((b) => b.textContent.includes(${JSON.stringify(text)}))`;
+  const at = (path: string) => `location.pathname === ${JSON.stringify(path)} && document.readyState === "complete"`;
   const go = async (path: string) => {
     await cdp.send("Page.navigate", { url: origin + path }, session);
-    await wait(
-      `location.pathname + location.search === ${JSON.stringify(path)} && document.readyState === "complete" && !!document.querySelector("#msg")`,
-    );
+    await wait(`${at(path.split("?")[0] as string)} && !!document.querySelector("#main")`);
+    await sleep(300); // its first calls answered
+    assert.equal(await ev(`document.body.innerText.includes("This page could not be shown")`), false, path);
   };
+  const text = () => ev<string>("document.body.innerText");
+  return { cdp, session, ev, wait, button, at, go, shot, text, problems };
+}
+
+test("the web UI at 390 px: pick the project, send, watch the reply arrive, approve in the chat, a merge approved by tapping", {
+  skip: noBrowser,
+}, async (t) => {
+  const { cdp, session, ev, wait, button, go, shot, text, problems } = await phoneBrowser(t, "chromium");
+  await cdp.send(
+    "Emulation.setDeviceMetricsOverride",
+    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    session,
+  );
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true }, session);
   const fits = async (what: string) => {
     const [w, inner] = await ev<[number, number]>("[document.documentElement.scrollWidth, innerWidth]");
     assert.ok(w <= inner, `${what}: ${w} px wide in ${inner}`);
   };
-
-  // webauthn.js against a virtual platform authenticator: enrol, sign out by losing the cookie, sign in
-  await cdp.send("WebAuthn.enable", {}, session);
+  // the phone's session from the first test
   await cdp.send(
-    "WebAuthn.addVirtualAuthenticator",
-    {
-      options: {
-        protocol: "ctap2",
-        transport: "internal",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    },
+    "Network.setCookie",
+    { name: "__Host-hortus", value: cookie, url: origin, path: "/", secure: true, httpOnly: true, sameSite: "Strict" },
     session,
   );
-  const rpc = rpcClient(paths.socket());
-  const { code } = (await rpc.call("enroll.code", {})) as { code: string };
-  rpc.close();
-  await go(`/enroll?code=${code}`);
-  await fits("/enroll");
-  await ev(`document.querySelector("#enroll button").click()`);
-  await wait(`!document.querySelector("#enrolled").hidden`);
-  await cdp.send("Network.clearBrowserCookies", {}, session);
-  await go("/chat");
-  await ev(`document.querySelector("#signin").click()`);
-  await wait(`!!document.querySelector("nav")`);
+  const composer = `document.querySelector("form textarea")`;
+  const say = async (message: string) => {
+    await ev(`${composer}.focus()`);
+    await cdp.send("Input.insertText", { text: message }, session);
+    await wait(`!document.querySelector('button[aria-label="Send"]').disabled`);
+    await ev(`document.querySelector('button[aria-label="Send"]').click()`);
+  };
 
-  await go("/chat");
-  await fits("/chat");
-  await shot("chat-new");
-  assert.equal(await ev(`document.querySelector("select[name=cwd]").options[2].textContent`), "notes");
-  await ev(`document.querySelector("select[name=cwd]").value = ${JSON.stringify(notes)}`);
+  await go("/");
+  await fits("/");
+  await wait(`document.querySelector("select")?.options.length === 3`);
+  assert.equal(await ev(`document.querySelector("select").options[2].textContent`), "notes");
   await ev(
-    `document.querySelector(".composer textarea").value = "!bash cd $CWD && echo three >> todo.txt && cat todo.txt"`,
+    `(() => { const s = document.querySelector("select"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, ${JSON.stringify(notes)}); s.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()`,
   );
-  await ev(`document.querySelector(".composer button").click()`);
+  await say("!bash cd $CWD && echo three >> todo.txt && cat todo.txt");
   await wait(`/^\\/chat\\/./.test(location.pathname)`);
-  await wait(`document.querySelector("#stream")?.textContent.includes("tool said: one")`);
-  await wait(`document.querySelector("#chat-status").textContent.includes("waiting")`);
+  const id = (await ev<string>("location.pathname")).split("/")[2] as string;
+  await wait(`document.body.innerText.includes("tool said: one")`);
+  await idle(id);
   await fits("the chat");
   await shot("chat");
   assert.equal(readFileSync(join(notes, "todo.txt"), "utf8"), "one\ntwo\nthree\n");
-  assert.deepEqual(await ev(`[...document.querySelectorAll("#stream .owner")].map((e) => e.textContent.slice(0, 5))`), [
-    "!bash",
-  ]);
-  const id = (await ev<string>("location.pathname")).split("/")[2] as string;
+  const owners = async () => (await card(id)).replies.filter((r) => r.body.type === "owner").length;
+  assert.equal(await owners(), 1);
 
   // a second message by the keyboard: the phone's Enter is a newline, Send sends
-  await ev(`document.querySelector(".composer textarea").focus()`);
+  await ev(`${composer}.focus()`);
   await cdp.send("Input.insertText", { text: "line one" }, session);
-  await cdp.send(
-    "Input.dispatchKeyEvent",
-    { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
-    session,
-  );
-  await cdp.send(
-    "Input.dispatchKeyEvent",
-    { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
-    session,
-  );
+  for (const type of ["keyDown", "keyUp"])
+    await cdp.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }, session);
   await sleep(300);
-  assert.equal(await ev(`document.querySelectorAll("#stream .owner").length`), 1, "Enter did not send");
-  await ev(`document.querySelector(".composer button").click()`);
-  await wait(`document.querySelectorAll("#stream .owner").length === 2`);
-  await wait(`document.querySelector("#stream").textContent.includes("echo: line one")`);
+  assert.equal(await owners(), 1, "Enter did not send");
+  await ev(`document.querySelector('button[aria-label="Send"]').click()`);
+  await wait(`document.body.innerText.includes("echo: line one")`);
+  assert.equal(await owners(), 2);
+  await idle(id);
 
-  // a stream longer than the screen: the newest line is not under the sticky composer, on load or as it arrives
-  const newestShows = `document.querySelector("#stream").lastElementChild.getBoundingClientRect().bottom <= document.querySelector(".composer").getBoundingClientRect().top + 1`;
-  await ev(`document.querySelector(".composer textarea").value = "!bash seq 1 120"`);
-  await ev(`document.querySelector(".composer button").click()`);
-  await wait(`document.querySelector("#stream").textContent.includes("tool said: 1")`);
-  await wait(`document.querySelector("#chat-status").textContent.includes("waiting")`);
-  await sleep(200);
+  // a stream longer than the screen: the newest line is not under the composer, live or after a reload
+  const newestShows = `(() => { const l = document.querySelector('[aria-live="off"]').lastElementChild.getBoundingClientRect(); return l.bottom <= document.querySelector("form").getBoundingClientRect().top + 1; })()`;
+  await say("!bash seq 1 120");
+  await wait(`document.body.innerText.includes("tool said: 1")`);
+  await idle(id);
+  await sleep(300);
   await shot("long-live");
   assert.ok(await ev(newestShows), "the newest line, live");
   await go(`/chat/${id}`);
+  await wait(`document.body.innerText.includes("tool said: 1")`);
+  await sleep(300);
   await shot("long-load");
   assert.ok(await ev(newestShows), "the newest line, after a reload");
 
-  // a gated request from that chat: its entry comes into view above the composer, one tap, the retry goes out
+  // a gated request from that chat: its entry shows above the composer, one tap, the retry goes out
   const post = `curl -s --interface "$HORTUS_RPC_LOCAL" -H "Host: slack.com" -H "Authorization: Bearer hortus-secret-post" -H "Content-Type: application/json" -X POST "$HORTUS_RPC/api/chat.postMessage" -d '{"channel":"C2","text":"from the phone"}'`;
-  await ev(`document.querySelector(".composer textarea").value = ${JSON.stringify(`!bash ${post}`)}`);
-  await ev(`document.querySelector(".composer button").click()`);
-  const approve = `document.querySelector('#approvals button[data-call="approval.decide"].ok')`;
-  await wait(`!!${approve}`);
-  await sleep(200);
+  await say(`!bash ${post}`);
+  const approve = button("Approve", `document.querySelector('[aria-label="Waiting for your approval"]')`);
+  await wait(`!!document.querySelector('[aria-label="Waiting for your approval"]') && !!${approve}`);
+  await sleep(300);
   await shot("approval");
   assert.ok(
     await ev(
-      `(() => { const r = ${approve}.getBoundingClientRect(); return r.top >= 0 && r.bottom <= document.querySelector(".composer").getBoundingClientRect().top; })()`,
+      `(() => { const r = ${approve}.getBoundingClientRect(); return r.top >= 0 && r.bottom <= document.querySelector("form").getBoundingClientRect().top; })()`,
     ),
     "the Approve button is on screen",
   );
   await ev(`${approve}.click()`);
-  await wait(`!${approve}`);
-  await wait(`document.querySelector("#chat-status").textContent.includes("waiting")`);
-  await ev(`document.querySelector(".composer textarea").value = ${JSON.stringify(`!bash ${post}`)}`);
-  await ev(`document.querySelector(".composer button").click()`);
+  await wait(`!document.querySelector('[aria-label="Waiting for your approval"]')`);
+  await idle(id);
+  await say(`!bash ${post}`);
   await until(() => slack.calls.find((c) => c.params.text === "from the phone"), 20_000, "the post");
 
-  await go("/");
-  await fits("/");
   await go(`/tasks/${id}`);
-  await fits("the task card");
-  await shot("card");
-  assert.match(await ev<string>(`document.querySelector("#card").innerText`), /Project\s+notes/);
-  assert.match(await ev<string>(`document.querySelector("#card").innerText`), /tool said: one/);
+  await fits("the task page");
+  await shot("task");
+  await wait(`document.body.innerText.includes("tool said: one")`);
+  assert.match(await text(), /notes/);
 
   const w = await worker("tapped.txt");
   const entry = await until(
@@ -601,35 +618,39 @@ test("app.js at 390 px: pick the project, send, watch the reply arrive, the task
   await go("/approvals");
   await fits("/approvals");
   await shot("approvals");
-  await ev(`document.querySelector('#a${entry.id} button[data-call="approval.decide"].ok').click()`);
-  await wait(`document.querySelector("#a${entry.id}").textContent.includes("landed")`);
+  const card$ = `document.querySelector('[aria-labelledby="ap${entry.id}"]')`;
+  await wait(`!!${card$} && !!${button("Approve and merge", card$)}`);
+  await ev(`${button("Approve and merge", card$)}.click()`);
+  // decided, it leaves Waiting for History; its own page says it merged
+  await wait(`!${card$}`);
+  await until(async () => (await mergeOf(w))?.status === "landed", 20_000, "landed");
+  await go(`/approvals/${entry.id}`);
+  await wait(`document.body.innerText.includes("Merged as")`);
   await shot("landed");
   assert.equal(readFileSync(join(repo, "tapped.txt"), "utf8"), "hi\n");
+  assert.deepEqual(problems, []);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// HORTUS_WEB=1: the new UI on the same home, its passkeys and sessions; before sign-in, its shell and nothing else
+// before sign-in: the web UI's shell and nothing else
 
-const dist = new URL("../web/", import.meta.url);
 const enrollCode = async () => {
   const rpc = rpcClient(paths.socket());
   const { code } = (await rpc.call("enroll.code", {})) as { code: string };
   rpc.close();
   return code;
 };
-const toLogin = (r: Res, what: string) => {
+/** Sent to sign in: a 302 to `/login`, with `next` when the target is a plain path of this origin, and no body. */
+const toLogin = (r: Res, what: string, next?: string) => {
   assert.equal(r.status, 302, `${what}: ${r.status} ${r.body.slice(0, 80)}`);
-  assert.equal(r.headers.location, "/login", what);
+  assert.equal(r.headers.location, next ? `/login?next=${encodeURIComponent(next)}` : "/login", what);
   assert.equal(r.body, "", what);
 };
 
-test("HORTUS_WEB=1 without a session: index.html at /login and a live /enroll, each asset at its exact path, the rest redirects or 401s", {
+test("without a session: index.html at /login and a live /enroll, each asset at its exact path, the rest redirects or is refused", {
   skip,
 }, async () => {
-  if (daemon) await stopped(daemon);
   cookie = "";
-  await boot(true);
-  const index = readFileSync(new URL("index.html", dist), "utf8");
   const files = readdirSync(new URL("assets/", dist));
   assert.ok(files.length);
 
@@ -638,56 +659,60 @@ test("HORTUS_WEB=1 without a session: index.html at /login and a live /enroll, e
   assert.equal(login.body, index);
   assert.match(String(login.headers["content-security-policy"]), /script-src 'self'/);
   assert.equal((await ask("/login", "HEAD", NAV)).status, 200);
+  // what the gate sends a deep link to; SignIn checks `next` again before it goes there
+  assert.equal((await ask("/login?next=%2Fapprovals%2F1", "GET", NAV)).body, index);
+  assert.equal((await ask("/login?next=//evil.test", "GET", NAV)).body, index);
   for (const f of files) {
     const a = await ask(`/assets/${f}`, "GET", {});
     assert.equal(a.status, 200, f);
     assert.equal(a.body, readFileSync(new URL(`assets/${f}`, dist), "utf8"));
     assert.equal((await ask(`/assets/${f}`, "HEAD", {})).status, 200);
   }
-  // the old login page's own files, public as before
-  assert.equal((await ask("/static/webauthn.js", "GET", {})).status, 200);
 
   const [f] = files as [string];
-  const redirected = [
-    "/",
-    "/tasks",
-    "/tasks/x/log",
-    "/approvals/1/diff",
-    "/approvals/1/login",
-    "/dof/slack/x.md",
-    "/settings",
-    "/api/task.list",
-    "/static/app.js",
-    "/index.html",
-    "/login?next=/tasks",
-    "/login/",
-    "//login",
-    "/LOGIN",
-    "/%6Cogin",
-    "/assets",
-    "/assets/",
-    "/assets/nope.js",
-    `/assets/${f}?v=1`,
-    `/assets/${f}/`,
-    `/assets/${f}%00`,
-    `//assets/${f}`,
-    `///assets/${f}`,
-    `/x/../assets/${f}`,
-    `/assets/./${f}`,
-    `/assets%2F${f}`,
-    `/assets/%2e%2e/index.html`,
-    "/assets/..%2F..%2Fhortusd.json",
-    "/enroll",
-    "/enroll?code=nope",
+  // [target, the `next` it carries]: a plain path of this origin, but never the sign-in pages or another host
+  const redirected: [string, string?][] = [
+    ["/"],
+    ["/tasks", "/tasks"],
+    ["/tasks/x/log", "/tasks/x/log"],
+    ["/approvals/1/diff", "/approvals/1/diff"],
+    ["/approvals/1/login", "/approvals/1/login"],
+    ["/dof/slack/x.md", "/dof/slack/x.md"],
+    ["/search?q=a%20b", "/search?q=a%20b"],
+    ["/settings", "/settings"],
+    ["/api/task.list", "/api/task.list"],
+    ["/static/webauthn.js", "/static/webauthn.js"],
+    ["/index.html", "/index.html"],
+    ["/login?next=/tasks&x=1"],
+    ["/login/", "/login/"],
+    ["//login"],
+    ["/LOGIN", "/LOGIN"],
+    ["/%6Cogin", "/%6Cogin"],
+    ["/assets", "/assets"],
+    ["/assets/", "/assets/"],
+    ["/assets/nope.js", "/assets/nope.js"],
+    [`/assets/${f}?v=1`, `/assets/${f}?v=1`],
+    [`/assets/${f}/`, `/assets/${f}/`],
+    [`/assets/${f}%00`, `/assets/${f}%00`],
+    [`//assets/${f}`],
+    [`///assets/${f}`],
+    [`/x/../assets/${f}`, `/x/../assets/${f}`],
+    [`/assets/./${f}`, `/assets/./${f}`],
+    [`/assets%2F${f}`, `/assets%2F${f}`],
+    ["/assets/%2e%2e/index.html", "/assets/%2e%2e/index.html"],
+    ["/assets/..%2F..%2Fhortusd.json", "/assets/..%2F..%2Fhortusd.json"],
+    ["//evil.test/tasks"],
+    ["/\\evil.test"],
+    ["/enroll"],
+    ["/enroll?code=nope"],
   ];
-  for (const p of redirected) {
-    toLogin(await ask(p, "GET", NAV), `GET ${p}`);
-    toLogin(await ask(p, "HEAD", NAV), `HEAD ${p}`);
+  for (const [p, next] of redirected) {
+    toLogin(await ask(p, "GET", NAV), `GET ${p}`, next);
+    toLogin(await ask(p, "HEAD", NAV), `HEAD ${p}`, next);
   }
   for (const p of ["/api/task.list", "/api/remote.status", "/login", `/assets/${f}`, "/tasks"]) {
     const r = await ask(p, "POST", { ...FETCH, origin }, "{}");
-    assert.equal(r.status, 401, `POST ${p}`);
-    assert.ok(!r.body.includes('id="root"'), `POST ${p}`);
+    assert.deepEqual([`POST ${p}`, r.status, r.body], [`POST ${p}`, 401, "sign in first"]);
   }
   for (const p of ["/events/tasks,approvals,settings", "/events/login?id=1", "/events/chat?task=x"])
     assert.equal(
@@ -695,12 +720,12 @@ test("HORTUS_WEB=1 without a session: index.html at /login and a live /enroll, e
       401,
       p,
     );
-  // other methods: as without HORTUS_WEB (the old login page, no data, not the shell)
-  for (const m of ["PUT", "DELETE", "OPTIONS", "PATCH"]) {
-    const r = await ask("/login", m, {});
-    assert.ok(!r.body.includes('id="root"'), m);
-    assert.ok(r.body.includes("Sign in with passkey"), m);
-  }
+  // other methods: refused, no data, not the shell
+  for (const m of ["PUT", "DELETE", "OPTIONS", "PATCH"])
+    for (const p of ["/login", "/tasks", `/assets/${f}`]) {
+      const r = await ask(p, m, {});
+      assert.deepEqual([`${m} ${p}`, r.status, r.body], [`${m} ${p}`, 405, "method not allowed"]);
+    }
 
   // a live code gets the shell; a used one and a bad one the same redirect, and the same refusal from the RPC
   const code = await enrollCode();
@@ -733,9 +758,7 @@ test("HORTUS_WEB=1 without a session: index.html at /login and a live /enroll, e
   assert.equal((await phone("/login")).body, index);
 });
 
-test("HORTUS_WEB=1 signed in: the old CSRF and Host guards, and enrolment refused over the remote listener", {
-  skip,
-}, async () => {
+test("signed in: the CSRF and Host guards, and enrolment refused over the remote listener", { skip }, async () => {
   assert.deepEqual(await api("remote.status"), { remote: true, listening: true, url: origin, cert: "the hortus CA" });
   await assert.rejects(api("enroll.code"), /made at the machine only/);
   const post = (headers: Record<string, string>) => ask("/api/remote.status", "POST", headers, "{}");
@@ -748,53 +771,10 @@ test("HORTUS_WEB=1 signed in: the old CSRF and Host guards, and enrolment refuse
   assert.equal((await ask("/tasks", "GET", { ...NAV, host: "127.0.0.1" })).status, 421);
 });
 
-test("HORTUS_WEB=1 in Chromium: Enroll and SignIn with a virtual passkey; a revoked session's page goes to /login", {
+test("in Chromium: Enroll, then a DM's deep link signs in and lands there; a revoked session's page goes to /login", {
   skip: noBrowser,
 }, async (t) => {
-  const browser: Browser = await launch({
-    userDataDir: join(fake, "chromium-web"),
-    caCert: join(paths.ca(), "hosts", `${HOST}.crt`),
-    args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`],
-  });
-  t.after(() => browser.close());
-  const cdp: Cdp = await connect(browser);
-  t.after(() => cdp.close());
-  const session = await page(cdp);
-  for (const m of ["Page.enable", "Network.enable", "Runtime.enable", "WebAuthn.enable"])
-    await cdp.send(m, {}, session);
-  await cdp.send(
-    "WebAuthn.addVirtualAuthenticator",
-    {
-      options: {
-        protocol: "ctap2",
-        transport: "internal",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    },
-    session,
-  );
-  const ev = async <T>(expression: string): Promise<T> => {
-    const r = await cdp.send<{ result: { value: T }; exceptionDetails?: unknown }>(
-      "Runtime.evaluate",
-      { expression, awaitPromise: true, returnByValue: true },
-      session,
-    );
-    assert.equal(r.exceptionDetails, undefined, expression);
-    return r.result.value;
-  };
-  const wait = async (expression: string, ms = 20_000) => {
-    for (let i = 0; i < ms; i += 50) {
-      if (await ev(expression).catch(() => false)) return;
-      await sleep(50);
-    }
-    assert.fail(`timed out: ${expression}; at ${await ev("location.href")}: ${await ev("document.body.innerText")}`);
-  };
-  const button = (text: string) =>
-    `[...document.querySelectorAll("button")].find((b) => b.textContent.includes(${JSON.stringify(text)}))`;
-  const at = (path: string) => `location.pathname === ${JSON.stringify(path)} && document.readyState === "complete"`;
+  const { cdp, session, ev, wait, button, at, problems } = await phoneBrowser(t, "chromium-web");
 
   // a bad code: the sign-in page
   await cdp.send("Page.navigate", { url: `${origin}/enroll?code=nope` }, session);
@@ -806,17 +786,34 @@ test("HORTUS_WEB=1 in Chromium: Enroll and SignIn with a virtual passkey; a revo
   await ev(`${button("Create passkey")}.click()`);
   await wait(`document.body.innerText.includes("This device can now sign in")`);
 
+  // the owner.notify DM's link, opened signed out: sign-in, then that page
   await cdp.send("Network.clearBrowserCookies", {}, session);
-  await cdp.send("Page.navigate", { url: `${origin}/tasks` }, session);
-  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`);
+  await cdp.send("Page.navigate", { url: `${origin}/approvals?x=1` }, session);
+  await wait(
+    `${at("/login")} && location.search === "?next=%2Fapprovals%3Fx%3D1" && !!${button("Sign in with a passkey")}`,
+  );
   await ev(`${button("Sign in with a passkey")}.click()`);
-  await wait(`${at("/")} && !!document.querySelector("#main")`);
+  await wait(`${at("/approvals")} && location.search === "?x=1" && !!document.querySelector("#main")`);
   assert.ok(!(await ev<boolean>(`!!${button("Sign in with a passkey")}`)));
 
-  // the page's stream is cut with the session; its reopen gets a 401, the probe after it goes to sign-in
+  // a forged `next` goes nowhere but home
+  await cdp.send("Page.navigate", { url: `${origin}/login?next=//evil.test/x` }, session);
+  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`);
+  await ev(`${button("Sign in with a passkey")}.click()`);
+  await wait(
+    `${at("/")} && location.host === ${JSON.stringify(new URL(origin).host)} && !!document.querySelector("#main")`,
+  );
+
+  // the page's stream is cut with the session; its reopen gets a 401, the probe after it goes to sign-in, and back
+  await cdp.send("Page.navigate", { url: `${origin}/schedules` }, session);
+  await wait(`${at("/schedules")} && !!document.querySelector("#main")`);
   const rpc = rpcClient(paths.socket());
   for (const s of (await rpc.call("session.list", {})) as { id: string; device: string }[])
     if (s.device !== "web") await rpc.call("session.revoke", { id: s.id });
   rpc.close();
-  await wait(`${at("/login")} && !!${button("Sign in with a passkey")}`, 15_000);
+  await wait(
+    `${at("/login")} && location.search === "?next=%2Fschedules" && !!${button("Sign in with a passkey")}`,
+    15_000,
+  );
+  assert.deepEqual(problems, []);
 });

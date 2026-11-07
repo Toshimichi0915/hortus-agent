@@ -1,6 +1,6 @@
 /**
  * The remote console listener: HTTPS on `console.listen` with `console.tls` or a leaf minted
- * from the hortus CA for `console.host`, the same pages behind a passkey login. `gate()` runs inside the shared
+ * from the hortus CA for `console.host`, the same console behind a passkey login. `gate()` runs inside the shared
  * request handler (server.ts) after the Host and Sec-Fetch-Site guards; it answers the login, enrolment and WebAuthn
  * requests itself and lets a request through only with a live `__Host-hortus` session.
  */
@@ -27,9 +27,8 @@ import { remoteConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
 import { hostContext, validHost } from "../vault/ca.ts";
 import { bus } from "./events.ts";
-import { parse } from "./html.ts";
-import { enrollPage } from "./pages/enroll.ts";
-import { loginPage } from "./pages/login.ts";
+import { loginHref } from "./next.ts";
+import { parse } from "./rows.ts";
 import { HEADERS, handler, json, readBody, send, type WebApp } from "./server.ts";
 
 export const COOKIE = "__Host-hortus";
@@ -195,21 +194,20 @@ function login(db: DatabaseSync, req: IncomingMessage, res: ServerResponse, devi
 // ---------------------------------------------------------------------------------------------------------------------
 // the gate
 
-const PUBLIC_STATIC = /^\/static\/(?:app\.css|webauthn\.js)$/;
-
 /**
- * Called for every remote request. Returns the session hash to go on with (`""` for the login page's static files),
- * or `undefined` when it has answered the request itself. With `web` (HORTUS_WEB=1), a request without a session gets
- * no more than the new UI's shell: `index.html` at `/login` and at `/enroll` with a live code, each of its assets at
- * exactly its own path (the raw request target, so no `..`, `//`, `%2F` or query string reaches a match), and a redirect
- * to `/login` for any other GET or HEAD. POSTs and `/events/` answer as without it.
+ * Called for every remote request. Returns the session hash to go on with (`""` for the shell's assets), or `undefined`
+ * when it has answered the request itself. A request without a session gets no more than the web UI's shell:
+ * `index.html` at `/login` (`?next=` too) and at `/enroll` with a live code, each of its assets at exactly its own path
+ * (the raw request target, so no `..`, `//`, `%2F` or query string reaches a match), and a redirect to `/login` for any
+ * other GET or HEAD, carrying the target in `?next=` when it is a plain path of this origin (next.ts). A POST and
+ * `/events/` get a 401, any other method a 405.
  */
 export async function gate(
   ctx: Ctx,
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-  web?: WebApp,
+  web: WebApp,
 ): Promise<string | undefined> {
   const s = state;
   const path = url.pathname;
@@ -223,33 +221,30 @@ export async function gate(
   }
   if (req.method === "GET" && path === "/enroll") {
     const code = url.searchParams.get("code") ?? "";
-    const live = liveCode(ctx.db, code);
-    // a bad, used or expired code: the same redirect, as it is the same login page without `web`
-    if (web && live) send(res, 200, "text/html", web.index);
-    else if (web) toLogin(res);
-    else send(res, 200, "text/html", live ? enrollPage(s.host, code) : loginPage(s.host));
+    // a bad, used or expired code: the same redirect as anything else
+    if (liveCode(ctx.db, code)) send(res, 200, "text/html", web.index);
+    else toLogin(res, "/");
     return undefined;
   }
   const session = lookup(ctx.db, req);
   if (session) return session;
-  const read = req.method === "GET" || req.method === "HEAD";
-  if (read && PUBLIC_STATIC.test(path)) return "";
-  if (web && read && !path.startsWith("/events/")) {
-    req.resume();
+  req.resume();
+  if ((req.method === "GET" || req.method === "HEAD") && !path.startsWith("/events/")) {
     // "": handle() serves it from the same map, by `url.pathname`, which equals a raw target that is a key
     if (web.assets.has(req.url ?? "")) return "";
-    if (req.url === "/login") send(res, 200, "text/html", web.index);
-    else toLogin(res);
+    // the shell is the same bytes whatever `next` says: SignIn checks it before going there
+    if (/^\/login(?:\?next=[^&#]*)?$/.test(req.url ?? "")) send(res, 200, "text/html", web.index);
+    else toLogin(res, req.url);
     return undefined;
   }
-  req.resume();
-  const denied = req.method === "POST" || path.startsWith("/events/");
-  send(res, denied ? 401 : 200, "text/html", loginPage(s.host));
+  if (req.method === "POST" || path.startsWith("/events/")) send(res, 401, "text/plain", "sign in first");
+  else send(res, 405, "text/plain", "method not allowed");
   return undefined;
 }
 
-/** A fixed target: nothing of the request goes into it. */
-const toLogin = (res: ServerResponse) => res.writeHead(302, { ...HEADERS, Location: "/login" }).end();
+/** Of the request, only its raw target goes into the redirect, and only when `safeNext` passes it. */
+const toLogin = (res: ServerResponse, target: string | undefined) =>
+  res.writeHead(302, { ...HEADERS, Location: loginHref(target) }).end();
 
 // ---------------------------------------------------------------------------------------------------------------------
 // WebAuthn

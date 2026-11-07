@@ -24,6 +24,7 @@ import { openDb } from "../db.ts";
 import * as paths from "../paths.ts";
 import { rpcClient } from "../rpc.ts";
 import { freePort, stopped, tempDir, until } from "../test/until.ts";
+import { GOES_ON } from "../types.ts";
 
 const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "true"]).status === 0;
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
@@ -398,8 +399,7 @@ test("a Worker that dies before any model call: waiting with the error on the ca
     const again = await card(id);
     assert.equal(again.task.status, "waiting");
     assert.equal(again.replies.filter((r) => r.body.text === "started").length, 1);
-    const page = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
-    assert.match(page, /Unknown provider type/);
+    assert.match(again.task.error ?? "", /Unknown provider type/); // the task page's error
   } finally {
     await api("settings.set", { config });
   }
@@ -413,10 +413,9 @@ test("a Worker whose model calls keep failing gives up once: the error on the ca
   const c = await card(id);
   assert.match(c.task.error ?? "", /^failed: .*fake failure/);
   assert.equal(reqs(id).length, 4, "four tries, then it gives up");
-  const page = await (await fetch(`http://127.0.0.1:${port}/chat/${id}`)).text();
-  assert.match(page, /fake failure/);
-  const taskPage = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
-  assert.match(taskPage, /a message from you starts it again/);
+  // the chat and task page say it, and that a message starts it again (not a raise: tasks.tsx › TaskProblem)
+  assert.equal(c.task.status, "waiting");
+  assert.ok(!GOES_ON.test(c.task.error ?? ""));
   await api("task.send", { id, text: "again" });
   await until(() => reqs(id).length > 4, 15_000, "the owner's message starts it again");
 });
@@ -526,8 +525,11 @@ test("a restart and a close are no failures: no error on the card; an exhausted 
     "UPDATE tasks SET error = 'budget_exceeded: the VM was stopped after 1.00 h (budget hours)' WHERE id = ?",
   ).run(id);
   db.close();
-  const page = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
-  assert.match(page, /waiting: raise its budget, then a message from you starts it again/);
+  // "Raise its budget, then a message from you starts it again": not one that goes on at the raise alone
+  const over = await card(id);
+  assert.equal(over.task.status, "waiting");
+  assert.match(over.task.error ?? "", /^budget_exceeded/);
+  assert.ok(!GOES_ON.test(over.task.error ?? ""));
 });
 
 test("recovery after SIGKILL: running chat → waiting, unattended → queued and resumes with its context", {

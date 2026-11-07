@@ -1,6 +1,6 @@
 /**
- * The console listener: guards, then pages (GET), `POST /api/<method>` (the RPC router, role owner), SSE under
- * `/events/<name>`, and `/static/*`; with `HORTUS_WEB=1`, the new UI in place of the pages. A method that streams
+ * The console listener: guards, then `POST /api/<method>` (the RPC router, role owner), SSE under `/events/<name>`, two
+ * plain-text views (a session log, a whole diff), and the web UI (dist/web) for any other GET. A method that streams
  * (task.stream) answers 400 here: the web UI reads the same rows over SSE (`/events/chat`), the CLI over the socket.
  */
 import { readdirSync, readFileSync } from "node:fs";
@@ -11,43 +11,15 @@ import type { Ctx } from "../ctx.ts";
 import { logger } from "../log.ts";
 import { call, isStream } from "../rpc.ts";
 import { type Caller, RpcError } from "../types.ts";
-import { bus } from "./events.ts";
-import { h, layout, line, type Page, tryCall } from "./html.ts";
 import { watch as watchLogin } from "../browser/login-view.ts";
-import { approvals } from "./pages/approvals.ts";
-import { chat, lastReplies, type ReplyRow, repliesAfter, replyLine } from "./pages/chat.ts";
-import { credentials } from "./pages/credentials.ts";
-import { dofFile } from "./pages/dof.ts";
-import { loginView } from "./pages/login-view.ts";
-import { projects } from "./pages/projects.ts";
-import { schedules } from "./pages/schedules.ts";
-import { search } from "./pages/search.ts";
-import { settings } from "./pages/settings.ts";
-import { sources } from "./pages/sources.ts";
-import { task } from "./pages/task.ts";
-import { tasks } from "./pages/tasks.ts";
+import { bus } from "./events.ts";
 import { gate } from "./remote.ts";
+import { lastReplies, line, type ReplyRow, repliesAfter } from "./rows.ts";
 
 const log = logger("console");
 export const MAX_BODY = 1024 * 1024;
 /** Tests shorten it. */
 export const sse = { keepaliveMs: 15_000 };
-
-export const routes: [RegExp, Page][] = [
-  // `/tasks` too: the failure DMs link it (hortusd.ts)
-  [/^\/(?:tasks)?$/, tasks],
-  [/^\/tasks\/([^/]+)$/, task],
-  [/^\/chat(?:\/([^/]+))?$/, chat],
-  [/^\/approvals(?:\/(\d+))?$/, approvals],
-  [/^\/approvals\/(\d+)\/login$/, loginView],
-  [/^\/credentials$/, credentials],
-  [/^\/projects$/, projects],
-  [/^\/settings$/, settings],
-  [/^\/sources$/, sources],
-  [/^\/search$/, search],
-  [/^\/dof\/([^/]+)\/(.+)$/, dofFile],
-  [/^\/schedules$/, schedules],
-];
 
 export const HEADERS = {
   "Content-Security-Policy":
@@ -60,13 +32,6 @@ export const HEADERS = {
 
 const STATUS: Record<RpcError["code"], number> = { invalid: 400, forbidden: 403, not_found: 404, failed: 500 };
 
-const staticDir = new URL("./static/", import.meta.url);
-const TYPES: Record<string, string> = {
-  "app.js": "text/javascript",
-  "app.css": "text/css",
-  "webauthn.js": "text/javascript",
-};
-
 const webDir = new URL("../web/", import.meta.url);
 const ASSET_TYPES: Record<string, string> = { ".js": "text/javascript", ".css": "text/css" };
 
@@ -75,9 +40,8 @@ export interface WebApp {
   assets: Map<string, Buffer>;
 }
 
-/** `HORTUS_WEB=1`: dist/web, read once here. A request only looks its path up in this list, so none reaches the disk. */
-function webApp(): WebApp | undefined {
-  if (process.env.HORTUS_WEB !== "1") return undefined;
+/** dist/web, read once here. A request only looks its path up in this list, so none reaches the disk. */
+function webApp(): WebApp {
   const dir = new URL("assets/", webDir);
   const files = readdirSync(dir).map((f): [string, Buffer] => [`/assets/${f}`, readFileSync(new URL(f, dir))]);
   return { index: readFileSync(new URL("index.html", webDir), "utf8"), assets: new Map(files) };
@@ -154,11 +118,11 @@ function openStream(ctx: Ctx, res: ServerResponse, session: string | undefined):
 }
 
 /**
- * A `chat` event: `{ seq, html, body, created }`, `html` for the old console. `body` nests one level deeper here than in
- * `line`'s own check, so a row at the very edge of the stack can still throw: then it goes as its text too.
+ * A `chat` event: `{ seq, body, created }`. `body` nests one level deeper here than in `line`'s own check, so a row at
+ * the very edge of the stack can still throw: then it goes as its text too.
  */
 function chatEvent(r: ReplyRow): string {
-  const row = { seq: r.seq, html: replyLine(r).html, created: r.created };
+  const row = { seq: r.seq, created: r.created };
   try {
     return JSON.stringify({ ...row, body: line(r.body) });
   } catch {
@@ -236,11 +200,29 @@ function loginEvents(ctx: Ctx, id: number, res: ServerResponse, session?: string
   });
 }
 
+/** A plain-text view of an RPC's answer; its error as a 404. */
+async function plain(
+  res: ServerResponse,
+  method: string,
+  input: unknown,
+  caller: Caller,
+  text: (v: unknown) => string,
+) {
+  try {
+    send(res, 200, "text/plain", text(await call(method, input, caller)));
+  } catch (e) {
+    send(res, 404, "text/plain", `${method}: ${e instanceof RpcError ? e.message : String(e)}`);
+  }
+}
+
+const ENT: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ENT[c] as string);
+
 async function handle(
   ctx: Ctx,
   port: () => number,
   remote: boolean,
-  web: WebApp | undefined,
+  web: WebApp,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -257,7 +239,12 @@ async function handle(
     // the DM's link clicked in a messenger's web app: nothing of the console crosses, but a bare 403 was the end of it,
     // and this one link, followed from here, is same-origin
     if (req.method === "GET" && req.headers["sec-fetch-mode"] === "navigate")
-      return send(res, 403, "text/html", String(h`<!doctype html><title>hortus</title><p><a href="${path + url.search}">Open this page of the console</a></p>`));
+      return send(
+        res,
+        403,
+        "text/html",
+        `<!doctype html><title>hortus</title><p><a href="${esc(path + url.search)}">Open this page of the console</a></p>`,
+      );
     return send(res, 403, "text/plain", "cross-site");
   }
 
@@ -283,32 +270,18 @@ async function handle(
 
   const ev = /^\/events\/([\w,]+)$/.exec(path);
   if (ev) return events(ctx, ev[1] as string, url.searchParams, req, res, caller.session);
-  const st = /^\/static\/(app\.(?:js|css)|webauthn\.js)$/.exec(path);
-  if (st) {
-    const file = st[1] as string;
-    return send(res, 200, TYPES[file] as string, readFileSync(new URL(file, staticDir), "utf8"));
-  }
+  // the session log (the chat's older lines) and a diff past the 64 KB a merge entry carries
   const logm = /^\/tasks\/([^/]+)\/log$/.exec(path);
-  if (logm) {
-    const r = await tryCall<string | { text?: string }>("task.log", { id: logm[1] });
-    if (!r.ok) return send(res, 404, "text/plain", r.error);
-    return send(res, 200, "text/plain", typeof r.value === "string" ? r.value : (r.value?.text ?? ""));
-  }
+  if (logm)
+    return plain(res, "task.log", { id: logm[1] }, caller, (v) =>
+      typeof v === "string" ? v : ((v as { text?: string } | null)?.text ?? ""),
+    );
   const diffm = /^\/approvals\/(\d+)\/diff$/.exec(path);
-  if (diffm) {
-    const r = await tryCall<string>("merge.diff", { id: Number(diffm[1]) });
-    return r.ok ? send(res, 200, "text/plain", r.value) : send(res, 404, "text/plain", r.error);
-  }
-  if (web && !/^\/(?:api|events)(?:\/|$)/.test(path)) {
-    const asset = web.assets.get(path);
-    if (!asset) return send(res, 200, "text/html", web.index);
-    return send(res, 200, ASSET_TYPES[extname(path)] ?? "application/octet-stream", asset);
-  }
-  for (const [re, page] of routes) {
-    const m = re.exec(path);
-    if (m) return send(res, 200, "text/html", await page(ctx, { m: [...m], q: url.searchParams, caller }));
-  }
-  send(res, 404, "text/html", layout(ctx, "", "Not found", h`<p>No page at <code>${path}</code>.</p>`));
+  if (diffm) return plain(res, "merge.diff", { id: Number(diffm[1]) }, caller, String);
+  if (/^\/(?:api|events)(?:\/|$)/.test(path)) return send(res, 404, "text/plain", "not found");
+  const asset = web.assets.get(path);
+  if (!asset) return send(res, 200, "text/html", web.index);
+  send(res, 200, ASSET_TYPES[extname(path)] ?? "application/octet-stream", asset);
 }
 
 export interface Console {

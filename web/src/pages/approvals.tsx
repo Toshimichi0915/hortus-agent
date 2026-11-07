@@ -26,6 +26,7 @@ import {
   Icon,
   type IconName,
   Link,
+  navigate,
   Page,
   Pager,
   Pill,
@@ -237,6 +238,8 @@ function MergeView({ id, s, full }: { id: number; s: Record<string, unknown>; fu
   const [whole, setWhole] = useState<string>();
   const patch = whole ?? str(s.patch);
   const lines = patch.split("\n");
+  // approval.list's excerpt: its first 40 lines, and how many there are; the entry's page has the rest
+  const total = Number(s.cut ?? lines.length);
   const [all, setAll] = useState(!!full);
   // the entry keeps the first 64 KB: an owner approves what they can read
   const [load, loading] = useAction(async () => setWhole(await call<string>("merge.diff", { id })));
@@ -257,13 +260,13 @@ function MergeView({ id, s, full }: { id: number; s: Record<string, unknown>; fu
         </span>
       </p>
       {patch && <CodeBlock code={all ? patch : lines.slice(0, 24).join("\n")} lang="diff" />}
-      {!all && lines.length > 24 && (
+      {!all && total > 24 && (
         <button
           type="button"
           className="inline-flex w-fit items-center gap-1.5 text-[13px] font-medium text-brand-text hover:underline"
-          onClick={() => setAll(true)}
+          onClick={() => (s.cut ? navigate(`/approvals/${id}`) : setAll(true))}
         >
-          Show the whole diff ({lines.length} lines)
+          Show the whole diff ({total} lines)
         </button>
       )}
       {all && !!s.truncated && whole === undefined && (
@@ -440,6 +443,10 @@ const TONE = {
 
 const DECIDED: Record<Exclude<ApprovalStatus, "pending">, { icon: IconName; tone: keyof typeof TONE }> = {
   approved: { icon: "check", tone: "ok" },
+  // a judge's allow (gate.ts), a one-time approval its retry used, a transform being installed (submit.ts)
+  allowed: { icon: "scale", tone: "ok" },
+  used: { icon: "check", tone: "ok" },
+  installing: { icon: "clock", tone: "neutral" },
   landed: { icon: "merge", tone: "ok" },
   rejected: { icon: "x", tone: "danger" },
   expired: { icon: "clock", tone: "neutral" },
@@ -449,6 +456,9 @@ const DECIDED: Record<Exclude<ApprovalStatus, "pending">, { icon: IconName; tone
 function decisionText(a: Approval): string {
   if (a.status === "landed") return `Merged as ${str(a.summary.sha).slice(0, 7)}`;
   if (a.status === "approved") return a.decided_by === "judge" ? "Allowed by the judge" : "Approved by you";
+  if (a.status === "allowed") return "Allowed by the judge";
+  if (a.status === "used") return a.decided_by === "judge" ? "Allowed by the judge, used" : "Approved by you, used";
+  if (a.status === "installing") return "Approved, installing";
   if (a.status === "rejected") return a.decided_by === "owner" ? "Rejected by you" : "Rejected";
   if (a.status === "expired") return "Expired";
   return "Replaced";

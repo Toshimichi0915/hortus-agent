@@ -315,8 +315,9 @@ test("the owner's DM → one batch → task_create on project foo; the tool set;
   assert.ok(
     db((d) => d.prepare("SELECT 1 FROM task_refs WHERE ref = ? AND task_id = ?").get(`slack:D1:${dm.ts}`, fooTask)),
   );
-  const page = await (await fetch(`http://127.0.0.1:${port}/tasks/${fooTask}`)).text();
-  assert.match(page, /<th>Origin<\/th><td>slack · channel D1 · author U1/);
+  // the task page's Origin
+  const { origin } = await api<{ origin?: Record<string, unknown> }>("task.get", { id: fooTask });
+  assert.deepEqual([origin?.dof, origin?.channel, origin?.author], ["slack", "D1", "U1"]);
   // the batch directory is gone and the Worker ran (the planner row was transient)
   assert.ok(!existsSync(paths.task(b)));
   await until(() => reqs(fooTask).length > 0, 15_000, "the Worker started");
@@ -396,8 +397,9 @@ test("untrusted: task_create refused → ignored; a stranger in the task's threa
     db((d) => taintOf(d, id, { dofs: { slack: { type: "slack", owner: "U1" } } })),
     [`created from a batch with untrusted events (${b})`],
   );
-  const card = await (await fetch(`http://127.0.0.1:${port}/tasks/${id}`)).text();
-  assert.match(card, /<th>Tainted<\/th><td class="untrusted">created from a batch with untrusted events/);
+  // what the task card shows
+  const card = await api<{ tainted: string[] }>("task.get", { id });
+  assert.match(card.tainted.join("; "), /created from a batch with untrusted events/);
   assert.deepEqual(
     db((d) => taintOf(d, fooTask, { dofs: { slack: { type: "slack", owner: "U1" } } })),
     [],
@@ -447,8 +449,8 @@ test("scope.dofs: task_create validates it; the Worker reads only those DOFs; on
     [],
     "the same owner's DM, no DOF to read",
   );
-  const card = await (await fetch(`http://127.0.0.1:${port}/tasks/${A}`)).text();
-  assert.match(card, /<th>Tainted<\/th><td class="untrusted">can read slack, which holds untrusted authors/);
+  const card = await api<{ tainted: string[] }>("task.get", { id: A });
+  assert.match(card.tainted.join("; "), /can read slack, which holds untrusted authors/);
 });
 
 test("injection: a stranger's fence-breaking text gets no credentialed task, stays quoted for the Worker, is not laundered", {
@@ -958,11 +960,11 @@ test("system prompt byte-identical across batches; the user message differs; Sou
   assert.equal(hash(reqs(a)[0]?.system ?? "a"), hash(reqs(b)[0]?.system ?? "b"));
   assert.notEqual(batchText(a), batchText(b));
   assert.match(reqs(a)[0]?.system ?? "", /^You are the hortus Planner\./);
-  const page = await (await fetch(`http://127.0.0.1:${port}/sources`)).text();
-  assert.match(
-    page,
-    /<h2>Planner<\/h2><p>last batch <time[^>]*>[^<]+<\/time> · events routed today \d+ · tokens today [\d,]+ \/ 5,000,000/,
-  );
+  // Settings › Planner: the last batch, what it routed today and its tokens against the cap
+  const ps = await api<{ last: string | null; routed: number; tokens: number; cap: number }>("planner.status");
+  assert.ok(ps.last && Date.parse(ps.last) > 0);
+  assert.ok(Number.isInteger(ps.routed) && Number.isInteger(ps.tokens));
+  assert.equal(ps.cap, 5_000_000);
 });
 
 test("planner RPCs from a worker-role address → forbidden", { skip }, async () => {
@@ -1032,7 +1034,9 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
   }
 });
 
-test("a batch a guard skipped runs on the Settings save that lifts it: nothing else would wake it", { skip }, async () => {
+test("a batch a guard skipped runs on the Settings save that lifts it: nothing else would wake it", {
+  skip,
+}, async () => {
   planner(`export default ({ n, events }) => n === 0
     ? { usage: { input: 1500, output: 0 }, calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
     : { text: "ok" };`);
@@ -1040,7 +1044,11 @@ test("a batch a guard skipped runs on the Settings save that lifts it: nothing e
     c.planner = { ...c.planner, daily_tokens: 1000 };
   });
   try {
-    db((d) => d.prepare("INSERT INTO planner_usage(day, tokens) VALUES (?, 5000) ON CONFLICT(day) DO UPDATE SET tokens = 5000").run(new Date().toISOString().slice(0, 10)));
+    db((d) =>
+      d
+        .prepare("INSERT INTO planner_usage(day, tokens) VALUES (?, 5000) ON CONFLICT(day) DO UPDATE SET tokens = 5000")
+        .run(new Date().toISOString().slice(0, 10)),
+    );
     let count = batches().length;
     slack.post("C1", { user: "U1", text: "held back" });
     await waitEvent("held back");
@@ -1246,7 +1254,9 @@ test("a Planner batch that dies once: run again, the event routed, no DM", { ski
   assert.equal(failureDms().length, before);
 });
 
-test("a Planner batch that keeps dying: three runs, one DM, no Planner row, its events stay consumed", { skip }, async () => {
+test("a Planner batch that keeps dying: three runs, one DM, no Planner row, its events stay consumed", {
+  skip,
+}, async () => {
   await killDaemon(); // a fresh notify window
   planner("export default () => process.exit(3);");
   const before = failureDms().length;

@@ -13,7 +13,7 @@ import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
 import { tempDir } from "../test/until.ts";
 import { bus, consoleModule } from "./index.ts";
-import { hit } from "./pages/search.ts";
+import { errorLine } from "./rows.ts";
 import { sse } from "./server.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-console-");
@@ -30,6 +30,7 @@ const ctx: Ctx = {
   },
 };
 let port = 0;
+const index = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
 
 define("ping", { roles: ["owner"], input: z.unknown(), run: () => ({ pong: true }) });
 define("task.open", {
@@ -132,30 +133,36 @@ function stream(path: string, headers: Record<string, string>, until: (t: string
   });
 }
 
-test("the failure DM's link is a page; a paused task says so; past the first page no list says it is empty", async () => {
-  assert.equal((await get("/tasks")).status, 200); // hortusd.ts › dm("/tasks")
-  const t = new Date().toISOString();
-  ctx.db
-    .prepare("INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('p1', 'chat', 'p', 'queued', ?, ?)")
-    .run(t, t);
-  assert.doesNotMatch((await get("/chat/p1")).body, /Paused:/);
-  writeFileSync(paths.paused(), "");
-  try {
-    for (const p of ["/chat/p1", "/tasks/p1", "/"]) assert.match((await get(p)).body, /Paused: queued tasks/, p);
-  } finally {
-    rmSync(paths.paused());
+test("every link the daemon hands out is the app or a kept plain-text view", async () => {
+  // the DMs (hortusd.ts › dm, gate.approvalUrl), the login error (vault/index.ts), and the app's own links
+  for (const path of [
+    "/",
+    "/tasks", // hortusd.ts › dm("/tasks")
+    "/approvals", // dm("/approvals")
+    "/approvals/1", // gate.approvalUrl
+    "/approvals/1/login", // approval.decide on a login
+    "/tasks/none",
+    "/chat/none",
+    "/schedules",
+    "/search?q=x",
+    `/dof/slack/C1/${encodeURIComponent("1700000000.0001#t")}/a.md`,
+    "/settings/general",
+    "/chat", // the old console's: the app moves them (main.tsx › MOVED)
+    "/settings",
+    "/credentials",
+    "/nowhere",
+  ]) {
+    const r = await get(path);
+    assert.deepEqual(
+      [path, r.status, r.headers["content-type"], r.body],
+      [path, 200, "text/html; charset=utf-8", index],
+    );
   }
-  const ins = ctx.db.prepare(
-    "INSERT INTO approvals(kind, category, status, requested_at) VALUES ('request', 'c', ?, ?)",
-  );
-  ins.run("pending", t);
-  for (let i = 0; i < 60; i++) ins.run("used", t);
-  const second = (await get("/approvals?skip=50")).body;
-  assert.match(second, /showing none of 1 pending/);
-  assert.doesNotMatch(second, /nothing pending/);
-  assert.doesNotMatch((await get("/?skip=50")).body, /no open tasks/);
-  ctx.db.exec("DELETE FROM tasks WHERE id = 'p1'; DELETE FROM approvals");
-  assert.match((await get("/approvals")).body, /nothing pending/);
+  // the plain-text views a chat and a merge link; what is not a view is no app either
+  assert.equal((await get("/tasks/none/log")).status, 404);
+  assert.equal((await get("/approvals/1/diff")).status, 404);
+  for (const path of ["/api/ping", "/api", "/events", "/events/a/b"]) assert.equal((await get(path)).status, 404, path);
+  assert.equal((await get("/tasks/none", {}, "DELETE")).status, 405);
 });
 
 test("a chat past the replay's 1,000 lines says what it cut and where the rest is", async () => {
@@ -167,16 +174,17 @@ test("a chat past the replay's 1,000 lines says what it cut and where the rest i
     .run(t, t);
   const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('long', ?, ?, ?)");
   ins.run(1, JSON.stringify({ type: "owner", text: "the first question" }), t);
-  assert.doesNotMatch((await get("/chat/long")).body, /not shown/);
+  const card = async () =>
+    (await call("task.get", { id: "long" }, { role: "owner" })) as { replies: { seq: number }[] };
+  assert.equal((await card()).replies[0]?.seq, 1);
   for (let i = 2; i <= 1500; i++) ins.run(i, JSON.stringify({ type: "text", text: `delta ${i} ` }), t);
-  const { body: page } = await get("/chat/long");
-  assert.doesNotMatch(page, /the first question/);
-  assert.match(page, /500 earlier lines not shown .*<a href="\/tasks\/long\/log"/);
-  assert.match((await get("/tasks/long")).body, /1,300 earlier lines not shown/);
+  // the newest 1000: the page counts what it cut from the first seq (thread.tsx) and links /tasks/long/log
+  const { replies } = await card();
+  assert.deepEqual([replies.length, replies[0]?.seq, replies.at(-1)?.seq], [1000, 501, 1500]);
   ctx.db.exec("DELETE FROM tasks WHERE id = 'long'; DELETE FROM replies WHERE task_id = 'long'");
 });
 
-test("sse: a chat row is { seq, html, body, created }; a row that cannot be re-serialized goes as its text", async () => {
+test("sse: a chat row is { seq, body, created }; a row that cannot be re-serialized goes as its text", async () => {
   const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('rows', ?, ?, '2026-01-01')");
   const nest = (n: number) => `{"type":"text","text":${"[".repeat(n)}${"]".repeat(n)}}`;
   ins.run(1, JSON.stringify({ type: "text", text: "plain <b>" }));
@@ -196,12 +204,7 @@ test("sse: a chat row is { seq, html, body, created }; a row that cannot be re-s
     rows.map((r) => r.seq),
     Array.from({ length: seq }, (_, i) => i + 1),
   );
-  assert.deepEqual(rows[0], {
-    seq: 1,
-    html: '<div class="r text">plain &lt;b&gt;</div>',
-    created: "2026-01-01",
-    body: { type: "text", text: "plain <b>" },
-  });
+  assert.deepEqual(rows[0], { seq: 1, created: "2026-01-01", body: { type: "text", text: "plain <b>" } });
   assert.equal(rows[1].body, "not json at all");
   assert.equal(rows[2].body, nest(1e6));
   assert.deepEqual(rows.at(-1).body, { type: "status", text: "after them" });
@@ -255,46 +258,13 @@ test("sse: chat honours Last-Event-ID and follows the bus; keepalives; no listen
   assert.equal(bus.listenerCount("tasks"), 0);
 });
 
-const ROUTES = [
-  "/",
-  "/tasks/none",
-  "/chat",
-  "/chat/none",
-  "/approvals",
-  "/approvals/1",
-  "/credentials",
-  "/projects",
-  "/settings",
-  "/sources",
-  "/search",
-  "/search?q=x",
-  "/schedules",
-];
-
-function clean(path: string, html: string): void {
-  for (const bad of ["undefined", "[object Object]", "NaN"]) assert.ok(!html.includes(bad), `${path} contains ${bad}`);
-  assert.doesNotMatch(html, /<script(?![^>]*\ssrc=)[^>]*>/, `${path} has an inline script`);
-  assert.match(html, /<script src="\/static\/app\.js" defer><\/script>/);
-}
-
-test("Schedules: a row shows its last run's summary; a merge cut at 64 KB links the whole diff", async () => {
-  ctx.db.prepare("INSERT INTO tasks(id, kind, title, status) VALUES ('sw', 'unattended', 'watch', 'waiting')").run();
-  const { lastInsertRowid: id } = ctx.db
-    .prepare(
-      "INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sw', '2030-01-01T00:00:00Z', 3600, 'x')",
-    )
-    .run();
-  mkdirSync(paths.schedule(Number(id)), { recursive: true });
-  writeFileSync(join(paths.schedule(Number(id)), "last-summary.md"), "## Goal\nnothing moved today\n");
-  assert.match((await get("/schedules")).body, /## Goal\s+nothing moved today/);
+test("a merge's whole diff: its entry gone, a 404", async () => {
   const { lastInsertRowid: a } = ctx.db
     .prepare(
       "INSERT INTO approvals(kind, category, hash, status, requested_at, summary) VALUES ('request', 'merge', 'h', 'pending', 't', ?)",
     )
     .run(JSON.stringify({ project: "p", branch: "b", main_sha: "m", sha: "s", patch: "x", truncated: true, files: 1 }));
-  assert.match((await get(`/approvals/${a}`)).body, new RegExp(`href="/approvals/${a}/diff"`));
   ctx.db.prepare("DELETE FROM approvals WHERE id = ?").run(a);
-  ctx.db.prepare("DELETE FROM tasks WHERE id = 'sw'").run();
   assert.equal((await get(`/approvals/${a}/diff`)).status, 404);
 });
 
@@ -305,46 +275,7 @@ test("a link from another site (owner.notify's, in a messenger's web app) gets a
   assert.doesNotMatch(r.body, /<nav|pending/);
 });
 
-test("every route renders on an empty DB, missing RPCs become an error line", async () => {
-  for (const path of ROUTES) {
-    const r = await get(path);
-    assert.equal(r.status, 200, path);
-    clean(path, r.body);
-  }
-  assert.match((await get("/credentials")).body, /class="error">credential.list: no method credential.list/);
-  assert.match((await get("/search?q=x")).body, /class="error">dof.search/);
-  const nf = await get("/nowhere");
-  assert.equal(nf.status, 404);
-  clean("/nowhere", nf.body);
-  assert.equal((await get("/static/app.js")).status, 200);
-  assert.equal((await get("/static/app.css")).headers["content-type"], "text/css; charset=utf-8");
-  assert.equal((await get("/tasks/none/log")).status, 404);
-});
-
-test("Schedules shows the last run's summary; Credentials suggests the shipped transforms", async () => {
-  const now = new Date().toISOString();
-  ctx.db
-    .prepare(
-      "INSERT INTO tasks(id, kind, title, status, created, updated) VALUES ('sum1', 'chat', 'watch', 'waiting', ?, ?)",
-    )
-    .run(now, now);
-  const id = Number(
-    ctx.db
-      .prepare(
-        "INSERT INTO schedules(task_id, fire_at, every_sec, text) VALUES ('sum1', '2030-01-01T00:00:00Z', 3600, 'w')",
-      )
-      .run().lastInsertRowid,
-  );
-  mkdirSync(paths.schedule(id), { recursive: true });
-  writeFileSync(join(paths.schedule(id), "last-summary.md"), "found <b>two</b> builds");
-  for (const page of ["/schedules", "/tasks/sum1"])
-    assert.match((await get(page)).body, /<summary>summary<\/summary><pre>found &lt;b&gt;two&lt;\/b&gt; builds/, page);
-  ctx.db.prepare("DELETE FROM schedules WHERE id = ?").run(id);
-  ctx.db.prepare("DELETE FROM tasks WHERE id = 'sum1'").run();
-  assert.match((await get("/credentials")).body, /<datalist id="transforms">.*<option value="openai">/s);
-});
-
-test("500 tasks render under 200 ms, hostile titles and replies are escaped everywhere", async () => {
+test("500 tasks: task.list under 200 ms, with what the budget line reads", async () => {
   const XSS = "<script>alert(1)</script>";
   const ins = ctx.db.prepare(
     `INSERT INTO tasks(id, kind, title, status, budget, usage, hours, project, created, updated, closed, summary)
@@ -391,36 +322,21 @@ test("500 tasks render under 200 ms, hostile titles and replies are escaped ever
     )
     .run();
 
-  await get("/");
+  // hostile titles and replies on every page: app.test.ts, in Chromium
+  const list = () => post("task.list", {});
+  await list();
   const t0 = performance.now();
-  const page = await get("/");
-  assert.ok(performance.now() - t0 < 200, "tasks page under 200 ms");
-  assert.match(page.body, /1\.2M \/ 2\.0M tokens, 0\.5 \/ 4 h/);
-  // live: usage is written when a session ends, so a running one showed 0 (or its last session's) while the proxy had
-  // counted 500k; the proxy's count is what it has spent so far
+  const page = JSON.parse((await list()).body).result as { id: string; usage: unknown; metered: number }[];
+  assert.ok(performance.now() - t0 < 200, "task.list under 200 ms");
+  assert.equal(page.length, 100);
+  // live: usage is written when a session ends, so a running one showed 0 while the proxy had counted 1.5M; the
+  // card shows the larger (tasks.tsx › spent)
   ctx.db.prepare("UPDATE tasks SET metered = 1500000 WHERE id = 't1'").run();
-  assert.match((await get("/tasks/t1")).body, /1\.5M \/ 2\.0M tokens/);
+  const t1 = (
+    (await call("task.get", { id: "t1" }, { role: "owner" })) as { task: { metered: number; usage: unknown } }
+  ).task;
+  assert.deepEqual([t1.metered, t1.usage], [1500000, { tokens: 1200000 }]);
   ctx.db.prepare("UPDATE tasks SET metered = 0 WHERE id = 't1'").run();
-  // live: a stop at its hours went on at the raise alone, while the card asked for a raise and then a message too
-  const stop = "budget_exceeded: the session was stopped after 1.00 h";
-  ctx.db.prepare("UPDATE tasks SET error = ? WHERE id = 't1'").run(stop);
-  assert.match((await get("/tasks/t1")).body, /waiting: raise its budget and it goes on/);
-  ctx.db.prepare("UPDATE tasks SET error = NULL WHERE id = 't1'").run();
-  for (const path of [...ROUTES, "/tasks/t1", "/chat/t1"]) {
-    const r = await get(path);
-    clean(path, r.body);
-    assert.ok(!r.body.includes(XSS), `${path} leaks the raw title`);
-  }
-  const chat = (await get("/chat/t1")).body;
-  assert.equal(chat.split("</textarea>").length - 1, 1, "only the composer closes a textarea");
-  assert.match(chat, /&lt;\/textarea&gt;/);
-  assert.match(chat, /\$ ls/);
-  assert.match(chat, /data-call="approval.decide"/);
-  const ap = (await get("/approvals")).body;
-  assert.match(ap, /Bearer \{secret:slack\}/);
-  assert.match(ap, /allowed by judge/);
-  assert.match(ap, /<span class="badge">1<\/span>/);
-  assert.match((await get("/tasks/t1")).body, /aria-current="page">Tasks/);
 });
 
 test("settings.set: invalid → names the key, nothing written; valid → saved and reload()", async () => {
@@ -442,7 +358,6 @@ test("settings.set: invalid → names the key, nothing written; valid → saved 
   reloads = 1;
   assert.equal((await post("pause.set", { paused: true })).status, 200);
   assert.ok(existsSync(paths.paused()));
-  assert.match((await get("/settings")).body, /Paused\./);
   await call("pause.set", { paused: false }, { role: "owner" });
   assert.ok(!existsSync(paths.paused()));
 });
@@ -613,68 +528,8 @@ test("/events/settings: named like the others, alone or on a page's one stream; 
   assert.equal((await get("/events/settings,nope")).status, 404);
 });
 
-test("/dof/<dof>/<path>: a mirror file escaped with its thread; refuses .., links and leaving the root", async () => {
-  const thread = join(paths.dof("slack"), "C1", "1700000000.0001#t");
-  mkdirSync(thread, { recursive: true });
-  writeFileSync(join(thread, "a.md"), "---\nauthor: u1\n---\n<script>alert(1)</script>\n");
-  writeFileSync(join(thread, "b.md"), "second");
-  writeFileSync(join(paths.home(), "outside.md"), "SECRET");
-  symlinkSync(join(paths.home(), "outside.md"), join(thread, "link.md"));
-  symlinkSync(join(thread, "a.md"), join(thread, "inner.md"));
-  const base = `/dof/slack/C1/${encodeURIComponent("1700000000.0001#t")}`;
-  const r = await get(`${base}/a.md`);
-  assert.equal(r.status, 200);
-  clean(base, r.body);
-  assert.match(r.body, /author: u1\n---\n&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.match(r.body, /href="\/dof\/slack\/C1\/1700000000\.0001%23t\/b\.md">b\.md</);
-  for (const bad of [
-    `${base}/link.md`,
-    `${base}/inner.md`,
-    "/dof/slack/..%2F..%2Foutside.md",
-    "/dof/..%2Foutside.md/x",
-  ]) {
-    const b = await get(bad);
-    assert.ok(!b.body.includes("SECRET") && !b.body.includes("alert(1)"), bad);
-    assert.match(b.body, /<h1>Not found<\/h1>/, bad);
-  }
-  // the bare repo next to the worktree is no DOF; an attachment is named, not dumped
-  mkdirSync(paths.dofRepo("planted"), { recursive: true });
-  writeFileSync(join(paths.dofRepo("planted"), "config"), "[core]");
-  assert.match((await get("/dof/planted.git/config")).body, /<h1>Not found<\/h1>/);
-  writeFileSync(join(thread, "f.png"), Buffer.from([0x89, 0x50, 0, 1, 2]));
-  assert.match((await get(`${base}/f.png`)).body, /binary file, 5 bytes/);
-});
-
-test("UI: a task's error on the list and card (a boot timeout's reason, not the serial tail), pause, sources", async () => {
-  const now = new Date().toISOString();
+test("errorLine: a boot timeout's reason, not the serial tail; a crash's last words", () => {
   const boot = "boot timeout: no contact from the guest within 120 s (console.log below)\n[ 1.2] virtiofs: mounting";
-  const ins = ctx.db.prepare(
-    "INSERT INTO tasks(id, kind, title, status, error, created, updated) VALUES (?, 'task', ?, 'waiting', ?, ?, ?)",
-  );
-  ins.run("r6boot", "r6 boot", boot, now, now);
-  ins.run("r6crash", "r6 crash", "line one\nexit 1: the last words", now, now);
-  const list = (await get("/")).body;
-  assert.match(list, /r6 boot<\/a><br><span class="error">boot timeout: no contact/);
-  assert.match(list, /r6 crash<\/a><br><span class="error">exit 1: the last words</);
-  assert.match((await get("/tasks/r6boot")).body, /<div class="r error">boot timeout: no contact[^<]*<details>/);
-  writeFileSync(paths.paused(), "");
-  assert.match((await get("/")).body, /Paused: queued tasks, schedules and the Planner wait; running tasks go on\./);
-  rmSync(paths.paused());
-  assert.match((await get("/settings")).body, /While paused, queued tasks, schedules and the Planner wait/);
-  assert.match((await get("/sources")).body, /no sources: add a messenger or forge under <code>dofs<\/code>/);
-  // a fresh install's Slack said only "auth.test: HTTP 403"; the page names the missing credentials
-  ctx.config = { ...ctx.config, dofs: { chat: { type: "slack", owner: "U1" } } } as typeof ctx.config;
-  try {
-    assert.match((await get("/sources")).body, /no chat or chat-app credential \(Credentials\)/);
-  } finally {
-    ctx.config = load();
-  }
-});
-
-test("UI: a search hit's [mark] is a <mark>, other brackets stay", () => {
-  assert.equal(
-    String(hit("[inbox 1] from=owner [Hello] there", "hello")),
-    "[inbox 1] from=owner <mark>Hello</mark> there",
-  );
-  assert.equal(String(hit("no marker <b>", "x")), "no marker &lt;b&gt;");
+  assert.equal(errorLine(boot), "boot timeout: no contact from the guest within 120 s (console.log below)");
+  assert.equal(errorLine("line one\nexit 1: the last words"), "exit 1: the last words");
 });

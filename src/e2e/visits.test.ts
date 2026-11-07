@@ -195,8 +195,9 @@ test("a chat reopened after a restart continues with what it knew", { skip }, as
   await seen(id, "second-answer");
   await waitStatus(id, "waiting");
   assert.ok(context(id).includes("first-answer"), "the earlier turn is in the context");
-  const page = await (await fetch(`http://127.0.0.1:${port}/chat/${id}`)).text();
-  assert.match(page, /again/);
+  // the chat page's rows (task.get)
+  const card = await api<{ replies: { body: { type: string; text?: string } }[] }>("task.get", { id });
+  assert.ok(card.replies.some((r) => r.body.type === "owner" && r.body.text?.startsWith("again")));
 });
 
 for (const kill of [false, true])

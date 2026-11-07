@@ -1,6 +1,6 @@
 /**
- * A large database: every list the owner reads is capped at the SQL level, says what it cut and links
- * the next page (`?skip=`); merge diffs stay on the entry's own page; the nav badge is a count; the CLI says `--all`.
+ * A large database: every list the owner reads is capped at the SQL level and pages by `skip`; a list's merge diffs
+ * are excerpts, the entry's own answer has the patch; the nav badge is a count; the CLI says `--all`.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -55,49 +55,50 @@ after(async () => {
   await consoleModule.stop();
 });
 
-const page = async (path: string) => {
+const owner = { role: "owner" } as const;
+
+/** What the app's fetch gets: the response's size and time, as a page load would. */
+const api = async (method: string, input: unknown) => {
   const t = performance.now();
-  const html = await (await fetch(base + path)).text();
+  const text = await (
+    await fetch(`${base}/api/${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-hortus": "1" },
+      body: JSON.stringify(input),
+    })
+  ).text();
   const ms = performance.now() - t;
-  assert.ok(ms < 2000, `${path} took ${ms} ms`);
-  return html;
+  assert.ok(ms < 2000, `${method} took ${ms} ms`);
+  return { bytes: text.length, result: JSON.parse(text).result };
 };
-const rows = (html: string, re: RegExp) => html.match(re)?.length ?? 0;
 
-test("Tasks: 50 open and 50 closed, the cut said, older and newer links", async () => {
-  const html = await page("/");
-  assert.equal(rows(html, /href="\/tasks\/o\d+"/g), 50);
-  assert.equal(rows(html, /href="\/tasks\/c\d+"/g), 50);
-  assert.match(html, /showing 1–50 of 120 open tasks · <a href="\?skip=50">older<\/a>/);
-  assert.match(html, /showing 1–50 of 620 closed tasks/);
-  const last = await page("/?skip=100");
-  assert.match(last, /showing 101–120 of 120 open tasks · <a href="\?skip=50">newer<\/a><\/p>/);
-  assert.match(last, /href="\/tasks\/o0"/); // the oldest is reachable
+test("Tasks: 50 open and 50 closed a page; skip reaches the oldest", async () => {
+  const { result } = await api("task.list", {});
+  const ids = (result as { id: string }[]).map((t) => t.id);
+  assert.equal(ids.filter((id) => id.startsWith("o")).length, 50);
+  assert.equal(ids.filter((id) => id.startsWith("c")).length, 50);
+  const last = (await api("task.list", { skip: 100 })).result as { id: string }[];
+  assert.equal(last.filter((t) => t.id.startsWith("o")).length, 20);
+  assert.ok(last.some((t) => t.id === "o0")); // the oldest is reachable
 });
 
-test("Approvals: 50 pending without their full diffs; the entry's page has it", async () => {
-  const html = await page("/approvals");
-  assert.ok(html.length < 1024 * 1024, `${html.length} bytes`);
-  assert.equal(rows(html, /<article class="approval pending/g), 50);
-  assert.match(html, /showing 1–50 of 120 pending · <a href="\?skip=50">older<\/a>/);
-  assert.match(html, /showing 1–50 of 80 decided/);
-  assert.match(html, /<a href="\/approvals\/120">full diff \(1500 lines\)<\/a>/);
-  assert.doesNotMatch(html, /line 1499 /);
-  assert.match(await page("/approvals/120"), /line 1499 /);
-  // ?judge=hide survives paging
-  assert.match(await page("/approvals?judge=hide"), /href="\?judge=hide&amp;skip=50">older/);
-});
-
-test("Task card: the newest 50 messages, the rest a page back", async () => {
-  const html = await page("/tasks/o1");
-  assert.match(html, /showing 1–50 of 120 messages/);
-  assert.match(html, /post 119/);
-  assert.doesNotMatch(html, /post 69</);
-  assert.match(await page("/tasks/o1?skip=100"), /post 0</);
+test("Approvals: 50 pending, each merge an excerpt; the entry's own answer has the whole patch", async () => {
+  const { bytes, result } = await api("approval.list", {});
+  assert.ok(bytes < 1024 * 1024, `${bytes} bytes`);
+  const rows = result as { id: number; status: string; summary: { patch: string; cut?: number } }[];
+  assert.equal(rows.filter((a) => a.status === "pending").length, 50);
+  assert.equal(rows.filter((a) => a.status === "replaced").length, 50);
+  const top = rows[0];
+  assert.equal(top?.id, 120);
+  assert.equal(top?.summary.cut, 1500); // "Show the whole diff (1500 lines)" goes to /approvals/120
+  assert.equal(top?.summary.patch.split("\n").length, 40);
+  assert.doesNotMatch(JSON.stringify(rows), /line 1499 /);
+  const one = (await api("approval.get", { id: 120 })).result as { summary: { patch: string; cut?: number } };
+  assert.match(one.summary.patch, /line 1499 /);
+  assert.equal(one.summary.cut, undefined);
 });
 
 test("RPCs: task.list and approval.list page; approval.count is the badge", async () => {
-  const owner = { role: "owner" } as const;
   assert.equal(((await call("task.list", {}, owner)) as unknown[]).length, 100);
   assert.equal(((await call("task.list", { limit: 500, skip: 500 }, owner)) as unknown[]).length, 120);
   assert.equal(((await call("approval.list", {}, owner)) as unknown[]).length, 100);
@@ -106,7 +107,6 @@ test("RPCs: task.list and approval.list page; approval.count is the badge", asyn
 });
 
 test("RPCs: task.get stays a page, a list's pending counts stay cheap", async () => {
-  const owner = { role: "owner" } as const;
   const db = ctx.db;
   const s = db.prepare("INSERT INTO schedules(task_id, every_sec, text) VALUES ('o1', 60, ?)");
   db.exec("BEGIN");
@@ -125,6 +125,7 @@ test("RPCs: task.get stays a page, a list's pending counts stay cheap", async ()
   assert.equal(card.outbox.length, 50);
   assert.equal(card.outbox.at(-1)?.seq, 119);
   assert.equal(card.approvals.length, 50);
+  assert.ok(JSON.stringify(card).length < 1024 * 1024, "the merges' excerpts, not their 64 KB");
   assert.equal(card.task.pending, 120);
   assert.equal(card.schedules.length, 50);
 });

@@ -11,7 +11,7 @@ import { quote } from "../agent/inbox.ts";
 import { type Config, today } from "../config.ts";
 import { PR_TURN } from "../connectors/forge.ts";
 import { bus } from "../console/events.ts";
-import { errorLine, parse, tokens } from "../console/html.ts";
+import { errorLine, parse, tokens } from "../console/rows.ts";
 import { crashPoint } from "../crash.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { type DatabaseSync, now, taintOf } from "../db.ts";

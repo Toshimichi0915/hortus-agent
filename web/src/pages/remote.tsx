@@ -3,6 +3,7 @@
  * its sessions and passkeys; and the two pages a device sees before it is signed in.
  */
 import { useEffect, useState } from "react";
+import { safeNext } from "../../../src/console/next.ts";
 import { encode } from "../../../src/console/qr.ts";
 import { call, type Passkey, type RemoteSession, type RemoteStatus, useCall } from "../api.ts";
 import { type Draft, splitListen } from "../schema.ts";
@@ -439,7 +440,8 @@ export function SignIn() {
       const o = await post("/webauthn/login/options", {});
       const cred = await navigator.credentials.get({ publicKey: request(o) });
       await post("/webauthn/login/verify", { response: toJSON(cred) });
-      location.replace("/");
+      // the deep link that sent the owner here (remote.ts › gate, api.ts › call)
+      location.replace(safeNext(new URLSearchParams(location.search).get("next")));
     } catch (e) {
       setProblem(failure(e));
       setBusy(false);

@@ -415,11 +415,16 @@ test("unschedule: a run acts on its parent's rows; another task's row is forbidd
   assert.ok(!existsSync(paths.schedule(id)));
   await call("schedule.unset", { id: theirs.id }, { role: "owner" });
   assert.equal(row(theirs.id), undefined);
-  const list = (await call("schedule.list", {}, { role: "owner" })) as { id: number; title: string }[];
+  // the Schedules page's "what the last run said": the row's last-summary.md, which a run writes, capped
+  mkdirSync(paths.schedule(fromRun.id), { recursive: true });
+  writeFileSync(join(paths.schedule(fromRun.id), "last-summary.md"), `found <b>two</b> builds${"x".repeat(32 * 1024)}`);
+  const list = (await call("schedule.list", {}, { role: "owner" })) as { id: number; title: string; summary: string }[];
   assert.deepEqual(
     list.map((l) => [l.id, l.title]),
     [[fromRun.id, "watch"]],
   );
+  assert.ok(list[0]?.summary.startsWith("found <b>two</b> builds"));
+  assert.equal(list[0]?.summary.length, 16 * 1024);
 });
 
 test("recovery: a run killed before its first model call is closed failed (not re-fired); one killed after resumes", async () => {

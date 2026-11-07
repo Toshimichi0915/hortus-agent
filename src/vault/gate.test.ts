@@ -15,8 +15,7 @@ import { after, before, mock, test } from "node:test";
 import { z } from "zod";
 import { Config, today } from "../config.ts";
 import { bus } from "../console/events.ts";
-import { approvals as approvalsPage } from "../console/pages/approvals.ts";
-import { task as taskPage } from "../console/pages/task.ts";
+import { PENDING_FOR } from "../console/rows.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb, taint, taintOf } from "../db.ts";
 import { logger } from "../log.ts";
@@ -287,10 +286,11 @@ test("auto: the first post asks for a durable grant; after one click every later
     (ctx.db.prepare("SELECT count(*) AS n FROM approvals WHERE status = 'pending'").get() as { n: number }).n,
     0,
   );
-  const page = await approvalsPage(ctx, { m: [], q: new URLSearchParams() });
-  assert.match(page, /allowed by judge: fake says allow/);
-  assert.match(page, new RegExp(`#${id}</a> <b>enable slack</b>`));
-  assert.doesNotMatch(await approvalsPage(ctx, { m: [], q: new URLSearchParams("judge=hide") }), /allowed by judge/);
+  // what the Approvals page lists: the judge's allows with its reason, and the durable grant
+  const list = (await call("approval.list", {}, owner)) as gate.ApprovalRow[];
+  assert.ok(list.some((a) => a.decided_by === "judge" && a.status === "allowed" && a.reason === "fake says allow"));
+  const grant = list.find((a) => a.id === id);
+  assert.deepEqual([grant?.kind, grant?.category, grant?.status], ["grant", "credential:slack", "approved"]);
 });
 
 test("a decide that throws inside a caller's transaction: its savepoint is gone, the transaction goes on", () => {
@@ -496,11 +496,10 @@ test("chat tasks: every configured name in scope; a credential added later only 
   assert.deepEqual([row(id).kind, row(id).task_id], ["grant", a.id]);
 });
 
-test("Credentials page marks durable grants as enabled", async () => {
-  const { credentials } = await import("../console/pages/credentials.ts");
-  const html = await credentials(ctx, { m: [], q: new URLSearchParams() });
-  assert.match(html, /<td>slack<\/td>(<td>[^<]*<\/td>){3}<td>enabled<\/td>/);
-  assert.match(html, /<td>llm<\/td>(<td>[^<]*<\/td>){3}<td><\/td>/);
+test("credential.list marks durable grants as enabled", async () => {
+  const list = (await call("credential.list", {}, owner)) as { name: string; enabled: boolean }[];
+  assert.equal(list.find((c) => c.name === "slack")?.enabled, true);
+  assert.equal(list.find((c) => c.name === "llm")?.enabled, false);
 });
 
 test("coalesce (owner.notify): a burst of pending approvals is one DM, then one 'N more' when the minute is up", () => {
@@ -540,9 +539,9 @@ test("a task given an untrusted author's message: the owner decides (no judge ca
     assert.deepEqual(p.untrusted, ["read untrusted messages (slack:U2)"]);
     assert.match(p.judge ?? "", /tainted: read untrusted messages \(slack:U2\)/);
     assert.match(dms.at(-1) ?? "", /; tainted: read untrusted messages \(slack:U2\)/);
-    const page = await approvalsPage(ctx, { m: [], q: new URLSearchParams() });
-    assert.match(page, /tainted: read untrusted messages \(slack:U2\)\. Make sure/);
-    assert.doesNotMatch(page, /escalated[^<]*tainted/, "the taint line once, not again as the judge's reason");
+    // what the entry's card reads (web/src/pages/approvals.tsx shows `untrusted`, and not again the judge's reason)
+    const entry = (await call("approval.get", { id }, owner)) as { payload: { untrusted?: string[] } };
+    assert.deepEqual(entry.payload.untrusted, ["read untrusted messages (slack:U2)"]);
     // T2 (slack in scope, nothing untrusted routed to it) is still judged
     assert.equal((await send({ from: "127.0.0.4" })).status, 200);
     assert.equal(llmSeen.length, judged + 1);
@@ -680,8 +679,8 @@ test("a web page taints the task for good; an API response does not; a Planner b
       "read a web page: news.test",
     ]);
     assert.match(dms.at(-1) ?? "", /tainted: read a web page: news\.test/);
-    const card = await taskPage(ctx, { m: ["", "T6"], q: new URLSearchParams() });
-    assert.match(card, /Tainted<\/th><td class="untrusted">read a web page: news\.test/);
+    // task.get's `tainted`, the card's line
+    assert.ok(taintOf(ctx.db, "T6", ctx.config).includes("read a web page: news.test"));
     // the Planner's own gated request (its batch reads strangers by design) is never judged either
     const p = pendingId(await send({ from: "127.0.0.11" }));
     assert.equal(llmSeen.length, judged + 1);
@@ -734,13 +733,12 @@ test("a day: a task grant keeps a tainted task's routine requests to one decisio
           if (a.kind === "grant") {
             // tasks run at once: D30 meets the durable grant D0's request opened; both cards show it, both hear it
             assert.equal(pendingId(await send({ from: "127.0.1.31", cred: "day" })), a.id);
-            for (const t of [id, "D30"]) {
-              const card = await taskPage(ctx, { m: ["", t], q: new URLSearchParams() });
-              assert.match(
-                card,
-                new RegExp(`Waiting for you</h2><article class="approval pending kind-grant" id="a${a.id}"`),
+            // what each card's "Waiting for you" lists (task.get's `approvals`)
+            for (const t of [id, "D30"])
+              assert.ok(
+                (ctx.db.prepare(PENDING_FOR).all(t) as { id: number }[]).some((w) => w.id === a.id),
+                t,
               );
-            }
             inbox.length = 0;
             await call("approval.decide", { id: a.id, decision: "approve" }, owner);
             assert.deepEqual(
@@ -751,8 +749,8 @@ test("a day: a task grant keeps a tainted task's routine requests to one decisio
           }
           // the entry offers the task grant on exactly a tainted task's non-consequential request
           const want = a.kind === "request" && !p.consequential && !!p.untrusted;
-          const page = await approvalsPage(ctx, { m: ["", String(a.id)], q: new URLSearchParams() });
-          if (page.includes("&quot;grant&quot;:true") !== want) wrongButton.push(a.id);
+          // the card's "Approve, and allow … for this task" button (approval.get's `grantable`)
+          if (gate.grantable(a) !== want) wrongButton.push(a.id);
           if (want) grants++;
           await call("approval.decide", { id: a.id, decision: "approve", ...(want ? { grant: true } : {}) }, owner);
         }

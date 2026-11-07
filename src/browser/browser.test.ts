@@ -451,10 +451,9 @@ test("browser_login → login view (SSE + login.input) → Done → inbox cookie
     origin: "fake.test",
   });
 
-  // the Approvals entry links the view; the view page carries the canvas
-  const page = await (await fetch(`${base()}/approvals/${id}`)).text();
-  assert.match(page, new RegExp(`href="/approvals/${id}/login"`));
-  assert.match(await (await fetch(`${base()}/approvals/${id}/login`)).text(), /<canvas/);
+  // the Approvals entry is a pending login, which the card opens in its view (the canvas: the Chromium test below)
+  const entry = await api("approval.get", { id });
+  assert.deepEqual([entry.kind, entry.status], ["login", "pending"]);
 
   const ready = () => site.seen.filter((x) => x.path === "/ready").length;
   const n = ready();
@@ -524,12 +523,10 @@ test("browser_login → login view (SSE + login.input) → Done → inbox cookie
   );
 });
 
-test("the web UI's login view (HORTUS_WEB=1) in a real Chromium: the canvas's clicks and keys sign in, Done sends placeholders", {
+test("the web UI's login view in a real Chromium: the canvas's clicks and keys sign in, Done sends placeholders", {
   skip: !hasChromium,
 }, async () => {
-  process.env.HORTUS_WEB = "1";
   const web = await startServer(ctx, 0);
-  delete process.env.HORTUS_WEB;
   // the owner's browser, on the console directly: a window narrower than the site's 1280 px and a 2x screen, so the
   // canvas is drawn scaled and its points must be mapped back
   const owner = await launch({ userDataDir: tempDir("hortus-browser-owner-") });
@@ -661,10 +658,9 @@ test("browser.login for an origin with a stored login → a grant entry; approvi
   };
   assert.equal(e.category, "origin:fake.test");
   assert.ok(JSON.parse(e.summary).cookies >= 1);
-  assert.match(
-    await (await fetch(`${base()}/approvals/${r.approval}`)).text(),
-    /reuse the stored login for <b>fake\.test<\/b>/,
-  );
+  // the card: "Reuse your login for fake.test"
+  const card = await api("approval.get", { id: r.approval });
+  assert.deepEqual([card.kind, card.category, card.status], ["grant", "origin:fake.test", "pending"]);
   gate.decide(r.approval, "approve", "owner");
   const msgs = (ctx.db.prepare("SELECT body FROM inbox WHERE task_id = 'T4' ORDER BY seq").all() as { body: string }[])
     .slice(n0)
@@ -766,9 +762,9 @@ test("idle: the view closes after IDLE with the entry pending; reopening (also a
 });
 
 test("Credentials: captured origins listed; forget deletes them and old placeholders then 403", async () => {
-  const html = await (await fetch(`${base()}/credentials`)).text();
-  assert.match(html, /Captured logins/);
-  assert.match(html, /<td>site\.test<\/td>/);
+  // Settings › Credentials › Captured logins
+  const listed = (await api("captured.list", {})) as unknown as { origin: string }[];
+  assert.ok(listed.some((c) => c.origin === "site.test"));
   const row = cookieRow("site.test", "session");
   assert.ok(row);
   assert.deepEqual(await api("captured.forget", { origin: "site.test" }), { deleted: 2 });

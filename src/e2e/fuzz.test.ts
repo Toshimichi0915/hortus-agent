@@ -35,7 +35,7 @@ import { Config } from "../config.ts";
 import { connectors } from "../connectors/index.ts";
 import { bus } from "../console/events.ts";
 import { consoleModule } from "../console/index.ts";
-import { replyLine } from "../console/pages/chat.ts";
+import { line } from "../console/rows.ts";
 import type { Ctx } from "../ctx.ts";
 import { openDb } from "../db.ts";
 import { createWebhooks } from "../gateway/webhooks.ts";
@@ -288,10 +288,9 @@ test("outbox: only regular files of the task, schema-checked, no FIFO hang, noth
   }
 });
 
-test("a chat line nested a million deep: the reply row renders as text, a throwing bus listener stays contained", () => {
+test("a chat line nested a million deep: the reply row goes as text, a throwing bus listener stays contained", () => {
   const body = `{"type":"text","text":${"[".repeat(1e6)}${"]".repeat(1e6)}}`;
-  const html = replyLine({ seq: 1, body, created: null }).html;
-  assert.ok(html.startsWith('<div class="r text">'));
+  assert.equal(line(body), body);
   let after = 0;
   bus.on("fuzz", () => {
     throw new RangeError("Maximum call stack size exceeded");

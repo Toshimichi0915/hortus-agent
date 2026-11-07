@@ -197,9 +197,12 @@ test("a host Worker on a non-git project delivers hortus/<id>; an owner edit →
   assert.equal(first.summary.files, 1);
   assert.match(first.summary.patch, /\+\+\+ b\/CHANGELOG\.md/);
   assert.match(first.summary.stat, /CHANGELOG\.md/);
-  const page = await (await fetch(`http://127.0.0.1:${port}/approvals/${first.id}`)).text();
-  assert.match(page, /hortus\/p[0-9a-z]+<\/code> → <code>main/);
-  assert.match(page, /\+1 −0 in 1 file/);
+  // what the entry's page shows: `hortus/<task>` → main, "+1 −0 in 1 file"
+  const entry = await api<{ summary: { branch: string; added: number; removed: number } }>("approval.get", {
+    id: first.id,
+  });
+  assert.match(entry.summary.branch, /^hortus\/p[0-9a-z]+$/);
+  assert.deepEqual([entry.summary.added, entry.summary.removed], [1, 0]);
   await waitStatus(id, "waiting");
 
   // the owner edits another file before approving: main moves at approval, the entry is replaced, rebase notice
@@ -223,8 +226,9 @@ test("a host Worker on a non-git project delivers hortus/<id>; an owner edit →
   assert.equal((await merges(id)).find((a) => a.id === second.id)?.status, "landed");
   assert.equal(readFileSync(join(site, "CHANGELOG.md"), "utf8"), "- one line\n");
   assert.equal(readFileSync(join(site, "notes.txt"), "utf8"), "owner notes, edited\n");
-  const landed = await (await fetch(`http://127.0.0.1:${port}/approvals/${second.id}`)).text();
-  assert.match(landed, new RegExp(`landed <code>${second.summary.sha.slice(0, 7)}`));
+  // "Merged as <sha>"
+  const landed = await api<{ status: string; summary: { sha: string } }>("approval.get", { id: second.id });
+  assert.deepEqual([landed.status, landed.summary.sha], ["landed", second.summary.sha]);
   await until(() => JSON.stringify(reqs(id).at(-1)?.messages ?? "").includes("merged "), 30_000, "merged notice");
 
   // a chat session has no merge tool

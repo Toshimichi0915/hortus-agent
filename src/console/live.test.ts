@@ -40,7 +40,7 @@ function setup() {
 
 const message = (seq: number, body: unknown = { type: "text", text: "w" }) => ({
   lastEventId: String(seq),
-  data: JSON.stringify({ seq, html: "<div>old console</div>", body, created: "t" }),
+  data: JSON.stringify({ seq, body, created: "t" }),
 });
 
 const settle = () => new Promise<void>(queueMicrotask);
@@ -167,4 +167,38 @@ test("a retry waiting when the last holder leaves never fires", async () => {
   off();
   await sleep(30);
   assert.equal(opened.length, 1);
+});
+
+test("a hidden page holds no stream; shown again, it reopens from the chat's cursor and its topics fire once", async () => {
+  const doc = Object.assign(new EventTarget(), { hidden: false });
+  const opened: Fake[] = [];
+  const bus = new EventTarget();
+  const fired: string[] = [];
+  bus.addEventListener("tasks", () => fired.push("tasks"));
+  const watch = liveStream(
+    bus,
+    (url) => {
+      const f = new Fake(url);
+      opened.push(f);
+      return f as unknown as EventSource;
+    },
+    () => {},
+    5,
+    doc,
+  );
+  watch(["tasks", "chat:a"]);
+  await settle();
+  (opened[0] as Fake).onopen?.();
+  (opened[0] as Fake).onmessage?.(message(9));
+  doc.hidden = true;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(opened[0]?.closed, true);
+  watch(["approvals"]); // a page that mounts while hidden opens nothing either
+  await settle();
+  assert.equal(opened.length, 1);
+  doc.hidden = false;
+  doc.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(opened[1]?.url, "/events/tasks,approvals,settings,chat?task=a&after=9");
+  opened[1]?.onopen?.();
+  assert.deepEqual(fired, ["tasks"]);
 });

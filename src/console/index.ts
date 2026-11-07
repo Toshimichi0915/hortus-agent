@@ -8,15 +8,23 @@ import { readDofFile } from "../mirror/file.ts";
 import { define } from "../rpc.ts";
 import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
-import { type ApprovalRow, approvalOut } from "../vault/gate.ts";
+import { type ApprovalRow, approvalOut, excerpt } from "../vault/gate.ts";
 import { bus } from "./events.ts";
-import { line, PAGE, parse } from "./html.ts";
-import { PENDING_FOR } from "./pages/approvals.ts";
-import { lastReplies } from "./pages/chat.ts";
-import { type ScheduleListRow, withSummaries } from "./pages/schedules.ts";
-import { consoleLog, taskOrigin } from "./pages/task.ts";
-import { CLOSED_SQL, OPEN_SQL, type TaskRow } from "./pages/tasks.ts";
 import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
+import {
+  CLOSED_SQL,
+  consoleLog,
+  lastReplies,
+  line,
+  OPEN_SQL,
+  PAGE,
+  PENDING_FOR,
+  parse,
+  type ScheduleListRow,
+  type TaskRow,
+  taskOrigin,
+  withSummaries,
+} from "./rows.ts";
 import { type Console, startServer } from "./server.ts";
 
 export { bus } from "./events.ts";
@@ -84,7 +92,7 @@ define("task.get", {
       summary: t.summary,
       replies: lastReplies(c, id).map((r) => ({ ...r, body: line(r.body) })),
       // what the Approvals page gets: a card reads `payload` and `grantable` (a tainted request says so there)
-      approvals: rows<ApprovalRow>(`${PENDING_FOR} ORDER BY id LIMIT ${PAGE}`).map((a) => approvalOut(db, a)),
+      approvals: rows<ApprovalRow>(`${PENDING_FOR} ORDER BY id LIMIT ${PAGE}`).map((a) => excerpt(approvalOut(db, a))),
       inbox: box("inbox"),
       outbox: box("outbox"),
       schedules: withSummaries(

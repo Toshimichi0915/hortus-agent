@@ -61,7 +61,7 @@ define("approval.list", {
     const page = (where: string, ...a: string[]) =>
       db.prepare(`SELECT * FROM approvals WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...a, limit, skip);
     const rows = status ? page("status = ?", status) : [...page("status = 'pending'"), ...page("status != 'pending'")];
-    return (rows as unknown as gate.ApprovalRow[]).map((r) => gate.approvalOut(db, r));
+    return (rows as unknown as gate.ApprovalRow[]).map((r) => gate.excerpt(gate.approvalOut(db, r)));
   },
 });
 
