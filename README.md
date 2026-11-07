@@ -1,6 +1,6 @@
-# hortus-agent
+# @hortus/agent
 
-hortus-agent is an always-on daemon, `hortusd`, that works for one owner. It mirrors the owner's messengers (Slack,
+@hortus/agent is an always-on daemon, `hortusd`, that works for one owner. It mirrors the owner's messengers (Slack,
 Discord, Telegram) and forges (GitHub, GitLab, Bitbucket) into DOFs: git-backed directories of Markdown files, one
 commit per sync, indexed for full-text search (`dof search`). A Planner reads what arrives and routes it: it opens
 tasks, adds to running ones, or leaves things alone. Workers do the tasks, each one a `hortus-agent` session (on
@@ -41,7 +41,7 @@ directory); Workers do not need it, they get the CA through their environment.
 
 Worker VMs need an image: `hortus image build` (runs `scripts/build-image.sh` under sudo, and that needs Arch's `pacstrap`
 and `mkinitcpio`; `--no-browser` leaves Chromium out) writes `~/.hortus/images/{agent.ext4,initramfs.img,vmlinuz}`. Until it exists, VM tasks run as sandboxed
-host sessions (`vm.fallback_host`). Rebuild it after updating hortus-agent: the guest runs the image's copy. The image trusts the CA of the home that built it (`~/.hortus/ca`), so an image copied from another home fails every model call with `Connection error.`: build it in the home that runs it.
+host sessions (`vm.fallback_host`). Rebuild it after updating @hortus/agent: the guest runs the image's copy. The image trusts the CA of the home that built it (`~/.hortus/ca`), so an image copied from another home fails every model call with `Connection error.`: build it in the home that runs it.
 
 A host Worker writes only its clone, its `tasks/<id>/out` (`TMPDIR` is `out/tmp`, gone at close) and the Workers' shared
 tool caches in `~/.hortus/cache`. It reads almost nothing of yours. Of your home it sees only its own project's checkout and

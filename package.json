@@ -1,5 +1,5 @@
 {
-  "name": "hortus-agent",
+  "name": "@hortus/agent",
   "version": "0.1.0",
   "private": true,
   "description": "hortusd (daemon, vault, proxy, console), hortus-agent (Worker/Planner), hortus (CLI), dof",

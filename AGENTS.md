@@ -1,6 +1,6 @@
 # AGENTS.md
 
-hortus-agent implements hortus, a reactive agent system that works for one owner. One npm package, four bins: `hortusd` (daemon: DOF mirrors, Secret Vault and proxy, console), `hortus` (console CLI), `hortus-agent` (Worker and Planner on `@hortus/core`), `dof` (search CLI).
+@hortus/agent implements hortus, a reactive agent system that works for one owner. One npm package, four bins: `hortusd` (daemon: DOF mirrors, Secret Vault and proxy, console), `hortus` (console CLI), `hortus-agent` (Worker and Planner on `@hortus/core`), `dof` (search CLI).
 
 ## Commands
 
