@@ -19,6 +19,8 @@ export const DofConfig = z.looseObject({
   host: z.string().optional(),
   api: z.string().optional(),
   repos: Strings.optional(),
+  /** `files`: the absolute directory copied in */
+  path: z.string().optional(),
 });
 
 export const ProjectConfig = z.looseObject({
@@ -35,10 +37,12 @@ export const PROJECT_NAME_HINT = "a project name: letters, digits, . _ - only (n
 
 /**
  * A DOF name: `dof/<name>` and `dof/<name>.git` on disk, a Landlock carve-out and a `scope.dofs` entry, so no `..`, no
- * `.git` suffix (another DOF's bare repo), and not `logs` or `transforms` (hortusd's own, with their own trust rules).
+ * `.git` suffix (another DOF's bare repo), and not `logs`, `transforms` or `hortus` (hortusd's own, with their own trust
+ * rules).
  */
-export const DOF_NAME = /^(?!.*\.\.)(?!.*\.git$)(?!(logs|transforms)$)[A-Za-z0-9][\w.-]{0,63}$/;
-export const DOF_NAME_HINT = "a DOF name: letters, digits, . _ - only (no .., no .git suffix, not logs or transforms)";
+export const DOF_NAME = /^(?!.*\.\.)(?!.*\.git$)(?!(logs|transforms|hortus)$)[A-Za-z0-9][\w.-]{0,63}$/;
+export const DOF_NAME_HINT =
+  "a DOF name: letters, digits, . _ - only (no .., no .git suffix, not logs, transforms or hortus)";
 
 export const Config = z.looseObject({
   owner: z

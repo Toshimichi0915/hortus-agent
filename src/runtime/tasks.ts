@@ -284,11 +284,11 @@ export async function close(id: string, outcome: "done" | "failed"): Promise<voi
  */
 export async function finishClose(id: string): Promise<void> {
   const db = ctx().db;
-  // its requests and task grants wait for no one now (a merge or a transform outlives the task; a login holds a
-  // view the login module closes on its decision: kept); in the same turn as the status, before any await
+  // its requests and task grants wait for no one now (a merge, a transform or a settings proposal outlives the task; a
+  // login holds a view the login module closes on its decision: kept); in the same turn as the status, before any await
   const r = db
     .prepare(
-      "UPDATE approvals SET status = 'expired', decided_at = ?, reason = 'the task closed' WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'login')",
+      "UPDATE approvals SET status = 'expired', decided_at = ?, reason = 'the task closed' WHERE status = 'pending' AND task_id = ? AND category NOT IN ('merge', 'transforms', 'settings', 'login')",
     )
     .run(now(), id);
   if (r.changes) bus.emit("approvals", { task: id });
@@ -457,7 +457,14 @@ export function prepare(c: Config, task: TaskJson): void {
     json({ provider: task.provider, model: task.model, ...(task.effort ? { effort: task.effort } : {}) }),
   );
   writeFileSync(join(h, "secrets.json"), json({ [task.provider]: providerSecret(task.provider) }));
-  for (const dir of c.worker.plugins) cpSync(dir, join(h, "plugins", basename(dir)), { recursive: true });
+  // a plugin directory gone (moved, or left in a closed task's work) costs that plugin, not every session's start
+  for (const dir of c.worker.plugins) {
+    if (existsSync(dir)) cpSync(dir, join(h, "plugins", basename(dir)), { recursive: true });
+    else
+      ctx()
+        .log("tasks")
+        .error(`worker.plugins: ${dir} is missing; the session starts without it`, undefined, { id: task.id });
+  }
   const sh = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
   writeFileSync(join(ctl, "bin", "dof"), `#!/bin/sh\nexec ${sh(process.execPath)} ${sh(DOF_BIN)} "$@"\n`, {
     mode: 0o755,

@@ -1230,6 +1230,7 @@ export const SERVICES: Record<string, { label: string; color: string; kind: "mes
   github: { label: "GitHub", color: "#24292f", kind: "forge" },
   gitlab: { label: "GitLab", color: "#e24329", kind: "forge" },
   bitbucket: { label: "Bitbucket", color: "#0052cc", kind: "forge" },
+  files: { label: "Files", color: "#6b7280", kind: "messenger" },
 };
 
 export const ServiceTile = ({ type, size = 32 }: { type: string; size?: number }) => (

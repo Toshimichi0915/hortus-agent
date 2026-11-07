@@ -4,10 +4,12 @@
  */
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { changesOf } from "../connectors/files.ts";
 import { trusted } from "../connectors/trust.ts";
 import type { Ctx, Module } from "../ctx.ts";
-import { channelMeta, type DatabaseSync, dofNames, readableOf, taint, taintOf } from "../db.ts";
+import { channelMeta, type DatabaseSync, dofNames, GUIDE, ownersDof, readableOf, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { type Caller, type Change, type DiffEntry, RpcError, type SearchHit, type SearchQuery } from "../types.ts";
@@ -30,7 +32,11 @@ export const commit = (
   name: string,
   changes: Change[],
   message: string,
-): Promise<{ sha: string; diff: DiffEntry[] } | null> => repo.commit(db(), name, changes, message);
+): Promise<{ sha: string; diff: DiffEntry[] } | null> =>
+  repo.commit(db(), name, changes, message, ownersDof(name, ctx?.config ?? { dofs: {} }));
+
+/** The shipped guide (`guide/`, copied to dist/guide): how hortus works, for a Worker that is unsure. */
+export const guideDir = (): string => fileURLToPath(new URL("../../guide", import.meta.url));
 
 /** Write `logs/<taskId>/<file>` (temp + rename) and upsert each file's index row. */
 export const writeLog = (taskId: string, files: Record<string, string>, title?: string): void =>
@@ -61,7 +67,7 @@ function untrustedHits(hits: SearchHit[]): string[] {
   const out = new Set<string>();
   const member = db().prepare("SELECT 1 FROM events WHERE dof = ? AND author = ? AND member = 1 LIMIT 1");
   for (const h of hits) {
-    if (h.dof === "transforms") continue;
+    if (ownersDof(h.dof, ctx?.config ?? { dofs: {} })) continue;
     if (h.dof === "logs") {
       const task = h.path.split("/")[0] ?? "";
       if (taintOf(db(), task, ctx?.config ?? { dofs: {} }).length) out.add(`logs:${task} (tainted)`);
@@ -107,6 +113,10 @@ export const mirrorModule: Module = {
     } catch {}
     for (const n of names)
       await repo.recover(c.db, n).catch((e) => c.log("mirror").error("recovery failed", e, { dof: n }));
+    // every start: the guide is this release's, whatever an older one left (no config entry, so nothing removes it)
+    await commit(GUIDE, changesOf(guideDir(), GUIDE), "ship: guide").catch((e) =>
+      c.log("mirror").error("guide sync failed", e),
+    );
     define("dof.search", { roles: ["owner", "worker", "planner"], input: Query, run: searchAs });
   },
   async stop() {},

@@ -337,7 +337,7 @@ function applyDecision(
       deps.inboxWrite(taskId, {
         from: "approval",
         trusted: true,
-        text: `approval ${id} ${status} (${row.category})${status === "approved" ? ": retry the request" : ""}${
+        text: `approval ${id} ${status} (${row.category})${status !== "approved" ? "" : row.category === "settings" ? ": the change is applied, do not propose it again" : ": retry the request"}${
           grant ? "; the owner allowed the category for this task (consequential requests still ask)" : ""
         }${extra?.reason ? ` — ${extra.reason}` : ""}`,
         data: { approval: id, decision: status, category: row.category, reason: extra?.reason },

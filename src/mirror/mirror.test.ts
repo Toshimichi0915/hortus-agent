@@ -273,7 +273,7 @@ test("search: CJK, LIKE fallback, filters, ordering, quoting, limit", async () =
   assert.equal(search({ q: "lark", in: "gh" }).length, 0);
   assert.equal(search({ q: 'e " st' }).length, 1);
   assert.equal(search({ q: "star *" }).length, 1);
-  assert.equal(search({ q: '"' }).length, 1);
+  assert.equal(search({ q: '"', in: "slack" }).length, 1);
   assert.equal(search({ q: "%" }).length, 0);
   assert.equal(search({ q: "lark", limit: 2 }).length, 2);
   assert.throws(() => search({ q: "lark", in: "nope" }), /no DOF named nope/);

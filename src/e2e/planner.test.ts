@@ -425,7 +425,7 @@ test("scope.dofs: task_create validates it; the Worker reads only those DOFs; on
   slack.post("D1", { user: "U1", text: "scope probe" });
   const b = await nextBatch(count);
   const [a, none, bad] = toolResults(b);
-  assert.match(bad?.output ?? "", /^invalid: unknown DOF nope \(expected one of logs, transforms, slack\)/);
+  assert.match(bad?.output ?? "", /^invalid: unknown DOF nope \(expected one of logs, transforms, hortus, slack\)/);
   const A = (JSON.parse(a?.output ?? "{}") as { id: string }).id;
   const B = (JSON.parse(none?.output ?? "{}") as { id: string }).id;
   assert.ok(A && B, `${a?.output} ${none?.output}`);
@@ -440,8 +440,8 @@ test("scope.dofs: task_create validates it; the Worker reads only those DOFs; on
   assert.match(outB, /Permission denied/);
   const scopeOf = (id: string) =>
     (JSON.parse(readFileSync(join(paths.ctl(id), "task.json"), "utf8")) as { scope: { dofs: string[] } }).scope.dofs;
-  assert.deepEqual(scopeOf(A), ["transforms", "slack"]);
-  assert.deepEqual(scopeOf(B), ["transforms"]);
+  assert.deepEqual(scopeOf(A), ["transforms", "hortus", "slack"]);
+  assert.deepEqual(scopeOf(B), ["transforms", "hortus"]);
   const cfg = { dofs: { slack: { type: "slack", owner: "U1" } } };
   assert.match(db((d) => taintOf(d, A, cfg)).join(), /^can read slack, which holds untrusted authors/);
   assert.deepEqual(

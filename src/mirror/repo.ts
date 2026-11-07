@@ -83,14 +83,15 @@ export async function init(name: string): Promise<void> {
 
 /**
  * Refuse traversal, absolute paths, NULs and `.git`; a Markdown object must be `<channel>/channel.md` or
- * `<channel>/<thread>/<message>.md`, so an id holding `/` shows up as a wrong depth.
+ * `<channel>/<thread>/<message>.md`, so an id holding `/` shows up as a wrong depth (`free`: the owner's own files, any
+ * layout).
  */
-export function unsafe(path: string): string | null {
+export function unsafe(path: string, free = false): string | null {
   if (path.startsWith("/") || path.includes("\0")) return "absolute path or NUL";
   const segs = path.split("/");
   if (segs.some((s) => s === "" || s === "." || s === ".." || s === ".git")) return "empty, ., .. or .git segment";
   const isFile = segs.length === 4 && segs[2] === "files";
-  if (path.endsWith(".md") && !isFile && !(segs.length === 2 ? segs[1] === "channel.md" : segs.length === 3)) {
+  if (path.endsWith(".md") && !free && !isFile && !(segs.length === 2 ? segs[1] === "channel.md" : segs.length === 3)) {
     return "a Markdown object is <channel>/channel.md or <channel>/<thread>/<message>.md";
   }
   return null;
@@ -152,11 +153,11 @@ function apply(root: string, c: Change): void {
   } else writeAtomic(file, c.bytes ?? render(c.frontmatter ?? {}, c.body ?? ""));
 }
 
-async function commitNow(db: DatabaseSync | null, name: string, changes: Change[], message: string) {
+async function commitNow(db: DatabaseSync | null, name: string, changes: Change[], message: string, free: boolean) {
   await init(name);
   const root = paths.dof(name);
   for (const c of changes) {
-    const why = unsafe(c.path);
+    const why = unsafe(c.path, free);
     if (why) {
       log.error("change dropped: unsafe path", undefined, { dof: name, path: c.path, why });
       continue;
@@ -204,11 +205,12 @@ export function commit(
   name: string,
   changes: Change[],
   message: string,
+  free = false,
 ): Promise<{ sha: string; diff: DiffEntry[] } | null> {
   if (unsafe(name) !== null || name.includes("/")) return Promise.reject(new Error(`bad DOF name ${name}`));
   const next = (chains.get(name) ?? Promise.resolve())
     .catch(() => {})
-    .then(() => commitNow(db, name, changes, message));
+    .then(() => commitNow(db, name, changes, message, free));
   chains.set(name, next);
   return next;
 }

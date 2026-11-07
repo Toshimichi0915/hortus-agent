@@ -97,6 +97,9 @@ messenger, one forge and the Planner's (and Workers') model:
 
 - `dofs.<name>`: a source; `type` is the connector, `owner` your user id there (only your messages are trusted by
   default: `trust`; `trust: "members"` on Telegram and Discord counts only chats and guilds you are in yourself). Forges list `repos`; a self-hosted one sets `host`.
+- `{ "type": "files", "path": "/abs/dir" }`: a DOF copied from a directory of your own files (notes, docs), synced at
+  start and every 10 minutes; it never wakes the Planner and never taints. The built-in `hortus` DOF is the Workers'
+  guide to hortus (`guide/`), synced from each release and readable by every task; it cannot be removed.
 - `owner.notify`: the DOF whose DM tells you about new approvals, failed tasks and tasks that stopped with nothing left to wake them.
 - `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
 - `policy`: `human` (the default) asks you for **every** credentialed request, one decision each. It is

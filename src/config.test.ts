@@ -88,7 +88,7 @@ test("a project name outside letters, digits, . _ - is refused by the config sch
 
 test("a DOF name that is a path, another DOF's bare repo or hortusd's own DOF is refused", () => {
   // `..` would carve HORTUS_HOME into the profile (vault.json); `x.git` is x's repo; `transforms` never taints
-  for (const n of ["..", "a/b", "", ".x", "slack.git", "logs", "transforms"])
+  for (const n of ["..", "a/b", "", ".x", "slack.git", "logs", "transforms", "hortus"])
     assert.throws(() => Config.parse({ dofs: { [n]: { type: "slack" } } }), /a DOF name/, n);
   assert.ok(Config.parse({ dofs: { "slack2.work": { type: "slack" }, logs2: { type: "slack" } } }).dofs.logs2);
 });

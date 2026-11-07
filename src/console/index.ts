@@ -1,6 +1,8 @@
 /** The console module: the web UI listener and the RPCs it owns. */
 import { createHash } from "node:crypto";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { Config, oneLine, save } from "../config.ts";
 import { changedPaths, mergePatch } from "../config-schema.ts";
@@ -180,6 +182,35 @@ const WIDENS = [
 ];
 
 /**
+ * The directories a proposal adds that hortusd uses as they are (a project's checkout, a plugin, a `files` DOF): each
+ * must be an existing absolute directory outside hortus's own state, where a task's `work` is deleted when the task
+ * closes and a missing plugin directory stops every session. A Worker cannot create one, so it learns this now.
+ */
+function badDir(base: Config, next: Config): string | undefined {
+  const state = [resolve(join(homedir(), ".hortus")), ctx().paths.home()];
+  const added: [string, string][] = [
+    ...Object.entries(next.projects).flatMap(([n, p]): [string, string][] =>
+      base.projects[n]?.path === p.path ? [] : [[`projects.${n}.path`, p.path]],
+    ),
+    ...next.worker.plugins
+      .filter((d) => !base.worker.plugins.includes(d))
+      .map((d): [string, string] => ["worker.plugins", d]),
+    ...Object.entries(next.dofs).flatMap(([n, d]): [string, string][] =>
+      d.type === "files" && d.path !== undefined && base.dofs[n]?.path !== d.path ? [[`dofs.${n}.path`, d.path]] : [],
+    ),
+  ];
+  for (const [key, dir] of added) {
+    if (!isAbsolute(dir)) return `${key}: ${dir} is not an absolute path`;
+    const r = resolve(dir);
+    if (state.some((s) => r === s || r.startsWith(`${s}/`)))
+      return `${key}: ${dir} is inside hortus's own state (a task's work is deleted when it closes): ask the owner to copy it to a permanent directory first, then propose that path`;
+    if (!existsSync(r) || !statSync(r).isDirectory())
+      return `${key}: ${dir} is not an existing directory: you cannot create it; ask the owner to put it there first, then propose it`;
+  }
+  return undefined;
+}
+
+/**
  * A Worker proposes a change to hortusd.json as a JSON Merge Patch: validated now (a bad one never reaches the owner),
  * then a `settings` entry the owner always decides (`gate.check`, never the judge). Approving applies it, unless the
  * settings changed since (approval.decide); Settings can open it as a draft to edit first.
@@ -195,6 +226,8 @@ define("settings.propose", {
     const next = json(r.data);
     const paths = changedPaths(base, next);
     if (!paths.length) throw new RpcError("invalid", "the patch changes nothing");
+    const bad = badDir(c.config, r.data);
+    if (bad) throw new RpcError("invalid", bad);
     const widens = paths.filter((p) => WIDENS.some((w) => p === w || p.startsWith(`${w}.`)));
     const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
     const summary = { reason, paths, widens, patch, diff: diff(pretty(base), pretty(next)) };

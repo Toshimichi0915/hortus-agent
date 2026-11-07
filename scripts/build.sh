@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 # a failed tsc leaves dist/ without these, so a stale build is never mistaken for a fresh one
-rm -rf dist/transforms
+rm -rf dist/transforms dist/guide
 # the build info sits outside dist/: without dist/ it would call an empty tree up to date
 [ -d dist ] || rm -f tsconfig.tsbuildinfo
 tsc -b
@@ -15,5 +15,6 @@ find dist -name '*.js' ! -path 'dist/transforms/*' ! -path 'dist/web/*' | while 
 done
 if [ -f native/landlock.c ]; then cc -O2 -Wall -o dist/hortus-landlock native/landlock.c; fi
 if [ -d transforms ]; then cp -r transforms dist/transforms; fi
+cp -r guide dist/guide
 for b in dist/bin/*.js; do [ -f "$b" ] && chmod +x "$b"; done
 exit 0

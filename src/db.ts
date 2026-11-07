@@ -181,18 +181,25 @@ function mounted(c: Pick<Config, "dofs">, scope: string | null): string[] {
   return [...can, ...gone];
 }
 
-/** Every DOF name: the configured connectors', `logs` and `transforms`. */
-export const dofNames = (c: Pick<Config, "dofs">): string[] => ["logs", "transforms", ...Object.keys(c.dofs)];
+/** The shipped guide's DOF: how hortus works, readable by every task, never configured, so never removed. */
+export const GUIDE = "hortus";
+
+/** Every DOF name: the configured connectors', `logs`, `transforms` and the guide. */
+export const dofNames = (c: Pick<Config, "dofs">): string[] => ["logs", "transforms", GUIDE, ...Object.keys(c.dofs)];
+
+/** The owner's text: approved transforms, the shipped guide, a `files` directory. Never taints, any file layout. */
+export const ownersDof = (d: string, c: Pick<Config, "dofs">): boolean =>
+  d === "transforms" || d === GUIDE || c.dofs[d]?.type === "files";
 
 /**
  * The DOFs a task can read: its `scope.dofs` (the Planner's choice) that still exist, plus
- * `transforms` (the owner's approved code, the examples a new transform starts from); every DOF when unset (chats,
+ * `transforms` (the owner's approved code, the examples a new transform starts from) and the guide; every DOF when unset (chats,
  * Planner batches, rows from before the field).
  */
 export function readable(c: Pick<Config, "dofs">, scope: string | null | undefined): string[] {
   const all = dofNames(c);
   const dofs = (scope ? (JSON.parse(scope) as { dofs?: string[] }) : {}).dofs;
-  return dofs ? all.filter((n) => n === "transforms" || dofs.includes(n)) : all;
+  return dofs ? all.filter((n) => n === "transforms" || n === GUIDE || dofs.includes(n)) : all;
 }
 
 /** `readable` for a task id (an unknown one: every DOF, as for a row without the field). */
@@ -225,7 +232,7 @@ function untrustedDofs(db: DatabaseSync, task: string, dofs: string[], c: Pick<C
     `SELECT DISTINCT author FROM search_meta WHERE dof = ? AND (COALESCE(author, '') != '' OR path NOT GLOB '*/channel.md' OR path GLOB '*/*/channel.md')`,
   );
   for (const d of dofs) {
-    if (d === "transforms") continue;
+    if (ownersDof(d, c)) continue;
     if (d === "logs") {
       if (db.prepare("SELECT 1 FROM search_meta WHERE dof = 'logs' AND instr(path, ?) != 1 LIMIT 1").get(`${task}/`))
         out.push("can read logs, which holds other tasks' sessions");
