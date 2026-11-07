@@ -25,7 +25,6 @@ import {
   Link,
   Logo,
   Meter,
-  fmtTokens,
   navigate,
   RelTime,
   useAction,
@@ -34,7 +33,17 @@ import {
 } from "../ui.tsx";
 import { ApprovalCard, approvalTitle } from "./approvals.tsx";
 import { ScheduleWhen } from "./schedules.tsx";
-import { BudgetDialog, isOpen, SessionLogDialog, TaskProblem, TaskStatus, taskHref, used } from "./tasks.tsx";
+import {
+  BudgetDialog,
+  isOpen,
+  SessionLogDialog,
+  TaskProblem,
+  TaskStatus,
+  taskHref,
+  tokenLimit,
+  tokensLine,
+  used,
+} from "./tasks.tsx";
 
 /** Unsent text per chat ("" is the new chat), kept across navigation. */
 const touch = () => matchMedia("(pointer: coarse)").matches;
@@ -516,12 +525,7 @@ export function Conversation({ id }: { id: string }) {
                 <RelTime iso={t.created} />
               </dd>
             </dl>
-            <Meter
-              value={used(t)}
-              max={t.budget.tokens}
-              label="Tokens"
-              detail={`${fmtTokens(used(t))} of ${fmtTokens(t.budget.tokens)}`}
-            />
+            <Meter value={used(t)} max={tokenLimit(t)} label="Tokens" detail={tokensLine(t)} />
             <Meter
               value={t.hours}
               max={t.budget.hours}

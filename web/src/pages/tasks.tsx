@@ -52,6 +52,14 @@ const PARTS = { open: isOpen, closed: (t: Task) => !isOpen(t) };
 /** The spend so far: usage is written when a session ends, the proxy's count (plus its runs') is live. */
 export const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0) + (t.usage?.runs ?? 0));
 
+/** A chat has no token limit (its owner is at the keyboard): 0, which a Meter shows as an empty bar. */
+export const tokenLimit = (t: Task): number => (t.kind === "chat" ? 0 : t.budget.tokens);
+
+export const tokensLine = (t: Task): string =>
+  tokenLimit(t)
+    ? `${fmtTokens(used(t))} of ${fmtTokens(t.budget.tokens)} tokens`
+    : `${fmtTokens(used(t))} tokens, no limit`;
+
 export const taskHref = (t: Pick<Task, "id" | "kind">): string =>
   t.kind === "chat" ? `/chat/${t.id}` : `/tasks/${t.id}`;
 
@@ -95,8 +103,8 @@ export function TaskProblem({ task: t, onBudget }: { task: Task; onBudget: () =>
           </Button>
         }
       >
-        It used {fmtTokens(used(t))} of {fmtTokens(t.budget.tokens)} tokens. Raise the budget and it goes on where it
-        stopped.
+        It used {tokenLimit(t) ? tokensLine(t) : `${+t.hours.toFixed(1)} of ${t.budget.hours} h`}. Raise the budget and
+        it goes on where it stopped.
       </Callout>
     );
   return (
@@ -139,22 +147,19 @@ export function BudgetDialog({ task, open, onClose }: { task: Task; open: boolea
       }
     >
       <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
-        <Meter
-          value={used(task)}
-          max={task.budget.tokens}
-          label="Spent so far"
-          detail={`${fmtTokens(used(task))} of ${fmtTokens(task.budget.tokens)} tokens`}
-        />
-        <NumberField
-          label="Tokens"
-          hint="Every model call the task makes counts, its scheduled runs' too."
-          value={tokens}
-          onChange={setTokens}
-          min={0}
-          step={100_000}
-          unit="tokens"
-          presets={[1e6, 2e6, 5e6, 10e6].map((v) => ({ label: fmtTokens(v), value: v }))}
-        />
+        <Meter value={used(task)} max={tokenLimit(task)} label="Spent so far" detail={tokensLine(task)} />
+        {tokenLimit(task) > 0 && (
+          <NumberField
+            label="Tokens"
+            hint="Every model call the task makes counts, its scheduled runs' too."
+            value={tokens}
+            onChange={setTokens}
+            min={0}
+            step={100_000}
+            unit="tokens"
+            presets={[1e6, 2e6, 5e6, 10e6].map((v) => ({ label: fmtTokens(v), value: v }))}
+          />
+        )}
         <NumberField
           label="Hours"
           hint="Time the task's sessions run, summed over its starts."
@@ -293,7 +298,7 @@ export function Tasks() {
 
 function TaskRow({ task: t }: { task: Task }) {
   const k = KIND[t.kind] ?? { label: t.kind, icon: "tasks" };
-  const pct = t.budget.tokens ? Math.min(100, (used(t) / t.budget.tokens) * 100) : 0;
+  const pct = tokenLimit(t) ? Math.min(100, (used(t) / tokenLimit(t)) * 100) : 0;
   return (
     <li>
       <Link
@@ -324,10 +329,7 @@ function TaskRow({ task: t }: { task: Task }) {
             <span className="truncate text-xs text-destructive">{errorLine(t.error)}</span>
           )}
         </span>
-        <span
-          className="flex flex-col gap-1.5 text-xs max-sm:hidden"
-          title={`${fmtTokens(used(t))} of ${fmtTokens(t.budget.tokens)} tokens`}
-        >
+        <span className="flex flex-col gap-1.5 text-xs max-sm:hidden" title={tokensLine(t)}>
           <span className="h-1 overflow-hidden rounded-full bg-muted [&>span]:block [&>span]:h-full [&>span]:rounded-full [&>span]:bg-brand">
             <span
               style={{ width: `${pct}%` }}
@@ -335,7 +337,8 @@ function TaskRow({ task: t }: { task: Task }) {
             />
           </span>
           <span className="text-muted-foreground">
-            {fmtTokens(used(t))} / {fmtTokens(t.budget.tokens)}
+            {fmtTokens(used(t))}
+            {tokenLimit(t) > 0 && ` / ${fmtTokens(t.budget.tokens)}`}
           </span>
         </span>
         <span className="justify-self-end">

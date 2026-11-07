@@ -353,7 +353,8 @@ async function finish(
   const b = tasks.get(id);
   const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number; hours?: number };
   const metered = b.metered + tasks.runsOf(b);
-  const overdrawnBy = limit.tokens !== undefined && metered >= overdrawn(limit.tokens, ctx?.config as Config);
+  const overdrawnBy =
+    row.kind !== "chat" && limit.tokens !== undefined && metered >= overdrawn(limit.tokens, ctx?.config as Config);
   // the session ran on its start's budget (task.json): a raise meanwhile found it running, so task.budget sent nothing,
   // and the stop at the old limit sat waiting with `budget_exceeded` on the card the owner had just raised
   const was = JSON.parse(row.budget ?? "{}") as { tokens?: number; hours?: number };

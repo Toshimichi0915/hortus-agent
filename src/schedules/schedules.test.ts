@@ -211,6 +211,18 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   assert.ok(tj.features.includes("schedule"));
 });
 
+test("a chat's run: the chat's whole budget.tokens, whatever the chat spent; a chat's tokens never stop its schedules", async () => {
+  const p = parent({ tokens: 1000, hours: 2 }, "chat");
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":5000}', hours = 0.5 WHERE id = ?`).run(p.id);
+  T = Date.parse("2026-06-01T09:00:00Z");
+  await set(p.id, { every: 3600 });
+  T += 60 * MIN;
+  tick();
+  const [r] = runsOf(p.id);
+  assert.ok(r, "fired: the chat's 5000/1000 tokens do not count");
+  assert.deepEqual(JSON.parse(r.budget ?? ""), { tokens: 1000, hours: 1.5 });
+});
+
 test("project origins: a chat holds every project's list, its run too; a list extended in the config reaches an open task", async () => {
   const prev = ctx.config;
   const row = (id: string) => JSON.parse(tasks.get(id).origins ?? "null");

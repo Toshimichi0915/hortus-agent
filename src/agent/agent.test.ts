@@ -132,6 +132,16 @@ test("token budget: exceeded after the second turn, reported once", async () => 
   );
 });
 
+test("token budget: a chat has none, its hours only", async () => {
+  const dir = setup({ kind: "chat", budget: { tokens: 100, hours: 10 } });
+  const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
+  script(dir, [turn, turn, turn, turn, { calls: [done("ok")] }]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(withTools(dir).length, 5);
+  assert.ok(!outbox(dir).some((m) => m.type === "budget_exceeded"));
+});
+
 test("hours budget: hours_used close to the limit stops the task within seconds", async () => {
   const dir = setup({ budget: { tokens: 1_000_000, hours: 4 }, hours_used: 4 - 1.5 / 3600 });
   script(dir, Array(20).fill({ calls: [bash("sleep 0.5")] }));

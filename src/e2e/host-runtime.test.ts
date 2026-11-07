@@ -313,40 +313,46 @@ test("hostile out/: symlink, 2 MB and unknown-type outbox files ignored; summary
   assert.match(readFileSync(join(fake, "hortusd.log"), "utf8"), /outbox file ignored: not a regular file/);
 });
 
-test("over budget with an undrained message: waiting, no restart loop", { skip }, async () => {
+/** A chat that spent a turn, made unattended: a chat has no token limit. */
+async function spender(): Promise<string> {
   const { id } = await api<{ id: string }>("task.open", { text: "spend" });
   await waitStatus(id, "waiting");
+  const db = openDb(paths.db());
+  db.prepare("UPDATE tasks SET kind = 'unattended' WHERE id = ?").run(id);
+  db.close();
+  return id;
+}
+
+/** Its sessions so far, from hortusd.log: a non-chat's card has no "started" replies. */
+const sessions = (id: string): number =>
+  readFileSync(join(fake, "hortusd.log"), "utf8")
+    .split("\n")
+    .filter((l) => l.includes('"msg":"session ended"') && l.includes(`"task":"${id}"`)).length;
+
+test("over budget with an undrained message: waiting, no restart loop", { skip }, async () => {
+  const id = await spender();
   await api("task.budget", { id, tokens: 1 });
   await api("task.send", { id, text: "one more" });
-  await until(async () => (await card(id)).replies.some((r) => r.body.text === "budget"), 15_000, "budget");
+  await until(async () => /^budget_exceeded/.test((await card(id)).task.error ?? ""), 15_000, "budget");
   await waitStatus(id, "waiting");
   await new Promise((r) => setTimeout(r, 2500));
   const c = await card(id);
   assert.equal(c.task.status, "waiting");
-  assert.equal(c.replies.filter((r) => r.body.text === "started").length, 2, "one start per message, no loop");
+  assert.equal(sessions(id), 2, "one start per message, no loop");
   // the raise is what the Worker waited for: it starts it, once
   assert.match(c.task.error ?? "", /^budget_exceeded: budget exceeded/);
   await api("task.budget", { id, tokens: 1e6 });
-  await until(
-    async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3,
-    15_000,
-    "go on",
-  );
+  await until(() => sessions(id) === 3, 15_000, "go on");
 });
 
 test("a raise while the session runs on the old budget: the stop at the old limit goes on", { skip }, async () => {
-  const { id } = await api<{ id: string }>("task.open", { text: "spend" });
-  await waitStatus(id, "waiting");
+  const id = await spender();
   // one more model call passes the limit; the raise lands during its tool
   await api("task.budget", { id, tokens: 16 });
   await api("task.send", { id, text: "!bash sleep 3" });
   await until(() => reqs(id).length >= 2, 15_000, "the call");
   await api("task.budget", { id, tokens: 1e6 });
-  await until(
-    async () => (await card(id)).replies.filter((r) => r.body.text === "started").length === 3,
-    20_000,
-    "it goes on",
-  );
+  await until(() => sessions(id) === 3, 20_000, "it goes on");
   await waitStatus(id, "waiting");
   assert.equal((await card(id)).task.error, null);
 });
@@ -354,8 +360,7 @@ test("a raise while the session runs on the old budget: the stop at the old limi
 test("the proxy's count of a task's model calls: past it the task is over budget, and never added to the session's", {
   skip,
 }, async () => {
-  const { id } = await api<{ id: string }>("task.open", { text: "spend" });
-  await waitStatus(id, "waiting");
+  const id = await spender();
   await api("task.budget", { id, tokens: 10 });
   const db = openDb(paths.db());
   db.prepare("UPDATE tasks SET metered = 5000000 WHERE id = ?").run(id);

@@ -999,13 +999,19 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     assert.equal(row().metered - n, 120);
     ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(n);
     const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
-    ctx.db.prepare("UPDATE tasks SET budget = ? WHERE id = 'T'").run(JSON.stringify({ tokens: 10, hours: 1 }));
+    // T is a chat, which has no token limit: as an unattended task first
+    ctx.db
+      .prepare("UPDATE tasks SET budget = ?, kind = 'unattended' WHERE id = 'T'")
+      .run(JSON.stringify({ tokens: 10, hours: 1 }));
     ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(10 + ctx.config.worker.context_window - 1);
     assert.equal((await model("none")).status, 200, "the agent's summary call, past its own stop");
     ctx.db.prepare("UPDATE tasks SET metered = metered + 1 WHERE id = 'T'").run();
     const over = await model("json");
     assert.equal(over.status, 403);
     assert.match(over.body, /budget exceeded/);
+    ctx.db.prepare("UPDATE tasks SET kind = 'chat' WHERE id = 'T'").run();
+    assert.equal((await model("json")).status, 200, "a chat has no token limit");
+    ctx.db.prepare("UPDATE tasks SET kind = 'unattended' WHERE id = 'T'").run();
     // what its schedules' runs spent is its own: a session after them gets what is left, not the budget again
     const cw = ctx.config.worker.context_window;
     ctx.db
@@ -1013,7 +1019,7 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
       .run(JSON.stringify({ tokens: 10 + cw, runs: 10 + cw }));
     assert.equal((await model("json")).status, 403, "its runs' tokens count");
     ctx.db.prepare("UPDATE tasks SET usage = NULL WHERE id = 'T'").run();
-    ctx.db.prepare("UPDATE tasks SET budget = ?, metered = 0 WHERE id = 'T'").run(budget.budget);
+    ctx.db.prepare("UPDATE tasks SET budget = ?, metered = 0, kind = 'chat' WHERE id = 'T'").run(budget.budget);
   } finally {
     ctx.config.worker.provider = prev;
   }

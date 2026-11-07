@@ -110,7 +110,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   const stopped = () => existsSync(join(dir, "ctl", "STOP"));
   const hasInbox = () => pending(dir, cursor).length > 0;
   const hours = () => task.hours_used + (Date.now() - started) / 3_600_000;
-  const overBudget = () => tokens >= task.budget.tokens || hours() >= task.budget.hours;
+  // a chat's owner is at the keyboard: no token limit, its hours only
+  const overBudget = () => (task.kind !== "chat" && tokens >= task.budget.tokens) || hours() >= task.budget.hours;
   let window = task.context_window;
   const contextFull = () => !!lastUsage && lastUsage.input + lastUsage.output > 0.7 * window;
   const append = async (msgs: Message[]) => {
