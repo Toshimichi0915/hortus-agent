@@ -72,9 +72,13 @@ export function toTurns(rows: TurnRow[]): Turn[] {
         if (last?.kind === "thinking") last.text += str(b.text);
         else t.parts.push({ kind: "thinking", text: str(b.text) });
         break;
-      case "tool_call":
+      case "tool_call": {
         t.parts.push({ kind: "tool", id: str(b.id), name: str(b.name), input: b.input });
+        // `done`'s summary is the answer (a chat's reply, a task's result): it shows as text, not only as a step
+        const summary = b.name === "done" ? (b.input as { summary?: unknown } | null)?.summary : undefined;
+        if (summary) t.parts.push({ kind: "text", text: str(summary), closed: true });
         break;
+      }
       case "tool_result": {
         const id = str(b.id);
         const tool = { output: str(b.output), isError: !!b.isError };

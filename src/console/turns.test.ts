@@ -61,3 +61,11 @@ test("the finished turns stay the same objects, and the whole equals one pass ov
   assert.deepEqual(build([row(1, owner("another chat"))]), toTurns([row(1, owner("another chat"))]));
   assert.deepEqual(build([]), []);
 });
+
+test("done's summary is the turn's text", () => {
+  const [t] = toTurns([row(1, { type: "tool_call", id: "c", name: "done", input: { summary: "おはようございます" } })]);
+  assert.deepEqual(
+    t?.parts.filter((p) => p.kind === "text").map((p) => p.kind === "text" && p.text),
+    ["おはようございます"],
+  );
+});
