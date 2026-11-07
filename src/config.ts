@@ -45,9 +45,9 @@ export function save(c: Config, path = paths.config()): void {
 /** The owner's calendar day: the `planner_usage` key, the Planner's and the judge's alike. */
 export const today = (c: Config): string => new Intl.DateTimeFormat("en-CA", { timeZone: c.owner.tz }).format();
 
-const FORCED_HUMAN = new Set(["transforms", "merge", "login"]);
+const FORCED_HUMAN = new Set(["transforms", "merge", "login", "settings"]);
 
-/** The Approval Gate mode: exact key, else `*`, else human. transforms/merge/login/origin:* are always human. */
+/** The Approval Gate mode: exact key, else `*`, else human. transforms/merge/login/settings/origin:* are always human. */
 export function policyFor(c: Config, category: string): Mode {
   if (FORCED_HUMAN.has(category) || category.startsWith("origin:")) return "human";
   const p = c.policy as Record<string, unknown>;

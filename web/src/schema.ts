@@ -21,6 +21,7 @@ export const ALWAYS_ASKS = [
   { what: "New or changed transforms", why: "A transform decides where a credential goes." },
   { what: "Signing in to a website", why: "Only you type your password, in the login view." },
   { what: "Reusing a stored website login", why: "A task borrowing your session on a site." },
+  { what: "Changes to these settings", why: "A task proposing them could widen its own reach." },
 ];
 
 export const validTz = (tz: string): boolean => {

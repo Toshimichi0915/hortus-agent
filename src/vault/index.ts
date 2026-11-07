@@ -1,5 +1,6 @@
 /** The vault module: CA, transforms, the gate's expiry timer, and the owner's approval and credential RPCs. */
 import { z } from "zod";
+import { changedPaths } from "../config-schema.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { onApproved as landMerge } from "../projects/merge.ts";
@@ -104,8 +105,22 @@ define("approval.decide", {
         throw new RpcError("invalid", `a login is finished in the console: sign in at /approvals/${id}/login`);
       return call("login.reject", { id }, { role: "owner" });
     }
+    // a settings proposal is applied and decided by settings.set; never over settings changed since it was made
+    if (
+      decision === "approve" &&
+      ctx().db.prepare("SELECT category FROM approvals WHERE id = ?").get(id)?.category === "settings"
+    ) {
+      const p = gate.pendingProposal(id);
+      const now = JSON.parse(JSON.stringify(ctx().config));
+      if (changedPaths(now, p.base).length && changedPaths(now, p.next).length)
+        throw new RpcError(
+          "invalid",
+          "the settings changed since this was proposed: open it in Settings to apply it onto the current ones, or reject it",
+        );
+      await call("settings.set", { config: p.next, approval: id }, { role: "owner" });
+    }
     // a transforms entry is claimed, installed and decided by approveTransform
-    if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
+    else if (!(decision === "approve" && (await approveTransform(id, credentials, reason))))
       gate.decide(id, decision, "owner", { reason, grant });
     // 3b: an approved merge lands now; a failure is the entry's reason, not this call's error
     const why = decision === "approve" ? await landMerge(id) : null;

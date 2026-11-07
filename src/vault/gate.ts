@@ -416,3 +416,13 @@ function tellExpired(rows: Pick<ApprovalRow, "id" | "category" | "task_id" | "pa
         log.error("inbox write failed", e, { id: a.id, task: taskId });
       }
 }
+
+/** The pending `settings` entry `id`, with the settings it was proposed against and the ones it proposes. */
+export function pendingProposal(id: number): { id: number; base: unknown; next: unknown } {
+  const row = ctx()
+    .db.prepare("SELECT payload FROM approvals WHERE id = ? AND category = 'settings' AND status = 'pending'")
+    .get(id) as { payload: string | null } | undefined;
+  if (!row?.payload) throw new RpcError("invalid", `approval ${id} is not a pending settings proposal`);
+  const p = JSON.parse(row.payload) as { base: unknown; next: unknown };
+  return { id, base: p.base, next: p.next };
+}

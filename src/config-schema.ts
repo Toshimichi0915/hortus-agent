@@ -131,3 +131,23 @@ export type Config = z.infer<typeof Config>;
 export type DofConfig = z.infer<typeof DofConfig>;
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 export type Mode = z.infer<typeof Mode>;
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** RFC 7386 JSON Merge Patch: objects merge key by key, `null` deletes, anything else (arrays too) replaces. */
+export function mergePatch(target: unknown, patch: unknown): unknown {
+  if (!isObject(patch)) return patch;
+  const out: Record<string, unknown> = isObject(target) ? { ...target } : {};
+  for (const [k, v] of Object.entries(patch))
+    if (v === null) delete out[k];
+    else out[k] = mergePatch(out[k], v);
+  return out;
+}
+
+/** The dotted paths where `a` and `b` differ, down to the leaves (an array is one leaf). */
+export function changedPaths(a: unknown, b: unknown, at = ""): string[] {
+  if (!isObject(a) || !isObject(b)) return JSON.stringify(a) === JSON.stringify(b) ? [] : [at];
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) =>
+    changedPaths(a[k], b[k], at ? `${at}.${k}` : k),
+  );
+}

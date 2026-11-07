@@ -256,7 +256,7 @@ export interface TaskJson {
   script?: string;
   /** "https://hortusd.internal" */
   rpc: string;
-  /** tool sets enabled: "merge", "schedule", "browser" */
+  /** tool sets enabled: "merge", "schedule", "browser", "settings" */
   features: string[];
 }
 

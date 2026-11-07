@@ -39,6 +39,7 @@ import {
   toast,
   useAction,
 } from "../ui.tsx";
+import { sectionOf } from "./settings.tsx";
 
 /** approval.list's two lists (src/vault/index.ts) */
 const PARTS = { pending: (a: Approval) => a.status === "pending", decided: (a: Approval) => a.status !== "pending" };
@@ -83,6 +84,7 @@ export function approvalTitle(a: Approval): string {
   const s = a.summary;
   if (a.category === "merge") return `Merge a change into ${str(s.project)}`;
   if (a.category === "transforms") return `${s.new ? "Install" : "Update"} the transform ${str(s.name)}`;
+  if (a.category === "settings") return `Change the settings: ${((s.paths ?? []) as string[]).join(", ")}`;
   if (a.kind === "login") return `Sign in to ${hostOf(str(s.origin))}`;
   if (a.kind === "grant") {
     if (a.category.startsWith("origin:")) return `Reuse your login for ${hostOf(a.category.slice(7))}`;
@@ -109,6 +111,15 @@ function head(a: Approval): { icon: IconName; title: ReactNode } {
       title: (
         <>
           {s.new ? "Install" : "Update"} the transform <b>{str(s.name)}</b>
+        </>
+      ),
+    };
+  if (a.category === "settings")
+    return {
+      icon: "settings",
+      title: (
+        <>
+          Change the settings: <b>{((s.paths ?? []) as string[]).join(", ")}</b>
         </>
       ),
     };
@@ -356,6 +367,28 @@ function TransformView({
   );
 }
 
+function SettingsView({ a }: { a: Approval }) {
+  const s = a.summary;
+  const widens = (s.widens ?? []) as string[];
+  const first = ((s.paths ?? []) as string[])[0] ?? "";
+  return (
+    <div className="flex flex-col gap-2 *:data-[slot=button]:self-start">
+      <p>{str(s.reason)}</p>
+      {widens.length > 0 && (
+        <Callout tone="warning" title="It changes what tasks may reach or who decides">
+          <code>{widens.join(", ")}</code>. Check this is what <em>you</em> want.
+        </Callout>
+      )}
+      <CodeBlock code={str(s.diff)} lang="diff" />
+      {a.status === "pending" && (
+        <Link to={`/settings/${sectionOf(first)}?proposal=${a.id}`} className={buttonVariants()}>
+          <Icon name="settings" /> Edit in Settings
+        </Link>
+      )}
+    </div>
+  );
+}
+
 function Body({
   a,
   full,
@@ -369,6 +402,7 @@ function Body({
 }) {
   const s = a.summary;
   if (a.category === "merge") return <MergeView id={a.id} s={s} full={full} />;
+  if (a.category === "settings") return <SettingsView a={a} />;
   if (a.category === "transforms")
     return <TransformView s={s} pending={a.status === "pending"} values={values} onValues={onValues} />;
   if (a.kind === "login")
@@ -604,7 +638,9 @@ export function ApprovalCard({ a, compact, full }: { a: Approval; compact?: bool
               ? "Approve and merge"
               : a.category === "transforms"
                 ? "Approve and install"
-                : "Approve"}
+                : a.category === "settings"
+                  ? "Approve and apply"
+                  : "Approve"}
           </Button>
           {a.grantable && (
             <Button

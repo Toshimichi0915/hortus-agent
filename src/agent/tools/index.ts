@@ -8,11 +8,13 @@ import { out } from "../stdout.ts";
 import { browserTools } from "./browser.ts";
 import { merge } from "./merge.ts";
 import { scheduleTools } from "./schedule.ts";
+import { settings } from "./settings.ts";
 
 export const features: Record<string, (task: TaskJson) => Tool[]> = {
   schedule: scheduleTools,
   browser: (task) => browserTools(task),
   merge,
+  settings,
 };
 
 /** Tools of every enabled feature; a name without a tool set yet is reported and skipped, not fatal. */

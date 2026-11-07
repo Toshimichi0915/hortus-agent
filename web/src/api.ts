@@ -278,7 +278,7 @@ export type ApprovalStatus =
 export interface Approval {
   id: number;
   kind: "request" | "login" | "grant";
-  /** `credential:<name>`, `merge`, `transforms`, `origin:<site>` */
+  /** `credential:<name>`, `merge`, `transforms`, `settings`, `origin:<site>` */
   category: string;
   task_id: string | null;
   task_title?: string;

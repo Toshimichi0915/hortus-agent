@@ -8,8 +8,9 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
+import { mergePatch } from "../../../src/config-schema.ts";
 import { fieldErrors } from "../../../src/console/forms.ts";
-import { ApiError, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
+import { ApiError, type Approval, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
 import {
   ALWAYS_ASKS,
   checkCidr,
@@ -53,6 +54,7 @@ import {
   theme,
   toast,
   useAction,
+  useLocation,
   useStore,
   useTitle,
 } from "../ui.tsx";
@@ -92,7 +94,7 @@ const SECTIONS: { group: string; items: { id: string; label: string; icon: IconN
 ];
 
 /** The section a config path is edited in. */
-function sectionOf(path: string): string {
+export function sectionOf(path: string): string {
   const [top = "", sub = ""] = path.split(".");
   if (top === "policy") return ["read", "cache", "deny"].includes(sub) ? "sandbox" : "approvals";
   return (
@@ -136,6 +138,28 @@ export function Settings({ section }: { section: string }) {
   const [draft, setDraft] = useState<Config>();
   const [server, setServer] = useState<Record<string, string>>({});
   const base = useRef("");
+  // ?proposal=<id>: a task's pending settings proposal (approvals.tsx), laid onto the draft; Save approves it as edited
+  const { path, query } = useLocation();
+  const proposalId = Number(query.get("proposal")) || 0;
+  const [proposal, setProposal] = useState<Approval>();
+  const laid = useRef(0);
+  useEffect(() => {
+    if (!proposalId || !saved || laid.current === proposalId) return;
+    laid.current = proposalId;
+    call<Approval>("approval.get", { id: proposalId }).then(
+      (a) => {
+        if (a.category !== "settings" || a.status !== "pending")
+          return toast(`Approval #${a.id} is not a pending settings proposal`, "error");
+        setProposal(a);
+        setDraft((d) => mergePatch(structuredClone(d ?? saved), a.summary.patch) as Config);
+      },
+      (e) => toast(errorText(e), "error"),
+    );
+  }, [proposalId, saved]);
+  const dropProposal = () => {
+    setProposal(undefined);
+    if (proposalId) navigate(path, true);
+  };
   // a newer copy from hortusd replaces what the draft left untouched, key by key: a project added or a source removed
   // (their own RPCs) while another section has edits must not be undone by the next Save
   useEffect(() => {
@@ -180,8 +204,15 @@ export function Settings({ section }: { section: string }) {
   }, [dirty]);
   const [save, saving] = useAction(async () => {
     try {
-      const r = await call<{ message?: string }>("settings.set", { config: draft });
+      const r = await call<{ message?: string }>("settings.set", {
+        config: draft,
+        ...(proposal ? { approval: proposal.id } : {}),
+      });
       setServer({});
+      if (proposal) {
+        dropProposal();
+        return { message: r.message ?? `Saved, and approved #${proposal.id}. hortusd reloaded its settings.` };
+      }
       const was = saved as Record<string, unknown>;
       const now = draft as Record<string, unknown>;
       if (RESTART.some((k) => JSON.stringify(now[k]) !== JSON.stringify(was[k])))
@@ -296,6 +327,12 @@ export function Settings({ section }: { section: string }) {
           </NativeSelect>
         </label>
         <div className="flex min-w-0 flex-col gap-4 *:data-[slot=button]:self-start">
+          {proposal && (
+            <Callout tone="info" title={`Proposal #${proposal.id} from ${proposal.task_title ?? "a task"}`}>
+              {String(proposal.summary.reason ?? "")} Its changes are in the draft below. Saving approves it, with any
+              edits you make here; <Link to={`/approvals/${proposal.id}`}>reject it on its page</Link>.
+            </Callout>
+          )}
           {Section ? (
             <Section d={d} />
           ) : (
@@ -322,6 +359,7 @@ export function Settings({ section }: { section: string }) {
                 onClick={() => {
                   setDraft(structuredClone(saved));
                   setServer({});
+                  dropProposal();
                 }}
               >
                 Discard

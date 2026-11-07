@@ -428,7 +428,8 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       : {}),
     ...(cookies.length ? { cookies } : {}),
     rpc: "https://hortusd.internal",
-    features: row.kind === "planner" ? [] : [...(unattendedProject ? ["merge"] : []), "schedule", "browser"],
+    features:
+      row.kind === "planner" ? [] : [...(unattendedProject ? ["merge"] : []), "schedule", "browser", "settings"],
   };
 }
 

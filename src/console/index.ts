@@ -1,14 +1,18 @@
 /** The console module: the web UI listener and the RPCs it owns. */
+import { createHash } from "node:crypto";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { Config, oneLine, save } from "../config.ts";
+import { changedPaths, mergePatch } from "../config-schema.ts";
 import type { Ctx, Module } from "../ctx.ts";
 import { taintOf } from "../db.ts";
 import { readDofFile } from "../mirror/file.ts";
 import { define } from "../rpc.ts";
 import { localConsole } from "../runtime/net.ts";
 import { RpcError } from "../types.ts";
+import * as gate from "../vault/gate.ts";
 import { type ApprovalRow, approvalOut, excerpt } from "../vault/gate.ts";
+import { diff } from "../vault/submit.ts";
 import { bus } from "./events.ts";
 import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
 import {
@@ -132,22 +136,78 @@ define("settings.get", {
   run: () => ({ config: ctx().config }),
 });
 
-/** Validates against the Config schema (the error names the zod path), writes hortusd.json, then `reload()`. */
+/**
+ * Validates against the Config schema (the error names the zod path), writes hortusd.json, then `reload()`. With
+ * `approval`, a pending `settings` proposal is approved by this save: as proposed (approval.decide) or as the owner
+ * edited it in Settings.
+ */
 define("settings.set", {
   roles: [...owner],
-  input: z.object({ config: z.unknown() }),
-  async run({ config }) {
+  input: z.object({ config: z.unknown(), approval: z.number().int().optional() }),
+  async run({ config, approval }) {
     const c = ctx();
     const r = Config.safeParse(config);
     if (!r.success) throw new RpcError("invalid", oneLine(r.error), r.error.issues);
+    const proposal = approval === undefined ? undefined : gate.pendingProposal(approval);
     save(r.data, c.paths.config());
     await c.reload();
+    // a crash here leaves it saved and pending: approving again finds the current settings already the proposed ones
+    if (proposal) {
+      const edited = changedPaths(json(r.data), proposal.next).length > 0;
+      gate.decide(proposal.id, "approve", "owner", edited ? { reason: "applied with the owner's edits" } : {});
+    }
     bus.emit("settings");
     // kept (Config is loose, for a newer version's keys), but a typo (`polcy`) would otherwise read as saved and in force
     const unknown = Object.keys(r.data).filter((k) => !(k in Config.shape));
     return unknown.length
       ? { ok: true, message: `saved; not settings hortusd knows: ${unknown.join(", ")}` }
       : { ok: true };
+  },
+});
+
+const json = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
+
+/** Settings a change to which widens what a task may reach or who decides: the entry warns about these. */
+const WIDENS = [
+  "policy",
+  "chat.allow",
+  "origins",
+  "worker.credentials",
+  "worker.plugins",
+  "judge_notes",
+  "dev",
+  "dofs",
+];
+
+/**
+ * A Worker proposes a change to hortusd.json as a JSON Merge Patch: validated now (a bad one never reaches the owner),
+ * then a `settings` entry the owner always decides (`gate.check`, never the judge). Approving applies it, unless the
+ * settings changed since (approval.decide); Settings can open it as a draft to edit first.
+ */
+define("settings.propose", {
+  roles: ["worker"],
+  input: z.object({ patch: z.record(z.string(), z.unknown()), reason: z.string().min(1).max(2000) }),
+  run({ patch, reason }, caller) {
+    const c = ctx();
+    const base = json(c.config);
+    const r = Config.safeParse(mergePatch(base, patch));
+    if (!r.success) throw new RpcError("invalid", oneLine(r.error), r.error.issues);
+    const next = json(r.data);
+    const paths = changedPaths(base, next);
+    if (!paths.length) throw new RpcError("invalid", "the patch changes nothing");
+    const widens = paths.filter((p) => WIDENS.some((w) => p === w || p.startsWith(`${w}.`)));
+    const pretty = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
+    const summary = { reason, paths, widens, patch, diff: diff(pretty(base), pretty(next)) };
+    const hash = createHash("sha256")
+      .update(JSON.stringify([base, next]))
+      .digest("hex");
+    const g = gate.check({ caller, category: "settings", hash, summary, consequential: true });
+    if (g === "pass") return { approval: null, message: "already approved" };
+    const row = c.db.prepare("SELECT payload FROM approvals WHERE id = ?").get(g.pending) as { payload: string | null };
+    c.db
+      .prepare("UPDATE approvals SET payload = ? WHERE id = ? AND status = 'pending'")
+      .run(JSON.stringify({ ...JSON.parse(row.payload ?? "{}"), base, next }), g.pending);
+    return { approval: g.pending, url: gate.approvalUrl(g.pending), paths };
   },
 });
 
