@@ -6,7 +6,7 @@ import { quote, render } from "./inbox.ts";
 import { scan } from "./loop.ts";
 import { prompt } from "./prompt.ts";
 import { formatScript, runScript } from "./script.ts";
-import { HANDOFF_PROMPT, SUMMARY_PROMPT } from "./summary.ts";
+import { HANDOFF_PROMPT, replyText, SUMMARY_PROMPT } from "./summary.ts";
 import { readTask } from "./task.ts";
 import { outbox, requests, run, script, sessionFiles, setup, writeInbox } from "./testkit.ts";
 
@@ -352,4 +352,11 @@ test("scan: planted null lines and bogus usage neither throw nor bend the token 
   const lines = ["null", "7", '"x"', asst({ input: -1e12, output: "5" }), asst({ input: 10, output: 2 })];
   writeFileSync(join(dir, "1_a.jsonl"), `${lines.join("\n")}\n`);
   assert.deepEqual(scan(dir), { tokens: 12, cursor: 0 });
+});
+
+test("a tool-less reply: its text, else what a tool call meant to write, else an error", () => {
+  const write = { name: "write", input: { path: "PROGRESS.md", content: "# PROGRESS.md\n" } };
+  assert.equal(replyText({ text: " notes ", toolCalls: [write] }), "notes");
+  assert.equal(replyText({ text: "", toolCalls: [{ name: "bash", input: { command: "x" } }, write] }), "# PROGRESS.md");
+  assert.throws(() => replyText({ text: " ", toolCalls: [{ name: "bash", input: "not json" }] }), /no text/);
 });
