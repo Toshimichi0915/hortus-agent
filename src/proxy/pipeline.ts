@@ -557,6 +557,8 @@ export interface Prepared {
   cookie: boolean;
   target: Target;
   consequential: boolean;
+  /** carries nothing but cookies the task got browsing anonymously: what the response sets is anonymous too */
+  anonymous: boolean;
   /** passed the gate through an owner's approval (not role core, not handle-free) */
   approved: boolean;
   secrets: Map<string, Secret>;
@@ -786,12 +788,35 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const listed = [...manifests].some((m) =>
     (m.consequential ?? []).some((p) => lines.some((l) => new RegExp(glob(p), "i").test(l))),
   );
-  const consequential =
+  let consequential =
     !probe &&
     (blind ||
       // ignoring case: Telegram's method names are case-insensitive, so `/deletemessage` is `/deleteMessage`
       (!read && listed) ||
       (found.some((f) => f.h.name.startsWith("c-")) && !["GET", "HEAD"].includes(template.method.toUpperCase())));
+  // a page's own fetch (a beacon, an XHR) that only carries cookies this task got browsing anonymously holds nothing of
+  // the owner's: it goes without them, as any anonymous request may, instead of asking the owner for each one. Dropping
+  // a credential only takes authority away, so a forged Sec-Fetch-Mode gains nothing
+  const mode = template.headers["sec-fetch-mode"];
+  if (
+    consequential &&
+    capturedOnly &&
+    !blind &&
+    client.role === "worker" &&
+    mode !== undefined &&
+    mode !== "navigate" &&
+    found.every((f) => f.loc === "header:cookie" && anonymousCapture(f.h.name, client.task))
+  ) {
+    template = { ...template, headers: { ...template.headers } };
+    const parts = (template.headers.cookie ?? "").split(";").filter((c) => c.search(HANDLE) === -1);
+    if (parts.some((c) => c.trim())) template.headers.cookie = parts.join(";").trim();
+    else delete template.headers.cookie;
+    found = [];
+    secrets.clear();
+    category = undefined;
+    consequential = false;
+  }
+  const anonymous = [...secrets.keys()].every((n) => anonymousCapture(n, client.task));
   if (found.length && client.task) {
     for (const m of manifests) {
       if (!m.scope?.length || consequential) continue;
@@ -845,6 +870,11 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
       return refuse(502, `installation token: ${(e as Error).message}`, { host });
     }
   }
+  // an anonymous session that rides with an owner's credential (a login form that keeps its session id) is not anonymous
+  if (!anonymous)
+    for (const n of secrets.keys())
+      if (n.startsWith("c-"))
+        ctx().db.prepare("UPDATE captured SET meta = json_remove(meta, '$.anonymous') WHERE name = ?").run(n);
   // a token minted just now must be in the set that scrubs this very response
   const s = tokens.size ? scrubber(host) : scrub;
   return {
@@ -856,6 +886,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     cookie,
     target,
     consequential,
+    anonymous,
     approved,
     secrets,
     body,
@@ -1284,6 +1315,17 @@ const capturedBy = (id: number): string | null =>
       | undefined
   )?.task ?? null;
 
+/** A capture of this task's family, set by a response to a request that carried nothing but such captures. */
+function anonymousCapture(name: string, task: string | undefined): boolean {
+  if (!task || !name.startsWith("c-")) return false;
+  const r = ctx()
+    .db.prepare(
+      "SELECT json_extract(meta, '$.task') AS task FROM captured WHERE name = ? AND json_extract(meta, '$.anonymous') = 1",
+    )
+    .get(name) as { task: string | null } | undefined;
+  return !!r?.task && family(ctx().db, task).includes(r.task);
+}
+
 /**
  * Captures → `captured` rows named `c-<id>`, keyed by (origin, kind, cookie or token name, capturing task): a cookie the
  * site sets again replaces the value under the same name, so jars keep working. Replaced as insert, then delete: the id
@@ -1303,7 +1345,8 @@ function store(p: Prepared, list: Capture[]): void {
     // a host-only cookie is its host's, as in a browser: a sibling's `session` must not replace it under one placeholder
     const hostOnly = c.kind === "cookie" && c.meta?.domain === undefined;
     const key = `${String(c.meta?.cookieName ?? c.meta?.key ?? c.name)}${hostOnly ? `@${p.host}` : ""}`;
-    const meta = JSON.stringify({ ...c.meta, key, host: p.host, task, via: p.client.role });
+    const anonymous = p.anonymous && p.client.role === "worker" ? { anonymous: true } : {};
+    const meta = JSON.stringify({ ...c.meta, key, host: p.host, task, via: p.client.role, ...anonymous });
     const old = db
       .prepare(
         "SELECT id, name FROM captured WHERE origin = ? AND kind IS ? AND json_extract(meta, '$.key') = ? AND json_extract(meta, '$.task') IS ?",

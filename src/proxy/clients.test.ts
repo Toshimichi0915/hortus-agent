@@ -37,6 +37,7 @@ interface Seen {
   url: string;
   auth?: string;
   ct?: string;
+  cookie?: string;
   body: Buffer;
 }
 const seen: Seen[] = [];
@@ -52,6 +53,7 @@ const fake = http.createServer((req, res) => {
       url: u,
       auth: req.headers.authorization,
       ct: req.headers["content-type"],
+      cookie: req.headers.cookie,
       body: Buffer.concat(c),
     });
     const json = (v: unknown) => {
@@ -369,6 +371,19 @@ test("a cookie the site sets again counts its Max-Age from then: the jar keeps a
   assert.equal(held(), undefined, "two hours old and unset since: gone");
   await curl("cdn.test", "/roll");
   assert.ok((held()?.expires ?? 0) >= first);
+});
+
+test("a page's beacon with only cookies the task got anonymously goes without them; a navigation still asks", async () => {
+  const sid = /set-cookie: sid=(hortus-secret-c-\d+)/i.exec((await curl("cdn.test", "/cookie", "-i")).body)?.[1];
+  assert.ok(sid);
+  const post = (mode: string) =>
+    curl("cdn.test", "/beacon", "-H", `cookie: sid=${sid}; plain=1`, "-H", `sec-fetch-mode: ${mode}`, "-d", "x=1");
+  const r = await post("no-cors");
+  assert.equal(r.status, 200, r.body);
+  assert.equal(seen.at(-1)?.cookie, "plain=1");
+  assert.equal(JSON.parse((await post("navigate")).body).category, "origin:cdn.test");
+  ctx.db.prepare("UPDATE captured SET meta = json_remove(meta, '$.anonymous')").run();
+  assert.equal(JSON.parse((await post("no-cors")).body).category, "origin:cdn.test", "not known anonymous: asks");
 });
 
 // last: it taints the task
