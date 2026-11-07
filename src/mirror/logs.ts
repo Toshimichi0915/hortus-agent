@@ -2,13 +2,14 @@
  * The `logs` DOF: plain files, no repo. `publishLog` renders a task's core sessions into `logs/<id>/session.md`,
  * copies its summary, and upserts both index rows in the same call.
  */
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { Message, SessionEntry } from "@hortus/core";
 import { type DatabaseSync, now } from "../db.ts";
 import { MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, MAX_SUMMARY, readCapped, readDir } from "../hostile.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
-import { upsert } from "./fts.ts";
+import { remove, upsert } from "./fts.ts";
 import { parse, render } from "./render.ts";
 import { writeAtomic } from "./repo.ts";
 
@@ -160,6 +161,13 @@ export function writeLog(db: DatabaseSync, taskId: string, files: Record<string,
     writeAtomic(join(paths.logs(), taskId, name), text);
     upsert(db, { dof: "logs", path: `${taskId}/${name}`, author: "", ts, title, body: parse(text).body });
   }
+}
+
+/** `logs/<taskId>/` gone, and its index rows. */
+export function removeLog(db: DatabaseSync, taskId: string): void {
+  if (!safeId(taskId)) throw new Error(`bad task id ${taskId}`);
+  rmSync(join(paths.logs(), taskId), { recursive: true, force: true });
+  for (const f of ["summary.md", "session.md"]) remove(db, "logs", `${taskId}/${f}`);
 }
 
 /** Render the task's sessions and summary into the `logs` DOF; every exit replaces both files. */

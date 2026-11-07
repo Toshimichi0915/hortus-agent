@@ -45,6 +45,19 @@ import {
   used,
 } from "./tasks.tsx";
 
+/** Asks, then deletes the chat (its rows and its `logs` DOF entry); off its page if that is where the owner is. */
+export async function deleteChat(id: string): Promise<void> {
+  const ok = await confirmAction({
+    title: "Delete this chat?",
+    body: "Its messages, its decided approvals and its session log in the logs DOF are deleted for good.",
+    confirm: "Delete chat",
+    danger: true,
+  });
+  if (!ok) return;
+  await call("task.delete", { id });
+  if (location.pathname === `/chat/${id}`) navigate("/");
+}
+
 /** Unsent text per chat ("" is the new chat), kept across navigation. */
 const touch = () => matchMedia("(pointer: coarse)").matches;
 
@@ -577,6 +590,9 @@ export function Conversation({ id }: { id: string }) {
                 Close chat
               </Button>
             )}
+            <Button variant="quiet-danger" icon="trash" onClick={() => deleteChat(id)}>
+              Delete chat
+            </Button>
           </div>
         </aside>
       )}

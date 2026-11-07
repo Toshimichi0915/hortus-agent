@@ -12,6 +12,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -24,7 +25,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { call, type Task, useCall } from "./api.ts";
 import "./index.css";
 import { ApprovalPage, Approvals, LoginView } from "./pages/approvals.tsx";
-import { Conversation, Home } from "./pages/chat.tsx";
+import { Conversation, deleteChat, Home } from "./pages/chat.tsx";
 import { Enroll, SignIn } from "./pages/remote.tsx";
 import { Schedules } from "./pages/schedules.tsx";
 import { DofFileView, Search } from "./pages/search.tsx";
@@ -273,6 +274,14 @@ function AppSidebar() {
                         <span>{c.title}</span>
                       </Link>
                     </SidebarMenuButton>
+                    <SidebarMenuAction
+                      showOnHover
+                      aria-label={`Delete chat ${c.title}`}
+                      title="Delete chat"
+                      onClick={() => deleteChat(c.id)}
+                    >
+                      <Icon name="trash" size={16} />
+                    </SidebarMenuAction>
                   </SidebarMenuItem>
                 ))}
                 {chats.length > 15 && (

@@ -27,7 +27,7 @@ import type { Ctx } from "../ctx.ts";
 import { now, readable } from "../db.ts";
 import { rmTree } from "../hostile.ts";
 import { taskId } from "../ids.ts";
-import { publishLog, renderSession } from "../mirror/index.ts";
+import { publishLog, removeLog, renderSession } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import {
@@ -552,6 +552,31 @@ define("task.close", {
   input: z.object({ id: z.string(), outcome: z.enum(["done", "failed"]).default("done") }),
   async run({ id, outcome }) {
     await close(id, outcome);
+    return { ok: true };
+  },
+});
+
+/**
+ * A chat gone for good: closed first if open, then its rows, its decided approvals and its `logs` DOF entry, and its
+ * schedules' runs too.
+ */
+define("task.delete", {
+  roles: [...owner],
+  input: Id,
+  async run({ id }) {
+    if (get(id).kind !== "chat") throw new RpcError("invalid", `task ${id} is not a chat`);
+    if (!isClosed(get(id).status)) await close(id, "done");
+    const db = ctx().db;
+    const runs = db.prepare("SELECT id FROM tasks WHERE parent = ?").all(id) as { id: string }[];
+    for (const t of [...runs.map((r) => r.id), id]) {
+      removeLog(t);
+      for (const table of ["inbox", "outbox", "replies"]) db.prepare(`DELETE FROM ${table} WHERE task_id = ?`).run(t);
+      // a pending one outlives the close (a transform, a login) and still wants the owner's decision: kept
+      db.prepare("DELETE FROM approvals WHERE task_id = ? AND status != 'pending'").run(t);
+      db.prepare("DELETE FROM tasks WHERE id = ?").run(t);
+    }
+    bus.emit("tasks", { id });
+    bus.emit("approvals", { task: id });
     return { ok: true };
   },
 });

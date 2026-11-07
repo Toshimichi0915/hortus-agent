@@ -40,6 +40,9 @@ export const writeLog = (taskId: string, files: Record<string, string>, title?: 
 export const publishLog = (taskId: string, title: string, status: string, events?: string[]): Promise<void> =>
   logs.publishLog(db(), taskId, title, status, events);
 
+/** Delete `logs/<taskId>/` and its index rows. */
+export const removeLog = (taskId: string): void => logs.removeLog(db(), taskId);
+
 /** Full-text search over every DOF, or over `only` (a task's readable DOFs); an unknown `in` is `not_found`. */
 export function search(q: SearchQuery, only?: string[]): SearchHit[] {
   const known = only ?? dofNames(ctx?.config ?? { dofs: {} });

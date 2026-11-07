@@ -3,13 +3,13 @@
  * At each exit of a run its tokens are charged to the parent, its summary becomes the row's `last-summary.md`, and an
  * empty `result` closes it at once without a `logs` entry (and deletes it when it never reached the model).
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { quote } from "../agent/inbox.ts";
 import { bus } from "../console/events.ts";
 import type { Ctx } from "../ctx.ts";
 import { replaceFile } from "../hostile.ts";
-import { remove as unindex } from "../mirror/fts.ts";
+import { removeLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import * as tasks from "../runtime/tasks.ts";
 import type { OutboxMsg } from "../types.ts";
@@ -128,8 +128,7 @@ async function discard(id: string): Promise<void> {
   const run = tasks.get(id);
   if (!tasks.isClosed(run.status)) await tasks.close(id, "done");
   const d = db();
-  rmSync(join(paths.logs(), id), { recursive: true, force: true });
-  for (const f of ["summary.md", "session.md"]) unindex(d, "logs", `${id}/${f}`);
+  removeLog(id);
   if (tokensOf(tasks.get(id)) === 0)
     for (const t of ["tasks", "inbox", "outbox", "replies"])
       d.prepare(`DELETE FROM ${t} WHERE ${t === "tasks" ? "id" : "task_id"} = ?`).run(id);

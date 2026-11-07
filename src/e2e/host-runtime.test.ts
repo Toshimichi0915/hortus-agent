@@ -459,6 +459,39 @@ test("close: dirs gone, logs DOF entry; another chat's Worker finds it with dof 
   assert.match(texts(await card(id)), /tool said: ---\ntitle: hello zebracorn\n[\s\S]*notes from fake/);
 });
 
+test("delete: an open chat is closed, then its rows, decided approvals, logs DOF entry and search rows are gone", {
+  skip,
+}, async () => {
+  const { id } = await api<{ id: string }>("task.open", { text: "quokkafern to forget" });
+  await waitStatus(id, "waiting");
+  const db = openDb(paths.db());
+  const approval = db.prepare("INSERT INTO approvals(kind, category, task_id, status) VALUES ('request', ?, ?, ?)");
+  approval.run("http", id, "approved");
+  approval.run("transforms", id, "pending"); // outlives the close: still the owner's to decide
+  // through the CLI, which is task.delete
+  const cli = spawnSync(process.execPath, ["--no-warnings", bin("hortus"), "delete", id], {
+    env: { ...process.env, HORTUS_HOME: home },
+    encoding: "utf8",
+  });
+  assert.match(cli.stdout, new RegExp(`deleted ${id}`), cli.stdout + cli.stderr);
+  assert.ok(!existsSync(paths.task(id)));
+  assert.ok(!existsSync(join(paths.logs(), id)));
+  assert.equal(db.prepare("SELECT count(*) AS n FROM tasks WHERE id = ?").get(id)?.n, 0);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM replies WHERE task_id = ?").get(id)?.n, 0);
+  assert.deepEqual(
+    db
+      .prepare("SELECT category, status FROM approvals WHERE task_id = ?")
+      .all(id)
+      .map((r) => ({ ...r })),
+    [{ category: "transforms", status: "pending" }],
+  );
+  db.close();
+  const rpc = rpcClient(paths.socket());
+  const hits = (await rpc.call("dof.search", { q: "quokkafern", in: "logs" })) as unknown[];
+  rpc.close();
+  assert.deepEqual(hits, []);
+});
+
 /** An unattended task straight into the queue (no Planner in this test), its brief one model directive. */
 function enqueue(brief: string): string {
   const id = `u${Date.now().toString(36)}`;

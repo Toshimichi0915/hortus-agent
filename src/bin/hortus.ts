@@ -317,6 +317,13 @@ const commands: Record<string, Command> = {
       console.log(`closed ${id}`);
     },
   },
+  delete: {
+    usage: "delete <id>                         delete a chat: its messages, decided approvals and logs DOF entry",
+    async run([id], rpc) {
+      await rpc.call("task.delete", { id: needId(id, "delete <id>") });
+      console.log(`deleted ${id}`);
+    },
+  },
   search: {
     usage: "search <query> [--in d] [--author a] [--since t] [--until t] [--limit n]",
     async run(args, rpc) {
