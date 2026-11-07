@@ -2,7 +2,7 @@
  * A task's stream as a conversation: the owner's messages as bubbles, the Worker's text as Markdown, and the steps in
  * between (thinking, tool calls and their output, status lines) folded into one "activity" line per run of them.
  */
-import { memo, type ReactNode, useEffect, useState } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { type Part, str, type Tool, type Turn, turnBuilder } from "../../src/console/turns.ts";
 import type { Row } from "./api.ts";
 import { Markdown } from "./markdown.tsx";
@@ -234,6 +234,7 @@ function liveText(steps: Part[]): ReactNode {
 
 function Activity({ steps, live }: { steps: Part[]; live: boolean }) {
   const [open, setOpen] = useState(live);
+  const box = useRef<HTMLDivElement>(null);
   // a run that finishes folds away, as a finished one starts folded
   useEffect(() => {
     if (!live) setOpen(false);
@@ -241,37 +242,49 @@ function Activity({ steps, live }: { steps: Part[]; live: boolean }) {
   const failed = steps.filter((p) => p.kind === "tool" && p.isError).length;
   return (
     <div
+      ref={box}
       className={cn(
-        "max-w-full self-start rounded-lg border border-transparent",
-        open && "self-stretch border-border bg-card",
+        "rounded-lg border",
+        // open, the logo's column (28px + the 14px gap) mirrored on the right: centred on the composer, and both edges
+        // clear of its rounded corners
+        open ? "self-stretch border-border bg-card sm:mr-[42px]" : "max-w-full self-start border-transparent",
       )}
     >
-      <button
-        type="button"
-        className={cn(
-          "flex max-w-full cursor-pointer items-center gap-2 rounded-lg py-1 pr-2.5 pl-2 text-left text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground",
-          open && "w-full rounded-b-none border-b",
-        )}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {live ? <Spinner size={14} /> : <Icon name="sparkle" size={16} />}
-        <span
+      {/* open, the header sticks to the top of the scroll so a long list closes from where you are. The square
+          wrapper in the page's colour sits over the box's border (-1px) and hides it behind the header's rounded
+          corners once the box's own top has scrolled off */}
+      <div className={open ? "sticky top-0 z-10 -mx-px -mt-px bg-background" : "contents"}>
+        <button
+          type="button"
           className={cn(
-            "min-w-0 truncate",
-            live &&
-              "w-fit bg-[linear-gradient(90deg,var(--muted-foreground)_30%,var(--foreground)_50%,var(--muted-foreground)_70%)] bg-[length:220%_100%] bg-clip-text pt-1 text-[15px] text-transparent motion-safe:animate-shimmer pt-0! text-[13px]!",
+            "flex cursor-pointer items-center gap-2 rounded-lg py-1 pr-2.5 pl-2 text-left text-[13px] text-muted-foreground hover:bg-muted hover:text-foreground",
+            open ? "w-full rounded-b-none border bg-card" : "max-w-full",
           )}
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open);
+            // closing from deep in the list: land back on the section, not wherever the folded height leaves you
+            if (open) requestAnimationFrame(() => box.current?.scrollIntoView({ block: "nearest" }));
+          }}
         >
-          {live ? liveText(steps) : summarize(steps)}
-        </span>
-        {!live && failed > 0 && (
-          <span className="text-xs whitespace-nowrap text-destructive">
-            {plural(failed, "1 step failed", "# steps failed")}
+          {live ? <Spinner size={14} /> : <Icon name="sparkle" size={16} />}
+          <span
+            className={cn(
+              "min-w-0 truncate",
+              live &&
+                "w-fit bg-[linear-gradient(90deg,var(--muted-foreground)_30%,var(--foreground)_50%,var(--muted-foreground)_70%)] bg-[length:220%_100%] bg-clip-text pt-1 text-[15px] text-transparent motion-safe:animate-shimmer pt-0! text-[13px]!",
+            )}
+          >
+            {live ? liveText(steps) : summarize(steps)}
           </span>
-        )}
-        <Icon name="chevronDown" size={16} className={cn("transition-transform", open && "ml-auto rotate-180")} />
-      </button>
+          {!live && failed > 0 && (
+            <span className="text-xs whitespace-nowrap text-destructive">
+              {plural(failed, "1 step failed", "# steps failed")}
+            </span>
+          )}
+          <Icon name="chevronDown" size={16} className={cn("transition-transform", open && "ml-auto rotate-180")} />
+        </button>
+      </div>
       {open && (
         <ol className="py-1.5">
           {steps.map((s, i) => (

@@ -441,7 +441,7 @@ export function Conversation({ id }: { id: string }) {
           </div>
         </header>
         <div
-          className="min-h-0 flex-1 overflow-y-auto"
+          className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
           ref={scroller}
           onScroll={() => {
             const s = scroller.current;
