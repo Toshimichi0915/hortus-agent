@@ -16,8 +16,8 @@ import { define } from "../rpc.ts";
 import { exitHooks } from "../runtime/dispatcher.ts";
 import * as tasks from "../runtime/tasks.ts";
 import { type Caller, RpcError } from "../types.ts";
-import * as runs from "./runs.ts";
 import type { ScheduleRow } from "./runs.ts";
+import * as runs from "./runs.ts";
 
 export const MIN_INTERVAL = 300;
 export const MAX_SCRIPT = 16 * 1024;

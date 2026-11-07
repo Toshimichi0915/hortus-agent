@@ -1,14 +1,15 @@
 /** Tasks: the list, one task's card, and the task widgets the chat shares (status, budget, session log). */
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+
 import { useEffect, useState } from "react";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { errorLine } from "../../../src/console/text.ts";
 import { GOES_ON } from "../../../src/types.ts";
 import { call, type Msg, type Row, streamRows, type Task, type TaskDetail, useCall, usePaged } from "../api.ts";
 import { Markdown } from "../markdown.tsx";
 import { Thread } from "../thread.tsx";
 import {
-  buttonVariants,
   Button,
+  buttonVariants,
   Callout,
   Card,
   Choice,

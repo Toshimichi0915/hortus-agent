@@ -26,7 +26,7 @@ import { tempDir, until } from "../test/until.ts";
 import type { TaskJson } from "../types.ts";
 import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { invoke } from "../vault/transforms.ts";
-import { connect, flags, launch, page as attach } from "./cdp.ts";
+import { page as attach, connect, flags, launch } from "./cdp.ts";
 import { jar, registrable } from "./jar.ts";
 import { browserModule, IDLE } from "./login-view.ts";
 import { BrowserSession } from "./tools.ts";

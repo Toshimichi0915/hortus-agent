@@ -1,7 +1,8 @@
 /** Search over every mirror (`dof search`), and one mirrored file. */
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Input } from "@/components/ui/input";
+
 import { type ReactNode, useEffect, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { type Config, type DofFile, type SearchHit, useCall } from "../api.ts";
 import { Markdown } from "../markdown.tsx";
 import {

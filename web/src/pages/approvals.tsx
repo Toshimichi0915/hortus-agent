@@ -4,8 +4,8 @@
  */
 import {
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
   useEffect,
   useId,
   useRef,
@@ -17,8 +17,8 @@ import { button as buttonOf, modifiers, pagePoint } from "../../../src/console/l
 import { type Approval, type ApprovalStatus, bus, call, loginStream, useCall, usePaged } from "../api.ts";
 import { CodeBlock } from "../markdown.tsx";
 import {
-  buttonVariants,
   Button,
+  buttonVariants,
   Callout,
   cn,
   Empty,

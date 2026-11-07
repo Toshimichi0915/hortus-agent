@@ -3,10 +3,11 @@
  * the Save bar sends it whole (`settings.set` validates, writes and reloads). Sources, Projects and Credentials save
  * as they go, through their own RPCs.
  */
-import { NativeSelect, NativeSelectOption, NativeSelectOptGroup } from "@/components/ui/native-select";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
+
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 import { fieldErrors } from "../../../src/console/forms.ts";
 import { ApiError, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
 import {
@@ -27,23 +28,23 @@ import {
   Card,
   Choice,
   CopyButton,
-  confirmAction,
   cn,
+  confirmAction,
   errorText,
   fmtNum,
   fmtTokens,
   Icon,
-  type IconName,
   IconButton,
+  type IconName,
   Link,
   ListInput,
   Meter,
-  navigate,
   NumberField,
+  navigate,
   RelTime,
+  SERVICES,
   SectionHead,
   SelectField,
-  SERVICES,
   Spinner,
   Switch,
   setLeaveGuard,

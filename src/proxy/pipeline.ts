@@ -11,9 +11,9 @@ import { BlockList, isIP } from "node:net";
 import { PassThrough, pipeline, Readable, type Transform } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import zlib from "node:zlib";
+import type { Config } from "../config.ts";
 import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
-import type { Config } from "../config.ts";
 import { budgetTokens, type Manifest, type Req, type ResponseResult, type Template } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import {

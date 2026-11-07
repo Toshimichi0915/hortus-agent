@@ -1,14 +1,15 @@
 /** Chat: the home page (a new chat) and a conversation, in the manner of Claude's and ChatGPT's. */
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Kbd } from "@/components/ui/kbd";
+
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Kbd } from "@/components/ui/kbd";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import {
   type Approval,
   type Config,
   type Credential,
   call,
-  reconnecting,
   type Row,
+  reconnecting,
   streamRows,
   type Task,
   type TaskDetail,
@@ -16,8 +17,8 @@ import {
 } from "../api.ts";
 import { Pending, Thread } from "../thread.tsx";
 import {
-  buttonVariants,
   Button,
+  buttonVariants,
   Card,
   confirmAction,
   Icon,

@@ -1,7 +1,7 @@
 /** Rows to turns (turns.ts): a hostile row, and the finished turns kept while the last is rebuilt. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { str, toTurns, turnBuilder, type TurnRow } from "./turns.ts";
+import { str, type TurnRow, toTurns, turnBuilder } from "./turns.ts";
 
 const row = (seq: number, body: unknown): TurnRow => ({ seq, body, created: null });
 

@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { type Tool, tool } from "@hortus/core";
 import { z } from "zod";
 import { BrowserSession } from "../../browser/tools.ts";
-import { taskRpc } from "../rpc.ts";
 import type { TaskJson } from "../../types.ts";
+import { taskRpc } from "../rpc.ts";
 
 /** `paths.work` is `<task dir>/out/work` on the host and in the VM. */
 export function browserTools(

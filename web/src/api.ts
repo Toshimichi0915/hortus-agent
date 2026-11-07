@@ -5,10 +5,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Config } from "../../src/config-schema.ts";
-import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
 import { pageAt, pageWindow } from "../../src/console/forms.ts";
 import { liveStream } from "../../src/console/live.ts";
 import { loginHref } from "../../src/console/next.ts";
+import type { CredentialType, SearchHit, StdoutLine, TaskKind, TaskStatus } from "../../src/types.ts";
 import { errorText, store } from "./ui.tsx";
 
 export type { Config, CredentialType, SearchHit, TaskKind, TaskStatus };

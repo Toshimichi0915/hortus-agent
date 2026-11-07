@@ -11,8 +11,8 @@ import { approveTransform } from "./submit.ts";
 import * as transforms from "./transforms.ts";
 import { bind, ctx, minted, NAME, read, write } from "./vault.ts";
 
-export { ca, gate, transforms };
 export { transformsDofModule } from "./dof.ts";
+export { ca, gate, transforms };
 export const gateDeps = gate.deps;
 
 let timer: NodeJS.Timeout | undefined;

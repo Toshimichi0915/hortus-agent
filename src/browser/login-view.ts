@@ -21,7 +21,7 @@ import * as sessionNet from "../runtime/session-net.ts";
 import { type Caller, RpcError } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { type Browser, type Cdp, CHROMIUM, connect, launch, page } from "./cdp.ts";
-import { grantedOrigins, jar, loginCookies, origins as capturedOrigins, registrable } from "./jar.ts";
+import { origins as capturedOrigins, grantedOrigins, jar, loginCookies, registrable } from "./jar.ts";
 
 const log = logger("login-view");
 

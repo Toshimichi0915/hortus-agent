@@ -4,7 +4,7 @@
  * the Worker's browser tools and by hortusd's login view.
  */
 import { type ChildProcess, spawn } from "node:child_process";
-import { X509Certificate, createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";

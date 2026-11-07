@@ -5,8 +5,8 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import type { Ctx, Module } from "../ctx.ts";
 import { trusted } from "../connectors/trust.ts";
+import type { Ctx, Module } from "../ctx.ts";
 import { channelMeta, type DatabaseSync, dofNames, readableOf, taint, taintOf } from "../db.ts";
 import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
@@ -15,8 +15,8 @@ import * as fts from "./fts.ts";
 import * as logs from "./logs.ts";
 import * as repo from "./repo.ts";
 
-export { parse, render } from "./render.ts";
 export { renderSession } from "./logs.ts";
+export { parse, render } from "./render.ts";
 
 let ctx: Ctx | undefined;
 

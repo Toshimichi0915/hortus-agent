@@ -5,8 +5,8 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Browser, type Cdp, connect, launch, page } from "./cdp.ts";
 import type { Cookie, TaskJson } from "../types.ts";
+import { type Browser, type Cdp, connect, launch, page } from "./cdp.ts";
 
 export const LOAD_MS = 10_000;
 export const EVAL_MS = 5_000;
