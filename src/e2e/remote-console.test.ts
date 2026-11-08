@@ -539,11 +539,14 @@ test("the web UI at 390 px: pick the project, send, watch the reply arrive, appr
 
   await go("/");
   await fits("/");
-  await wait(`document.querySelector("select")?.options.length === 3`);
-  assert.equal(await ev(`document.querySelector("select").options[2].textContent`), "notes");
-  await ev(
-    `(() => { const s = document.querySelector("select"); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, ${JSON.stringify(notes)}); s.dispatchEvent(new Event("change", { bubbles: true })); return 1; })()`,
-  );
+  const picker = `[...document.querySelectorAll('[role="combobox"]')].find((b) => b.labels[0]?.textContent === "Project")`;
+  await wait(`!!${picker}`);
+  await ev(`${picker}.click()`);
+  const options = `[...document.querySelectorAll('[role="option"]')]`;
+  await wait(`${options}.length === 3`);
+  assert.equal(await ev(`${options}[2].textContent`), "notes");
+  await ev(`${options}[2].click()`);
+  await wait(`${picker}.textContent === "notes"`);
   await say("!bash cd $CWD && echo three >> todo.txt && cat todo.txt");
   await wait(`/^\\/chat\\/./.test(location.pathname)`);
   const id = (await ev<string>("location.pathname")).split("/")[2] as string;
