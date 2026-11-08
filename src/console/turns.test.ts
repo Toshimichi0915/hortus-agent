@@ -1,7 +1,7 @@
 /** Rows to turns (turns.ts): a hostile row, and the finished turns kept while the last is rebuilt. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { str, type TurnRow, toTurns, turnBuilder } from "./turns.ts";
+import { progress, str, type TurnRow, toTurns, turnBuilder } from "./turns.ts";
 
 const row = (seq: number, body: unknown): TurnRow => ({ seq, body, created: null });
 
@@ -68,4 +68,24 @@ test("done's summary is the turn's text", () => {
     t?.parts.filter((p) => p.kind === "text").map((p) => p.kind === "text" && p.text),
     ["おはようございます"],
   );
+});
+
+test("a live turn's progress: its time from the first row, and the commands of the whole turn", () => {
+  const at = (created: string, body: unknown): TurnRow => ({ seq: 1, body, created });
+  const bash = { type: "tool_call", id: "c", name: "bash", input: { command: "ls" } };
+  const [t] = toTurns([
+    at("2026-01-01T00:00:00.000Z", bash),
+    at("2026-01-01T00:00:01.000Z", { type: "text", text: "a reply between runs" }),
+    at("2026-01-01T00:00:02.000Z", bash),
+    at("2026-01-01T00:00:03.000Z", { type: "tool_call", id: "r", name: "read", input: {} }),
+  ]);
+  assert.ok(t);
+  const after = (ms: number) => Date.parse("2026-01-01T00:00:00.000Z") + ms;
+  assert.equal(progress(t, after(59_000)), "59s · 2 commands");
+  assert.equal(progress(t, after(12 * 60_000 + 30_000)), "12m 30s · 2 commands");
+  assert.equal(progress(t, after(72 * 60_000 + 30_000)), "1h 12m 30s · 2 commands");
+  assert.equal(progress(t, after(60 * 60_000)), "1h 0m 0s · 2 commands");
+  assert.equal(progress(t, after(72 * 60_000), true), "1h 12m 0s+ · 2+ commands");
+  assert.equal(progress(t, after(-5000)), "0s · 2 commands", "a client clock behind the daemon's");
+  assert.equal(progress({ ...t, started: null, parts: [] }, after(0)), "");
 });

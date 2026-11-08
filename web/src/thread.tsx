@@ -3,7 +3,7 @@
  * between (thinking, tool calls and their output, status lines) folded into one "activity" line per run of them.
  */
 import { memo, type ReactNode, useEffect, useRef, useState } from "react";
-import { type Part, str, type Tool, type Turn, turnBuilder } from "../../src/console/turns.ts";
+import { type Part, progress, str, type Tool, type Turn, turnBuilder } from "../../src/console/turns.ts";
 import type { Row } from "./api.ts";
 import { Markdown } from "./markdown.tsx";
 import { CopyButton, cn, Icon, type IconName, Logo, RelTime, Spinner } from "./ui.tsx";
@@ -33,7 +33,7 @@ export function Thread({ id, rows, live }: { id: string; rows: Row[]; live: bool
         t.role === "user" ? (
           <UserTurn key={t.key} turn={t} />
         ) : (
-          <AssistantTurn key={t.key} turn={t} live={live && i === turns.length - 1} />
+          <AssistantTurn key={t.key} turn={t} live={live && i === turns.length - 1} cut={i === 0 && cut > 0} />
         ),
       )}
     </>
@@ -61,7 +61,7 @@ const UserTurn = memo(function UserTurn({ turn }: { turn: Turn }) {
   );
 });
 
-const AssistantTurn = memo(function AssistantTurn({ turn, live }: { turn: Turn; live: boolean }) {
+const AssistantTurn = memo(function AssistantTurn({ turn, live, cut }: { turn: Turn; live: boolean; cut: boolean }) {
   const segs: (Part | Part[])[] = [];
   for (const p of turn.parts) {
     if (p.kind === "text" || p.kind === "error") segs.push(p);
@@ -84,7 +84,7 @@ const AssistantTurn = memo(function AssistantTurn({ turn, live }: { turn: Turn; 
         {segs.map((s, i) => {
           const end = i === segs.length - 1;
           const key = `${turn.key}.${i}`;
-          if (Array.isArray(s)) return <Activity key={key} steps={s} live={live && end} />;
+          if (Array.isArray(s)) return <Activity key={key} steps={s} turn={turn} cut={cut} live={live && end} />;
           if (s.kind === "text")
             return (
               <Markdown
@@ -140,10 +140,18 @@ export function Pending({ text = "Thinking" }: { text?: string }) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Activity
 
+const commandLines = (p: Tool): string[] => {
+  const c = (p.input as { command?: unknown } | null)?.command;
+  return p.name === "bash" && typeof c === "string" ? c.trim().split("\n") : [];
+};
+
 function label(p: Tool): { icon: IconName; text: ReactNode } {
   const i = (p.input ?? {}) as Record<string, unknown>;
   const s = (k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
-  if (p.name === "bash") return { icon: "terminal", text: <code className="whitespace-pre-wrap">{s("command")}</code> };
+  if (p.name === "bash") {
+    const [first, ...rest] = commandLines(p);
+    return { icon: "terminal", text: <code>{rest.length ? `${first} …` : first}</code> };
+  }
   if (p.name === "read")
     return {
       icon: "file",
@@ -204,11 +212,10 @@ function label(p: Tool): { icon: IconName; text: ReactNode } {
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many.replace("#", String(n)));
 
-function summarize(steps: Part[]): string {
+function summarize(steps: Part[]): ReactNode {
   const tools = steps.filter((p): p is Tool => p.kind === "tool");
   const count = (f: (t: Tool) => boolean) => tools.filter(f).length;
   const bits: string[] = [];
-  if (steps.some((p) => p.kind === "thinking")) bits.push("thought");
   const cmd = count((t) => t.name === "bash");
   if (cmd) bits.push(plural(cmd, "ran a command", "ran # commands"));
   const read = count((t) => t.name === "read");
@@ -219,8 +226,16 @@ function summarize(steps: Part[]): string {
   if (count((t) => t.name === "merge")) bits.push("asked to merge");
   if (count((t) => t.name === "send")) bits.push("sent a message");
   if (count((t) => t.name === "schedule")) bits.push("set a schedule");
-  const s = bits.join(", ") || "worked";
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  const s = bits.join(", ");
+  if (steps.some((p) => p.kind === "thinking"))
+    return s ? (
+      <>
+        Thought, <span className="font-mono text-xs">{s}</span>
+      </>
+    ) : (
+      "Thought"
+    );
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "Worked";
 }
 
 function liveText(steps: Part[]): ReactNode {
@@ -232,12 +247,15 @@ function liveText(steps: Part[]): ReactNode {
   return "Working";
 }
 
-function Activity({ steps, live }: { steps: Part[]; live: boolean }) {
-  const [open, setOpen] = useState(live);
+function Activity({ steps, turn, cut, live }: { steps: Part[]; turn: Turn; cut: boolean; live: boolean }) {
+  const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  // a run that finishes folds away, as a finished one starts folded
+  // the elapsed time counts seconds, faster than the shared useNow tick
+  const [, tick] = useState(0);
   useEffect(() => {
-    if (!live) setOpen(false);
+    if (!live) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
   }, [live]);
   const failed = steps.filter((p) => p.kind === "tool" && p.isError).length;
   return (
@@ -268,20 +286,24 @@ function Activity({ steps, live }: { steps: Part[]; live: boolean }) {
           }}
         >
           {live ? <Spinner size={14} /> : <Icon name="sparkle" size={16} />}
-          <span
-            className={cn(
-              "min-w-0 truncate",
-              live &&
-                "w-fit bg-[linear-gradient(90deg,var(--muted-foreground)_30%,var(--foreground)_50%,var(--muted-foreground)_70%)] bg-[length:220%_100%] bg-clip-text pt-1 text-[15px] text-transparent motion-safe:animate-shimmer pt-0! text-[13px]!",
-            )}
-          >
-            {live ? liveText(steps) : summarize(steps)}
-          </span>
-          {!live && failed > 0 && (
-            <span className="text-xs whitespace-nowrap text-destructive">
-              {plural(failed, "1 step failed", "# steps failed")}
+          {/* two fonts at two sizes: centred they sit at different heights, so they share a baseline */}
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span
+              className={cn(
+                "min-w-0 truncate",
+                live &&
+                  "w-fit bg-[linear-gradient(90deg,var(--muted-foreground)_30%,var(--foreground)_50%,var(--muted-foreground)_70%)] bg-[length:220%_100%] bg-clip-text pt-1 text-[15px] text-transparent motion-safe:animate-shimmer pt-0! text-[13px]!",
+              )}
+            >
+              {live ? liveText(steps) : summarize(steps)}
             </span>
-          )}
+            {live && <span className="font-mono text-xs whitespace-nowrap">{progress(turn, Date.now(), cut)}</span>}
+            {!live && failed > 0 && (
+              <span className="text-xs whitespace-nowrap text-destructive">
+                {plural(failed, "1 step failed", "# steps failed")}
+              </span>
+            )}
+          </span>
           <Icon name="chevronDown" size={16} className={cn("transition-transform", open && "ml-auto rotate-180")} />
         </button>
       </div>
@@ -296,6 +318,9 @@ function Activity({ steps, live }: { steps: Part[]; live: boolean }) {
     </div>
   );
 }
+
+const FOLD =
+  "mt-1 [&>summary]:w-fit [&>summary]:cursor-pointer [&>summary]:text-xs [&>summary]:text-muted-foreground [&>pre]:mt-1.5 [&>pre]:max-h-64 [&>pre]:overflow-auto [&>pre]:rounded-md [&>pre]:border [&>pre]:bg-muted/50 [&>pre]:px-3 [&>pre]:py-2.5 [&>pre]:text-xs";
 
 function Step({ step, live }: { step: Part; live: boolean }) {
   if (step.kind === "thinking")
@@ -323,6 +348,7 @@ function Step({ step, live }: { step: Part; live: boolean }) {
     );
   if (step.kind !== "tool") return null;
   const l = label(step);
+  const command = commandLines(step);
   return (
     <li
       className={cn(
@@ -335,8 +361,14 @@ function Step({ step, live }: { step: Part; live: boolean }) {
         <p className="wrap-anywhere text-foreground/80 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-px [&_code]:text-xs">
           {l.text}
         </p>
+        {command.length > 1 && (
+          <details className={FOLD}>
+            <summary>Full command ({command.length} lines)</summary>
+            <pre>{command.join("\n")}</pre>
+          </details>
+        )}
         {step.output !== undefined && (
-          <details className="mt-1 [&>summary]:w-fit [&>summary]:cursor-pointer [&>summary]:text-xs [&>summary]:text-muted-foreground [&>pre]:mt-1.5 [&>pre]:max-h-64 [&>pre]:overflow-auto [&>pre]:rounded-md [&>pre]:border [&>pre]:bg-muted/50 [&>pre]:px-3 [&>pre]:py-2.5 [&>pre]:text-xs">
+          <details className={FOLD}>
             <summary>{step.isError ? "Output (failed)" : "Output"}</summary>
             <pre>{step.output || "(no output)"}</pre>
           </details>

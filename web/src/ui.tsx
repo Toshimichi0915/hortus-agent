@@ -276,7 +276,9 @@ export const Logo = ({ size = 22 }: { size?: number }) => (
   <Sprout size={size} strokeWidth={2} aria-hidden="true" className="shrink-0 text-brand" />
 );
 
-export const Spinner = ({ size = 16 }: { size?: number }) => <UiSpinner style={{ width: size, height: size }} />;
+export const Spinner = ({ size = 16 }: { size?: number }) => (
+  <UiSpinner className="shrink-0" style={{ width: size, height: size }} />
+);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Buttons

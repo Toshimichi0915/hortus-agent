@@ -28,6 +28,8 @@ export type Part =
 export interface Turn {
   role: "user" | "assistant";
   key: number;
+  /** the turn's first row and its latest */
+  started: string | null;
   at: string | null;
   parts: Part[];
 }
@@ -54,12 +56,18 @@ export function toTurns(rows: TurnRow[]): Turn[] {
       unknown
     >;
     if (b.type === "owner") {
-      turns.push({ role: "user", key: r.seq, at: r.created, parts: [{ kind: "text", text: str(b.text) }] });
+      turns.push({
+        role: "user",
+        key: r.seq,
+        started: r.created,
+        at: r.created,
+        parts: [{ kind: "text", text: str(b.text) }],
+      });
       continue;
     }
     let t = turns.at(-1);
     if (!t || t.role === "user") {
-      t = { role: "assistant", key: r.seq, at: r.created, parts: [] };
+      t = { role: "assistant", key: r.seq, started: r.created, at: r.created, parts: [] };
       turns.push(t);
     }
     t.at = r.created;
@@ -101,6 +109,24 @@ export function toTurns(rows: TurnRow[]): Turn[] {
     }
   }
   return turns;
+}
+
+/**
+ * How long a live turn has run and the commands it ran: "1h 12m 30s · 13 commands". `cut`: the stream's last 1000 rows start
+ * inside this turn, so its first rows are missing and both numbers are floors ("+").
+ */
+export function progress(t: Turn, now: number, cut = false): string {
+  const plus = cut ? "+" : "";
+  const bits: string[] = [];
+  if (t.started) {
+    const s = Math.floor(Math.max(0, now - Date.parse(t.started)) / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor(s / 60) % 60;
+    bits.push(`${h ? `${h}h ` : ""}${h || m ? `${m}m ` : ""}${s % 60}s${plus}`);
+  }
+  const n = t.parts.filter((p) => p.kind === "tool" && p.name === "bash").length;
+  if (n) bits.push(`${n}${plus} ${n === 1 ? "command" : "commands"}`);
+  return bits.join(" · ");
 }
 
 /**
