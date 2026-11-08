@@ -224,37 +224,6 @@ test("a chat's run: the chat's whole budget, whatever the chat spent; a chat's s
   assert.deepEqual(JSON.parse(r.budget ?? ""), { usd: 1000, hours: 2 });
 });
 
-test("project origins: a chat holds every project's list, its run too; a list extended in the config reaches an open task", async () => {
-  const prev = ctx.config;
-  const row = (id: string) => JSON.parse(tasks.get(id).origins ?? "null");
-  const chat = parent(undefined, "chat");
-  const plain = parent();
-  assert.equal(row(chat.id), null);
-  ctx.config = Config.parse({
-    ...prev,
-    projects: { ...prev.projects, strict: { path: project, origins: ["a.test"] } },
-  });
-  try {
-    const strict = parent(undefined, "unattended", "strict");
-    assert.deepEqual(row(strict.id), ["a.test"]);
-    assert.deepEqual(row(parent(undefined, "chat").id), ["a.test"]);
-    assert.equal(row(parent(undefined, "unattended", "foo").id), null);
-    const run = tasks.create({ kind: "run", parent: parent(undefined, "chat").id, title: "r", brief: "b" });
-    assert.deepEqual(row(run.id), ["a.test"]);
-    // the owner extends the list on the Projects page: tasks that were refused reach it at their next request
-    ctx.config = Config.parse({
-      ...prev,
-      projects: { ...prev.projects, strict: { path: project, origins: ["a.test", "b.test"] } },
-    });
-    tasks.refreshOrigins(ctx);
-    assert.deepEqual(row(strict.id), ["a.test", "b.test"]);
-    assert.deepEqual(row(chat.id), ["a.test", "b.test"]);
-    assert.equal(row(plain.id), null);
-  } finally {
-    ctx.config = prev;
-  }
-});
-
 test("the parent's grants cover a run, and a run's cover the next; a durable grant is no scope grant", async () => {
   const p = parent();
   const stranger = parent();

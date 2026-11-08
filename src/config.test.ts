@@ -67,6 +67,11 @@ test("missing file → defaults", () => {
   assert.deepEqual(c.dofs, {});
 });
 
+test("a project's old `origins` key still loads: it no longer does anything", () => {
+  const c = Config.parse({ projects: { a: { path: "/x/a", origins: ["a.test"] } } });
+  assert.equal(c.origins, "*");
+});
+
 test("invalid JSON or schema → throws naming the path", () => {
   const bad = join(paths.home(), "bad.json");
   writeFileSync(bad, "{ not json");

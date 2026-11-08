@@ -142,19 +142,13 @@ before(async () => {
     llm: { type: "token", value: "sk-llm-real", transform: "openai" },
   });
   const task = ctx.db.prepare(
-    "INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, 'unattended', ?, ?, 'running', ?, ?)",
+    "INSERT INTO tasks(id, kind, title, brief, status, scope) VALUES (?, 'unattended', ?, ?, 'running', ?)",
   );
   const scope = (c: string[]) => JSON.stringify({ credentials: c, repos: [] });
-  task.run(
-    "T",
-    "Reply in #general",
-    "Post a short reply to the thread in #general.",
-    scope(["slack", "github"]),
-    '"*"',
-  );
-  task.run("T2", "t2", "b2", scope(["slack"]), '"*"');
-  task.run("T3", "t3", "b3", scope(["slack", "github"]), '"*"');
-  task.run("T4", "t4", "b4", scope(["slack"]), '"*"');
+  task.run("T", "Reply in #general", "Post a short reply to the thread in #general.", scope(["slack", "github"]));
+  task.run("T2", "t2", "b2", scope(["slack"]));
+  task.run("T3", "t3", "b3", scope(["slack", "github"]));
+  task.run("T4", "t4", "b4", scope(["slack"]));
   tasks.bind(ctx);
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
@@ -437,7 +431,7 @@ test("task scope: a credential outside scope asks a task grant; it does not cove
 
 test("durable grant covers a new task", async () => {
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T5', 'unattended', 'running', ?, '\"*\"')")
+    .prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('T5', 'unattended', 'running', ?)")
     .run(JSON.stringify({ credentials: ["slack"], repos: [] }));
   links.register("127.0.0.8", "worker", "T5", "session");
   assert.equal((await send({ from: "127.0.0.8" })).status, 200);
@@ -639,7 +633,7 @@ test("a messenger's thread read through its API taints; a post does not", async 
   mode = "allow";
   ctx.db
     .prepare(
-      `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES ('T18', 'unattended', 't', 'b', 'running', ?, '"*"')`,
+      `INSERT INTO tasks(id, kind, title, brief, status, scope) VALUES ('T18', 'unattended', 't', 'b', 'running', ?)`,
     )
     .run(JSON.stringify({ credentials: ["slack"], repos: [] }));
   links.register("127.0.0.12", "worker", "T18", "session");
@@ -651,7 +645,7 @@ test("a messenger's thread read through its API taints; a post does not", async 
   for (const [i, path] of ["/api//conversations.history", "/api/conversations%2Ehistory", "/api/pins.list"].entries()) {
     ctx.db
       .prepare(
-        `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, 'unattended', 't', 'b', 'running', ?, '"*"')`,
+        `INSERT INTO tasks(id, kind, title, brief, status, scope) VALUES (?, 'unattended', 't', 'b', 'running', ?)`,
       )
       .run(`T19${i}`, JSON.stringify({ credentials: ["slack"], repos: [] }));
     links.register(`127.0.0.1${3 + i}`, "worker", `T19${i}`, "session");
@@ -682,7 +676,7 @@ test("a web page taints the task for good; an API response does not; a Planner b
   setConfig({});
   mode = "allow";
   const add = ctx.db.prepare(
-    `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, ?, ?, 'b', 'running', ?, '"*"')`,
+    `INSERT INTO tasks(id, kind, title, brief, status, scope) VALUES (?, ?, ?, 'b', 'running', ?)`,
   );
   add.run("T6", "unattended", "t6", JSON.stringify({ credentials: ["slack"], repos: [] }));
   add.run("planner-77", "planner", "batch", JSON.stringify({ credentials: ["slack"], repos: [] }));
@@ -730,7 +724,7 @@ test("a day: a task grant keeps a tainted task's routine requests to one decisio
   const notify = gate.deps.notify;
   gate.deps.notify = (t) => void dms.push(t);
   const add = ctx.db.prepare(
-    `INSERT INTO tasks(id, kind, title, brief, status, scope, origins) VALUES (?, ?, ?, 'b', 'running', ?, '"*"')`,
+    `INSERT INTO tasks(id, kind, title, brief, status, scope) VALUES (?, ?, ?, 'b', 'running', ?)`,
   );
   const ids: string[] = [];
   for (let i = 0; i < 50; i++) {
@@ -843,7 +837,7 @@ test("a run is its parent's: a tainted parent's run is the owner's to decide, wh
   setConfig({});
   mode = "allow";
   const insert = ctx.db.prepare(
-    `INSERT INTO tasks(id, kind, title, brief, status, scope, origins, parent) VALUES (?, ?, 't', 'b', 'running', ?, '"*"', ?)`,
+    `INSERT INTO tasks(id, kind, title, brief, status, scope, parent) VALUES (?, ?, 't', 'b', 'running', ?, ?)`,
   );
   const scope = JSON.stringify({ credentials: ["slack"], repos: [] });
   insert.run("P22", "unattended", scope, null);

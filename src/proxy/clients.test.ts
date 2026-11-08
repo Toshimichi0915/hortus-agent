@@ -126,8 +126,8 @@ before(async () => {
     slack: { type: "token", value: "xoxb-slack-real", transform: "slack" },
   });
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: ["telegram", "discord", "slack"], repos: [] }), JSON.stringify("*"));
+    .prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('T', 'chat', 'running', ?)")
+    .run(JSON.stringify({ credentials: ["telegram", "discord", "slack"], repos: [] }));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load([transforms.shippedDir()]);

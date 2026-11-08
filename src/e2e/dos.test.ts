@@ -76,8 +76,8 @@ before(async () => {
   };
   writeVault({});
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: [], repos: [] }), JSON.stringify("*"));
+    .prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('T', 'chat', 'running', ?)")
+    .run(JSON.stringify({ credentials: [], repos: [] }));
   // 40 one-MB session logs, each hit 25,000 times by "the"
   const body = "the model said something about deploy; ".repeat(25_000);
   for (let i = 0; i < 40; i++)

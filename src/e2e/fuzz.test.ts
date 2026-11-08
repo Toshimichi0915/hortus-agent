@@ -605,8 +605,8 @@ export function response(res, req) { const c = req.headers["x-case"]; return c ?
   };
   writeVault({ fzws: { type: "token", value: SHORT, transform: "fzws" } });
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: [], repos: [] }), JSON.stringify("*"));
+    .prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('T', 'chat', 'running', ?)")
+    .run(JSON.stringify({ credentials: [], repos: [] }));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load([transforms.shippedDir(), fixtures]);

@@ -14,7 +14,7 @@ import type { Ctx, Module } from "../ctx.ts";
 import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { links, listen, listenOpts, unlisten } from "../proxy/index.ts";
-import { originsFor, taskRow } from "../proxy/pipeline.ts";
+import { taskRow } from "../proxy/pipeline.ts";
 import { define } from "../rpc.ts";
 import * as cgroup from "../runtime/cgroup.ts";
 import * as sessionNet from "../runtime/session-net.ts";
@@ -277,7 +277,7 @@ define("browser.login", {
     const row = taskRow(task);
     if (!row) throw new RpcError("not_found", `no task ${task}`);
     const host = new URL(url).hostname.toLowerCase();
-    const allowed = originsFor(row);
+    const allowed = ctx().config.origins;
     if (allowed !== "*" && !allowed.includes(host))
       throw new RpcError("forbidden", `host not in origins: ${host} (final: tell the owner with send)`);
     const origin = registrable(host);

@@ -74,9 +74,8 @@ before(async () => {
   await proxyModule.start(ctx);
   ports = await listen("127.0.0.1", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
   ports5 = await listen("127.0.0.5", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
-  db.prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('W', 'unattended', 'running', ?, ?)").run(
+  db.prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('W', 'unattended', 'running', ?)").run(
     JSON.stringify({ credentials: ["github"], repos: ["github:o/r"] }),
-    JSON.stringify("*"),
   );
   links.register("127.0.0.2", "worker", "W", "session");
   links.register("127.0.0.5", "worker", "W", "session");

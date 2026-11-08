@@ -68,10 +68,8 @@ before(async () => {
     slack: { type: "token", value: "xoxb-real", transform: "slack" },
     aws: { type: "aws", keyId: "AKIDREAL", secret: "SECRETREAL", transform: "aws" },
   });
-  const task = ctx.db.prepare(
-    "INSERT INTO tasks(id, kind, status, scope, origins) VALUES (?, 'chat', 'running', ?, ?)",
-  );
-  task.run("T", JSON.stringify({ credentials: ["aws"], repos: [] }), JSON.stringify("*"));
+  const task = ctx.db.prepare("INSERT INTO tasks(id, kind, status, scope) VALUES (?, 'chat', 'running', ?)");
+  task.run("T", JSON.stringify({ credentials: ["aws"], repos: [] }));
   await mirrorModule.start(ctx);
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);

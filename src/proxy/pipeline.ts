@@ -100,7 +100,6 @@ export interface Target {
 
 export interface TaskRow {
   scope: { credentials?: string[]; repos?: string[] } | null;
-  origins: "*" | string[] | null;
   /** null for a chat: no limit */
   budget: { usd?: number } | null;
   /** tokens counted on its model calls here, and its schedules' runs' (their own limit is what was left at their start) */
@@ -114,14 +113,11 @@ export interface TaskRow {
 
 export function taskRow(id: string): TaskRow | undefined {
   const r = ctx()
-    .db.prepare(
-      "SELECT kind, scope, origins, budget, metered, metered_usd, usage, provider, model FROM tasks WHERE id = ?",
-    )
+    .db.prepare("SELECT kind, scope, budget, metered, metered_usd, usage, provider, model FROM tasks WHERE id = ?")
     .get(id) as
     | {
         kind: string;
         scope: string | null;
-        origins: string | null;
         budget: string | null;
         metered: number;
         metered_usd: number;
@@ -134,7 +130,6 @@ export function taskRow(id: string): TaskRow | undefined {
   const usage = (r.usage ? JSON.parse(r.usage) : {}) as { runs?: number; runs_usd?: number };
   return {
     scope: r.scope ? JSON.parse(r.scope) : null,
-    origins: r.origins ? JSON.parse(r.origins) : null,
     // a chat has no limit (its owner is at the keyboard)
     budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { usd?: number }) : null,
     metered: r.metered + (usage.runs ?? 0),
@@ -142,15 +137,6 @@ export function taskRow(id: string): TaskRow | undefined {
     provider: r.provider,
     model: r.model,
   };
-}
-
-/** Global `origins` merged with the task row's (already narrowed by its projects when the dispatcher wrote it). */
-export function originsFor(task: TaskRow | undefined): "*" | string[] {
-  const g = ctx().config.origins;
-  const t = task?.origins;
-  if (!t || t === "*") return g;
-  if (g === "*") return t;
-  return [...new Set([...g, ...t])];
 }
 
 const PRIVATE = new BlockList();
@@ -250,7 +236,7 @@ export async function egress(
   tls: boolean,
   task: TaskRow | undefined,
 ): Promise<Target | Out> {
-  const origins = client.role === "core" ? "*" : originsFor(task);
+  const origins = client.role === "core" ? "*" : ctx().config.origins;
   if (origins !== "*" && !origins.includes(host) && host !== modelHost(client, task))
     return refuse(403, `host not in origins: ${host}`, { host });
   const dev = devUpstream(host);

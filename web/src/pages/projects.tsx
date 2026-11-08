@@ -1,7 +1,7 @@
 /** Settings › Projects: the repositories and folders Workers may change, each with its own origin. */
 import { useEffect, useState } from "react";
 import { type Config, call, type Snapshot, useCall } from "../api.ts";
-import { checkHost, type Draft, PROJECT_NAME, PROJECT_NAME_HINT } from "../schema.ts";
+import { type Draft, PROJECT_NAME, PROJECT_NAME_HINT } from "../schema.ts";
 import {
   Button,
   Card,
@@ -102,7 +102,6 @@ function ProjectDialog({
       name,
       ...p,
       ...(p.exclude?.length ? {} : { exclude: undefined }),
-      ...(p.origins?.length ? {} : { origins: undefined }),
     });
     onClose();
     return { message: editing ? `Saved ${name}` : `Added ${name}; its origin is in sync` };
@@ -177,15 +176,6 @@ function ProjectDialog({
           values={p.exclude ?? []}
           onChange={(v) => setP({ ...p, exclude: v })}
           placeholder="*.pdf"
-        />
-        <ListInput
-          label="Websites its tasks need"
-          optional
-          hint="With any listed, its tasks reach only the sites in Network plus these, whatever Network allows. A chat holds every project's."
-          values={p.origins ?? []}
-          onChange={(v) => setP({ ...p, origins: v })}
-          check={checkHost}
-          placeholder="registry.npmjs.org"
         />
       </div>
     </Dialog>
@@ -275,12 +265,6 @@ export function Projects({ d }: { d: Draft }) {
                     <dt>Tasks run</dt>
                     <dd>{p.runtime === "vm" ? "in their own VM" : "on this machine"}</dd>
                   </div>
-                  {!!p.origins?.length && (
-                    <div>
-                      <dt>Websites</dt>
-                      <dd>{p.origins.join(", ")}</dd>
-                    </div>
-                  )}
                   {!!p.exclude?.length && (
                     <div>
                       <dt>Left out</dt>

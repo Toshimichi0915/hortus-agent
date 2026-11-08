@@ -48,7 +48,7 @@ const owner = ["owner"] as const;
 const COUNT_PENDING = `SELECT count(*) AS n FROM (${PENDING_FOR})`;
 
 function taskOut(t: TaskRow) {
-  const r = t as TaskRow & { scope?: string; origins?: string; event_keys?: string };
+  const r = t as TaskRow & { scope?: string; event_keys?: string };
   const { provider, model } = modelOf(ctx().config.worker, t);
   return {
     ...t,
@@ -59,7 +59,6 @@ function taskOut(t: TaskRow) {
     // whether its dollars count: a model with no price has no spending limit
     priced: !!priceOf(ctx().config.prices, provider, model),
     scope: parse(r.scope) ?? null,
-    origins: parse(r.origins) ?? null,
     event_keys: parse(r.event_keys) ?? null,
   };
 }

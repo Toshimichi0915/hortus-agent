@@ -58,11 +58,10 @@ before(async () => {
     reload: async () => {},
   };
   const insert = ctx.db.prepare(
-    "INSERT INTO tasks(id, kind, title, brief, status, scope, origins, created, updated) VALUES (?, 'unattended', ?, 'b', 'running', ?, ?, 't', 't')",
+    "INSERT INTO tasks(id, kind, title, brief, status, scope, created, updated) VALUES (?, 'unattended', ?, 'b', 'running', ?, 't', 't')",
   );
   const scope = JSON.stringify({ credentials: [], repos: [] });
-  for (const id of ["T", "T3", "T4", "T5", "T6"]) insert.run(id, id, scope, null);
-  insert.run("T2", "T2", scope, JSON.stringify(["fake.test"]));
+  for (const id of ["T", "T2", "T3", "T4", "T5", "T6"]) insert.run(id, id, scope);
   ctx.config.origins = "*";
   mkdirSync(join(fixtures, "fakesite"), { recursive: true });
   writeFileSync(
@@ -340,11 +339,16 @@ test("origins: a list refuses other hosts with the final page and browser.login 
 }, async () => {
   const { s } = await worker("T2", "127.0.0.4");
   const n = approvals();
-  assert.match(await s.navigate("http://other.test/"), /host not in origins: other\.test — final/);
-  await assert.rejects(
-    call("browser.login", { url: "https://other.test/login", why: "x" }, { role: "worker", task: "T2" }),
-    /host not in origins/,
-  );
+  ctx.config.origins = ["fake.test"];
+  try {
+    assert.match(await s.navigate("http://other.test/"), /host not in origins: other\.test — final/);
+    await assert.rejects(
+      call("browser.login", { url: "https://other.test/login", why: "x" }, { role: "worker", task: "T2" }),
+      /host not in origins/,
+    );
+  } finally {
+    ctx.config.origins = "*";
+  }
   assert.equal(approvals(), n);
 });
 

@@ -105,8 +105,8 @@ before(async () => {
   };
   writeVault({ ...dc.vault("discord"), ...tg.vault("telegram"), slack: { type: "token", value: "xoxb-0123456789" } });
   ctx.db
-    .prepare("INSERT INTO tasks(id, kind, status, scope, origins) VALUES ('T', 'chat', 'running', ?, ?)")
-    .run(JSON.stringify({ credentials: ["discord", "telegram", "slack"], repos: [] }), JSON.stringify("*"));
+    .prepare("INSERT INTO tasks(id, kind, status, scope) VALUES ('T', 'chat', 'running', ?)")
+    .run(JSON.stringify({ credentials: ["discord", "telegram", "slack"], repos: [] }));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load();

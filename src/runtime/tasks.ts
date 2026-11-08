@@ -51,7 +51,6 @@ export interface TaskRow {
   brief: string;
   status: TaskStatus;
   scope: string | null;
-  origins: string | null;
   budget: string | null;
   usage: string | null;
   metered: number;
@@ -96,16 +95,6 @@ export function defaultRuntime(c: Config, i: Pick<CreateInput, "kind" | "project
   if (i.kind === "planner") return c.planner.runtime ?? "host";
   if (i.project) return c.projects[i.project]?.runtime ?? "host";
   return "vm";
-}
-
-/**
- * A task reaches the global list plus the lists of its projects, whatever the global setting. A chat includes
- * every project, so one strict project makes every chat strict, and a chat's runs with it. null: no project has a list.
- */
-function projectOrigins(c: Config, kind: string, project: string | null | undefined, parent?: string): string[] | null {
-  const own = project ? c.projects[project] : undefined;
-  const ps = kind === "chat" || parent === "chat" ? Object.values(c.projects) : own ? [own] : [];
-  return ps.some((p) => p.origins) ? [...new Set(ps.flatMap((p) => p.origins ?? []))] : null;
 }
 
 /**
@@ -169,14 +158,13 @@ export function create(i: CreateInput): TaskRow {
     ...(i.project ? { project: i.project } : {}),
     ...(i.scope?.dofs ? { dofs: i.scope.dofs } : {}),
   };
-  const origins = projectOrigins(c.config, i.kind, i.project, i.parent ? get(i.parent).kind : undefined);
   const { usd, hours } = i.budget ?? c.config.worker.budget;
   const keys = [...(i.event_keys ?? []), ...(i.kind === "chat" ? [`chat:${id}`] : [])];
   c.db
     .prepare(
-      `INSERT INTO tasks(id, kind, title, brief, status, scope, origins, budget, usage, project, runtime, parent,
+      `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, project, runtime, parent,
         event_keys, created, updated, hours, cwd, provider, model)
-        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     .run(
       id,
@@ -184,7 +172,6 @@ export function create(i: CreateInput): TaskRow {
       i.title,
       i.brief,
       json(scope),
-      origins ? json(origins) : null,
       json({ usd, hours }),
       json({ tokens: 0 }),
       i.project ?? null,
@@ -342,31 +329,6 @@ export function budget(id: string, b: { usd?: number; hours?: number }): void {
 // task.json and ctl/home
 
 /**
- * A task's row after a config change: the owner extends a project's list because a task was refused, and the proxy reads
- * the row. Called on every reload; a running Worker's prompt keeps the old list until its next start.
- */
-export function refreshOrigins(c: Ctx): void {
-  const rows = c.db
-    .prepare(
-      `SELECT t.id, t.kind, t.project, t.origins, p.kind AS parent FROM tasks t LEFT JOIN tasks p ON p.id = t.parent
-        WHERE t.status NOT IN ('done', 'failed')`,
-    )
-    .all() as { id: string; kind: string; project: string | null; origins: string | null; parent: string | null }[];
-  const set = c.db.prepare("UPDATE tasks SET origins = ? WHERE id = ?");
-  for (const r of rows) {
-    const list = projectOrigins(c.config, r.kind, r.project, r.parent ?? undefined);
-    const next = list ? json(list) : null;
-    if (next !== r.origins) set.run(next, r.id);
-  }
-}
-
-function mergeOrigins(g: Config["origins"], t: string[] | null): TaskJson["origins"] {
-  if (!t) return g;
-  if (g === "*") return t;
-  return [...new Set([...g, ...t])];
-}
-
-/**
  * Every mirrored forge project as `<dof>:<project>`: a chat gets them all.
  * ponytail: read back from the mirror's directory name, so a project with `__` in its name stays out of a chat's
  * scope, and one mirrored later waits for the next chat; ask the connector's `projects()` if that bites.
@@ -416,7 +378,7 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       ...(project ? { project } : {}),
       dofs: readable(c, row.scope),
     },
-    origins: mergeOrigins(c.origins, parse<string[] | null>(row.origins, null)),
+    origins: c.origins,
     // what its schedules' runs spent is this task's too (runs.ts › onExit): the session gets what is left. A model with
     // no price has no spending limit, whatever the row says
     budget: {

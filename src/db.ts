@@ -91,6 +91,8 @@ const migrations: string[] = [
   "ALTER TABLE planner_usage ADD COLUMN usd REAL NOT NULL DEFAULT 0;",
   // a chat's own model (and its runs'); null follows `worker` in the config
   "ALTER TABLE tasks ADD COLUMN provider TEXT; ALTER TABLE tasks ADD COLUMN model TEXT;",
+  // a project's own origins went: the global list is the one list
+  "ALTER TABLE tasks DROP COLUMN origins;",
 ];
 
 const TAINT_MAX = 5;

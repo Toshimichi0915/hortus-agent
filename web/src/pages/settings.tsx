@@ -1373,7 +1373,7 @@ function Network({ d }: { d: Draft }) {
                 value: "list",
                 label: "Only the sites I list",
                 icon: "lock",
-                hint: "Each project can add its own (Projects).",
+                hint: "For every task and chat.",
               },
             ]}
           />

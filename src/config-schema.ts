@@ -28,7 +28,6 @@ export const ProjectConfig = z.looseObject({
   main: z.string().default("main"),
   runtime: z.enum(["host", "vm"]).default("host"),
   exclude: Strings.optional(),
-  origins: Strings.optional(),
 });
 
 /** A project name: also a directory, a URL segment and a ref part (projects/origin.ts) */

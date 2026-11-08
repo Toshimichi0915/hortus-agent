@@ -130,10 +130,8 @@ describe("gh through the proxy", { skip: !existsSync(GH) }, () => {
     const { https } = await listen("127.0.0.1", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
     const task = (id: string, addr: string, repos: string[]) => {
       ctx.db
-        .prepare(
-          "INSERT INTO tasks(id, kind, status, scope, origins, brief) VALUES (?, 'unattended', 'running', ?, ?, 'x')",
-        )
-        .run(id, JSON.stringify({ credentials: ["github"], repos }), JSON.stringify("*"));
+        .prepare("INSERT INTO tasks(id, kind, status, scope, brief) VALUES (?, 'unattended', 'running', ?, 'x')")
+        .run(id, JSON.stringify({ credentials: ["github"], repos }));
       links.register(addr, "worker", id, "session");
       const fwd = createServer((c) => {
         c.once("data", () => {

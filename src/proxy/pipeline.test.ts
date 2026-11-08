@@ -1,6 +1,6 @@
 /**
  * The pipeline on loopback: the proxy on 127.0.0.1 (as the shared proxy address), clients bound to 127.0.0.2 (worker,
- * task T), 127.0.0.3 (unregistered), 127.0.0.4 (worker, task T2 with an origins list); one fake upstream reached
+ * task T), 127.0.0.3 (unregistered); one fake upstream reached
  * through dev.upstreams.
  */
 import assert from "node:assert/strict";
@@ -220,17 +220,13 @@ before(async () => {
     slack: { type: "token", value: "xoxb-real", transform: "slack" },
     gh: { type: "token", value: "ghp-fake-0123", transform: "ghfake" },
   });
-  const task = ctx.db.prepare(
-    "INSERT INTO tasks(id, kind, status, scope, origins) VALUES (?, 'chat', 'running', ?, ?)",
-  );
-  task.run("T", JSON.stringify({ credentials: ["slack", "gh"], repos: [] }), JSON.stringify("*"));
-  task.run("T2", JSON.stringify({ credentials: ["slack"], repos: [] }), JSON.stringify(["registry.npmjs.org"]));
+  const task = ctx.db.prepare("INSERT INTO tasks(id, kind, status, scope) VALUES (?, 'chat', 'running', ?)");
+  task.run("T", JSON.stringify({ credentials: ["slack", "gh"], repos: [] }));
   await vaultModule.start(ctx);
   await proxyModule.start(ctx);
   await transforms.load([transforms.shippedDir(), fixtures]);
   gate.deps.inboxWrite = (t, m) => inbox.push([t, m]);
   links.register("127.0.0.2", "worker", "T", "session");
-  links.register("127.0.0.4", "worker", "T2", "session");
   ports = await listen("127.0.0.1", { https: 0, http: 0, dns: 0, proxyAddress: "127.0.0.1" });
   ca = readFileSync(caCert());
 });
@@ -401,10 +397,16 @@ test("no placeholder: proxied without approval, response scrubbed", async () => 
 });
 
 test("origins: a list refuses other hosts; '*' refuses private addresses unless chat.allow lists them", async () => {
-  const other = await send({ host: "example.com", from: "127.0.0.4" });
-  assert.equal(other.status, 403);
-  assert.match(other.body, /host not in origins/);
-  assert.equal((await send({ host: "registry.npmjs.org", path: "/zod", from: "127.0.0.4" })).status, 200);
+  const prev = ctx.config;
+  ctx.config = Config.parse({ ...prev, origins: ["registry.npmjs.org"] });
+  try {
+    const other = await send({ host: "example.com" });
+    assert.equal(other.status, 403);
+    assert.match(other.body, /host not in origins/);
+    assert.equal((await send({ host: "registry.npmjs.org", path: "/zod" })).status, 200);
+  } finally {
+    ctx.config = prev;
+  }
 
   const priv = await send({ host: "10.0.0.1", tls: false });
   assert.equal(priv.status, 403);
@@ -412,7 +414,6 @@ test("origins: a list refuses other hosts; '*' refuses private addresses unless 
   const local = await send({ host: "localhost", tls: false });
   assert.equal(local.status, 403);
 
-  const prev = ctx.config;
   ctx.config = Config.parse({ ...prev, chat: { allow: ["127.0.0.0/8", "::1", "10.0.0.1/32"] } });
   try {
     // past the egress check: whatever localhost:80 answers (or 502 when nothing listens), not the 403 refusal
@@ -1271,7 +1272,7 @@ test("origins: a list never cuts a session off its own model; a stranger's host,
   writeVault({ ...vault, llm: { type: "token", value: "sk-x", transform: "openai", hosts: ["models.test"] } });
   ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" }, origins: ["registry.npmjs.org"] });
   try {
-    const task = { scope: null, origins: null, budget: null, metered: 0, spent: 0, provider: null, model: null };
+    const task = { scope: null, budget: null, metered: 0, spent: 0, provider: null, model: null };
     const worker = await egress({ role: "worker", task: "T" }, "models.test", true, task);
     assert.equal("status" in worker && worker.status === 403, false);
     const other = await egress({ role: "worker", task: "T" }, "example.com", true, task);
