@@ -513,7 +513,8 @@ export function Conversation({ id }: { id: string }) {
       </div>
     );
   const running = t?.status === "running" || t?.status === "queued";
-  const lastIsOwner = rows.at(-1)?.body.type === "owner";
+  // a context row lands right after the owner's, when the Worker starts: not yet an answer
+  const lastIsOwner = rows.findLast((r) => r.body.type !== "context")?.body.type === "owner";
   const approvals = d.data?.approvals ?? [];
   const context = contextOf(rows);
   return (
