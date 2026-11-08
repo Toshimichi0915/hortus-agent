@@ -1,5 +1,20 @@
 /** The web UI's form and list helpers that are worth a test: they run in web/ and import nothing of node's. */
 
+/** JSON's equality, whatever order the keys were added in: a draft's new key comes last, the same key from hortusd in its schema's order. */
+export function sameJson(a: unknown, b: unknown): boolean {
+  const sorted = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sorted);
+    if (!v || typeof v !== "object") return v;
+    const o = v as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(o)
+        .sort()
+        .map((k) => [k, sorted(o[k])]),
+    );
+  };
+  return JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
+}
+
 /**
  * settings.set's `invalid` data (zod's issues) as field → message. A path goes to the longest field it falls under
  * (`worker.plugins.1` → `worker.plugins`; `*` is any one segment), else to itself joined, which Advanced lists; the

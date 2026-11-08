@@ -781,21 +781,29 @@ export interface Option<T extends string = string> {
 }
 
 /**
- * A long list to search, by substring: a native select only jumps by a name's first letters. What was typed can be used
- * as it is, as a list is never sure to be whole. A short list stays a SelectField.
+ * A list to search, by substring: a native select only jumps by a name's first letters. With `typed`, what was typed can
+ * be used as it is, for a list that is never sure to be whole.
  */
 export function ComboboxField({
   value,
   onChange,
   options,
   placeholder,
+  typed: free,
   ...p
-}: FieldProps & { value: string; onChange: (v: string) => void; options: string[]; placeholder: string }) {
+}: FieldProps & {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  placeholder: string;
+  typed?: boolean;
+}) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const typed = query.trim();
-  const shown = options.filter((o) => o.toLowerCase().includes(typed.toLowerCase()));
+  const shown = options.filter((o) => o.label.toLowerCase().includes(typed.toLowerCase()));
+  const current = options.find((o) => o.value === value)?.label ?? value;
   const pick = (v: string) => {
     onChange(v);
     setQuery("");
@@ -820,7 +828,7 @@ export function ComboboxField({
             aria-describedby={described(id, p)}
             className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
           >
-            <span className={cn("truncate", !value && "text-muted-foreground")}>{value || placeholder}</span>
+            <span className={cn("truncate", !current && "text-muted-foreground")}>{current || placeholder}</span>
             <Icon name="chevronDown" size={16} className="shrink-0 text-muted-foreground" />
           </button>
         </PopoverTrigger>
@@ -829,13 +837,13 @@ export function ComboboxField({
           <Command shouldFilter={false}>
             <CommandInput placeholder="Search…" value={query} onValueChange={setQuery} />
             <CommandList>
-              <CommandEmpty>Nothing to pick yet: type a name.</CommandEmpty>
+              <CommandEmpty>{free ? "Nothing to pick yet: type a name." : "No match."}</CommandEmpty>
               {shown.map((o) => (
-                <CommandItem key={o} value={o} onSelect={() => pick(o)}>
-                  <span className="truncate">{o}</span>
+                <CommandItem key={o.value} value={`pick:${o.value}`} onSelect={() => pick(o.value)}>
+                  <span className="truncate">{o.label}</span>
                 </CommandItem>
               ))}
-              {typed && !options.includes(typed) && (
+              {free && typed && !options.some((o) => o.value === typed) && (
                 <CommandItem value={`use:${typed}`} onSelect={() => pick(typed)}>
                   <span className="truncate">Use "{typed}"</span>
                 </CommandItem>

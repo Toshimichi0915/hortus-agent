@@ -100,9 +100,8 @@ export const Config = z.looseObject({
         z.object({
           input: z.number().positive(),
           cached: z.number().nonnegative(),
-          output: z.number().positive(),
-          // last, as the form adds it (settings.tsx › Rate): Settings compares drafts as JSON, so another order is unsaved
           cache_write: z.number().nonnegative().optional(),
+          output: z.number().positive(),
         }),
       ),
     )

@@ -2,7 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
 import { Config } from "../config.ts";
-import { fieldErrors, pageAt, pageWindow, SLACK } from "./forms.ts";
+import { fieldErrors, pageAt, pageWindow, SLACK, sameJson } from "./forms.ts";
+
+test("sameJson: key order is no change, at any depth, and a real difference is", () => {
+  // a draft's first model comes last, and hortusd answers in its schema's order: "unsaved changes" right after a save
+  assert.ok(
+    sameJson(
+      { provider: "a", budget: { usd: 1, hours: 2 }, model: "m" },
+      { budget: { hours: 2, usd: 1 }, model: "m", provider: "a" },
+    ),
+  );
+  assert.ok(sameJson([{ a: 1, b: 2 }], [{ b: 2, a: 1 }]));
+  assert.ok(sameJson({ a: undefined }, {}), "as JSON has it");
+  assert.ok(!sameJson({ a: 1 }, { a: 2 }));
+  assert.ok(!sameJson({ a: { b: 1 } }, { a: { b: 2 } }));
+  assert.ok(!sameJson(["a", "b"], ["b", "a"]), "an array's order is its meaning");
+  assert.ok(!sameJson({ a: 1 }, { a: 1, b: 2 }));
+  assert.ok(!sameJson(null, {}));
+});
 
 const FIELDS = ["worker.plugins", "worker.budget.usd", "console.tls", "dofs.*", "origins"];
 

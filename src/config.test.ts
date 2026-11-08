@@ -38,9 +38,6 @@ test("prices: a model's rates, its dated name's, and what a call costs", () => {
   assert.deepEqual(highestPrice(listed), { input: 10, cached: 1, cache_write: 10, output: 50 });
   assert.deepEqual(highestPrice({}), { input: 0, cached: 0, cache_write: 0, output: 0 });
   assert.throws(() => Config.parse({ prices: { p: { m: { input: 0, cached: 0, output: 1 } } } }), /prices/);
-  // the form's key order: Settings compares drafts as JSON, and any other said "unsaved changes" right after a save
-  const m = Config.parse({ prices: { p: { m: { cache_write: 1, output: 1, cached: 1, input: 1 } } } }).prices.p?.m;
-  assert.deepEqual(Object.keys(m ?? {}), ["input", "cached", "output", "cache_write"]);
 });
 
 test("missing file → defaults", () => {

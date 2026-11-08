@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { mergePatch } from "../../../src/config-schema.ts";
-import { fieldErrors } from "../../../src/console/forms.ts";
+import { fieldErrors, sameJson } from "../../../src/console/forms.ts";
 import { priceOf } from "../../../src/types.ts";
 import { ApiError, type Approval, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
 import {
@@ -128,8 +128,8 @@ function changed(a: Config, b: Config): Set<string> {
       const pa = a.policy as Record<string, unknown>;
       const pb = b.policy as Record<string, unknown>;
       for (const p of new Set([...Object.keys(pa), ...Object.keys(pb)]))
-        if (JSON.stringify(pa[p]) !== JSON.stringify(pb[p])) out.add(sectionOf(`policy.${p}`));
-    } else if (JSON.stringify(ra[k]) !== JSON.stringify(rb[k])) out.add(sectionOf(k));
+        if (!sameJson(pa[p], pb[p])) out.add(sectionOf(`policy.${p}`));
+    } else if (!sameJson(ra[k], rb[k])) out.add(sectionOf(k));
   }
   return out;
 }
@@ -174,7 +174,7 @@ export function Settings({ section }: { section: string }) {
       const next = structuredClone(saved) as Record<string, unknown>;
       const mine = d as Record<string, unknown>;
       for (const k of new Set([...Object.keys(mine), ...Object.keys(old)]))
-        if (JSON.stringify(mine[k]) !== JSON.stringify(old[k])) {
+        if (!sameJson(mine[k], old[k])) {
           if (k in mine) next[k] = mine[k];
           else delete next[k];
         }
@@ -219,7 +219,7 @@ export function Settings({ section }: { section: string }) {
       }
       const was = saved as Record<string, unknown>;
       const now = draft as Record<string, unknown>;
-      if (RESTART.some((k) => JSON.stringify(now[k]) !== JSON.stringify(was[k])))
+      if (RESTART.some((k) => !sameJson(now[k], was[k])))
         toast("Restart hortusd for the remote access and proxy changes: sudo systemctl restart hortusd", "info");
       return { message: r.message ?? "Saved. hortusd reloaded its settings." };
     } catch (e) {
@@ -487,6 +487,41 @@ function modelCredentials(creds: Credential[] | undefined): Credential[] {
 const credentialLabel = (x: Credential) =>
   `${x.name}${x.transform ? ` (${TRANSFORMS[x.transform]?.label ?? x.transform})` : ""}`;
 
+/**
+ * The model of a provider, picked from what it lists or typed. New per provider, so a list never shows under another's
+ * name.
+ */
+/** No error: a typed name is as good as a listed one, so the field says so and stays calm. */
+const listFailed = (why: string) => `Could not list its models (${why}): type its name.`;
+
+const asOptions = (names: string[]) => [...new Set(names)].map((m) => ({ value: m, label: m }));
+
+function ProviderModelField({
+  provider,
+  transform,
+  value,
+  onChange,
+}: {
+  provider: string | undefined;
+  transform: string | null | undefined;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const list = useCall<{ models: string[]; error?: string }>(provider ? "provider.models" : null, { provider });
+  const failed = list.error ?? list.data?.error;
+  return (
+    <ComboboxField
+      label="Model"
+      hint={failed ? listFailed(failed) : "Exactly as the provider names it."}
+      value={value}
+      onChange={onChange}
+      options={asOptions([...(list.data?.models ?? []), ...(transform === "anthropic" ? CLAUDE : [])])}
+      placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
+      typed
+    />
+  );
+}
+
 function ModelFields({
   provider,
   model,
@@ -505,39 +540,34 @@ function ModelFields({
   const ranked = modelCredentials(creds.data);
   const transform = creds.data?.find((x) => x.name === provider)?.transform;
   const missing = provider && creds.data && !creds.data.some((x) => x.name === provider);
+  const providers = [
+    { value: "", label: "Not set" },
+    ...ranked.map((x) => ({ value: x.name, label: credentialLabel(x) })),
+    ...(missing ? [{ value: provider, label: `${provider} (no such credential)` }] : []),
+  ];
   return (
     <>
       <div className="flex items-end gap-2 max-sm:flex-col max-sm:items-stretch [&>div]:flex-1">
-        <SelectField
+        <ComboboxField
           label="Provider"
           hint="The credential its model calls go out with. Its transform says which API it speaks."
           value={provider ?? ""}
           onChange={onProvider}
-          options={[
-            { value: "", label: "Not set" },
-            ...ranked.map((x) => ({ value: x.name, label: credentialLabel(x) })),
-            ...(missing ? [{ value: provider, label: `${provider} (no such credential)` }] : []),
-          ]}
+          options={providers}
+          placeholder="Not set"
           error={missing ? `there is no credential ${provider}: add it, or pick another` : errorProvider}
         />
         <Button icon="plus" onClick={() => setAdding(true)}>
           Add a provider
         </Button>
       </div>
-      <TextField
-        label="Model"
-        hint="Exactly as the provider names it."
+      <ProviderModelField
+        key={provider ?? ""}
+        provider={provider}
+        transform={transform}
         value={model ?? ""}
         onChange={onModel}
-        mono
-        placeholder={transform === "anthropic" ? "claude-sonnet-5-5" : "the provider's model name"}
-        list={transform === "anthropic" ? "claude-models" : undefined}
       />
-      <datalist id="claude-models">
-        {CLAUDE.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
       <CredentialDialog
         open={adding}
         preset={{ provider: true }}
@@ -615,9 +645,10 @@ function AddPriceModel({
         label="Model"
         value={model}
         onChange={setModel}
-        options={models}
+        options={asOptions(models)}
         placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
-        error={error && `Could not list its models: ${error}`}
+        typed
+        hint={error && listFailed(error)}
       />
       <Button
         disabled={!model}
@@ -690,11 +721,12 @@ function ModelPrices({ d }: { d: Draft }) {
         ))}
         {adding ? (
           <div className="flex items-start gap-2 max-sm:flex-col max-sm:items-stretch [&>div]:flex-1 [&>[data-slot=button]]:mt-[21px] max-sm:[&>[data-slot=button]]:mt-0">
-            <SelectField
+            <ComboboxField
               label="Provider"
               value={adding}
               onChange={setPicked}
               options={offered.map((x) => ({ value: x.name, label: credentialLabel(x) }))}
+              placeholder="Pick a provider"
             />
             <AddPriceModel
               key={adding}
