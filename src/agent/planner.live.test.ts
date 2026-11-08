@@ -1,6 +1,6 @@
 /**
  * Does the live Planner scope `scope.dofs` narrowly (HORTUS_TEST_LLM=1, `HORTUS_TEST_MODEL`)? The real
- * planner prompt and tools, live DeepSeek through ollama.com (the key copied into the temp ctl/home, as live.test.ts),
+ * planner prompt and tools, live DeepSeek through openrouter.ai (the key copied into the temp ctl/home, as live.test.ts),
  * one batch of the owner's requests; the verdict RPCs go to a recording stand-in for hortusd.internal. Only two events
  * need a DOF (a thread's history, a search of past messages); every other task should get none. Prints `# planner …`.
  *
@@ -17,7 +17,7 @@ import { test } from "node:test";
 import { run, setup } from "./testkit.ts";
 
 const live = process.env.HORTUS_TEST_LLM === "1";
-const MODEL = process.env.HORTUS_TEST_MODEL ?? "deepseek-v4.1-flash:1017";
+const MODEL = process.env.HORTUS_TEST_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
 
 const owner = (id: number, ref: string, text: string) =>
   `- [e${id}] ${ref} (owner, trusted) at 2026-11-04T09:0${id}:00Z\nmessage in D1 by alice: ${text}`;
@@ -77,23 +77,23 @@ async function batch(): Promise<Created[]> {
   });
   await new Promise<void>((r) => rpc.listen(0, "127.0.0.1", r));
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
-  const key = all["ollama-cloud"];
-  assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");
-  const secrets = { "ollama-cloud": { type: "openai", endpoint: "https://ollama.com/v1", apiKey: key.apiKey } };
+  const key = all.openrouter;
+  assert.ok(key, "openrouter missing from ~/.hortus/secrets.json");
+  const secrets = { openrouter: { type: "openai", endpoint: "https://openrouter.ai/api/v1", apiKey: key.apiKey } };
   const dir = setup(
     {
       id: "planner-1",
       kind: "planner",
       title: "planner batch #1, 7 events",
       brief: BATCH,
-      provider: "ollama-cloud",
+      provider: "openrouter",
       model: MODEL,
       context_window: 131072,
       rpc: `http://127.0.0.1:${(rpc.address() as { port: number }).port}`,
       scope: { credentials: [], repos: [], dofs: ["logs", "transforms", "slack", "github"] },
     },
     secrets,
-    { provider: "ollama-cloud", model: MODEL },
+    { provider: "openrouter", model: MODEL },
   );
   try {
     const r = await run(dir, undefined, 240_000);

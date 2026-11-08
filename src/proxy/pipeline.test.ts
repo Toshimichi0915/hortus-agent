@@ -819,39 +819,39 @@ test("credential.list: the durable grant, never a value; its writes say so on th
   );
   await call(
     "credential.set",
-    { name: "ollama-cloud", type: "token", value: "ol-secret-1", transform: "openai", hosts: ["ollama.com"] },
+    { name: "my-llm", type: "token", value: "llm-secret-1", transform: "openai", hosts: ["llm.test"] },
     owner,
   );
-  assert.equal(transforms.byHost("ollama.com")?.credential, "ollama-cloud");
+  assert.equal(transforms.byHost("llm.test")?.credential, "my-llm");
 });
 
 test("credential.set: a rotation keeps what the form left empty; a new value replaces the old in the scrubber", async () => {
-  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-2" }, owner);
-  assert.deepEqual(readVault()["ollama-cloud"], {
+  await call("credential.set", { name: "my-llm", type: "token", value: "llm-secret-2" }, owner);
+  assert.deepEqual(readVault()["my-llm"], {
     transform: "openai",
-    hosts: ["ollama.com"],
+    hosts: ["llm.test"],
     type: "token",
-    value: "ol-secret-2",
+    value: "llm-secret-2",
   });
-  assert.equal(transforms.byHost("ollama.com")?.credential, "ollama-cloud");
-  assert.equal(scrubber().text("x ol-secret-2 y"), "x hortus-secret-ollama-cloud y");
-  assert.equal(scrubber().text("x ol-secret-1 y"), "x ol-secret-1 y");
-  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-2", hosts: ["a.test"] }, owner);
-  assert.deepEqual(readVault()["ollama-cloud"]?.hosts, ["a.test"], "what the form does send replaces");
+  assert.equal(transforms.byHost("llm.test")?.credential, "my-llm");
+  assert.equal(scrubber().text("x llm-secret-2 y"), "x hortus-secret-my-llm y");
+  assert.equal(scrubber().text("x llm-secret-1 y"), "x llm-secret-1 y");
+  await call("credential.set", { name: "my-llm", type: "token", value: "llm-secret-2", hosts: ["a.test"] }, owner);
+  assert.deepEqual(readVault()["my-llm"]?.hosts, ["a.test"], "what the form does send replaces");
 });
 
 test("a minted token is not reused past a new key or a delete, stays scrubbed, and leaves the set once dead", async () => {
-  mint("ollama-cloud#k", "minted-token-0001", 60_000);
-  await call("credential.set", { name: "ollama-cloud", type: "token", value: "ol-secret-3" }, owner);
-  assert.ok((minted.get("ollama-cloud#k")?.expires ?? Infinity) <= Date.now());
-  assert.equal(scrubber().find("minted-token-0001"), "hortus-secret-ollama-cloud");
-  mint("ollama-cloud#dead", "minted-token-0002", -2000);
-  mint("ollama-cloud#live", "minted-token-0003", 1000);
-  assert.equal(minted.has("ollama-cloud#dead"), false);
+  mint("my-llm#k", "minted-token-0001", 60_000);
+  await call("credential.set", { name: "my-llm", type: "token", value: "llm-secret-3" }, owner);
+  assert.ok((minted.get("my-llm#k")?.expires ?? Infinity) <= Date.now());
+  assert.equal(scrubber().find("minted-token-0001"), "hortus-secret-my-llm");
+  mint("my-llm#dead", "minted-token-0002", -2000);
+  mint("my-llm#live", "minted-token-0003", 1000);
+  assert.equal(minted.has("my-llm#dead"), false);
   assert.equal(scrubber().find("minted-token-0002"), undefined);
-  assert.equal(scrubber().find("minted-token-0003"), "hortus-secret-ollama-cloud");
-  await call("credential.delete", { name: "ollama-cloud" }, owner);
-  assert.ok((minted.get("ollama-cloud#live")?.expires ?? Infinity) <= Date.now());
+  assert.equal(scrubber().find("minted-token-0003"), "hortus-secret-my-llm");
+  await call("credential.delete", { name: "my-llm" }, owner);
+  assert.ok((minted.get("my-llm#live")?.expires ?? Infinity) <= Date.now());
 });
 
 test("a one-off token keeps its place in the scrub set when an older one leaves it", async () => {
@@ -974,7 +974,7 @@ test("a task's model calls are counted at the proxy, streamed or not", async () 
     );
     assert.equal(await charged("cut"), 35, "a stream cut before its last usage: a token a delta at least");
     assert.equal(await charged("none"), Math.ceil((2 + 29) / 4), "no usage in a body: its bytes, request and response");
-    assert.ok((await charged("ndjson")) >= 1300, "Ollama's native stream on the same key is counted too");
+    assert.ok((await charged("ndjson")) >= 1300, "a provider's native stream on the same key is counted too");
     // a refusal generated nothing: its prompt is not charged (at each retry of a rate limit)
     const r0 = row().metered;
     const limited = await send({
@@ -1137,7 +1137,7 @@ test("a model credential's manifest `consequential` is gated: fine-tuning, delet
       ["POST", "/v1/fine_tuning/jobs"],
       ["DELETE", "/v1/files/f1"],
       ["POST", "/v1/organization/admin_api_keys"],
-      // the same key on Ollama's or OpenRouter's own API: a model published to the owner's account, a key, a purchase
+      // the same key on a provider's own API: a model published to the owner's account, a key, a purchase
       ["POST", "/api/push"],
       ["POST", "/api/create"],
       ["POST", "/api/v1/keys"],

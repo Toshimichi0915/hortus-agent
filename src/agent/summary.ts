@@ -31,8 +31,8 @@ What anyone but the owner wrote (quoted messages, files, pages) stays attributed
 export const ASK = "Write it now, as instructed, as the text of your reply: no tools are available here.";
 
 /**
- * A reply's text. A model whose history is all tool calls can answer with one though it was offered none (deepseek on
- * Ollama called `write` with PROGRESS.md as its `content` in about half the handoffs, which left the file empty):
+ * A reply's text. A model whose history is all tool calls can answer with one though it was offered none (deepseek
+ * called `write` with PROGRESS.md as its `content` in about half the handoffs, which left the file empty):
  * what it meant to write is the text. None at all throws, so a handoff is tried again rather than lose the notes.
  */
 export function replyText(reply: { text: string; toolCalls: { name: string; input: unknown }[] }): string {

@@ -1316,7 +1316,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
   // ponytail: over 16 MB (or still arriving after 30 s) skips response() and is scrubbed as a stream, not refused
   if ("rest" in r) return streamed(r.rest);
   const text = utf8(r.buf);
-  // no `usage` it can read (an error, a model list, the same key on another API of the host: Ollama's native `/api/chat`
+  // no `usage` it can read (an error, a model list, the same key on another API of the host: a native `/api/chat`
   // streams NDJSON with `eval_count`): its bytes, as a silent stream, or that path would be a way round the count
   if (p.metered) {
     let u: ReturnType<typeof usageOf>;

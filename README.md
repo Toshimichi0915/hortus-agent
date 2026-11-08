@@ -101,8 +101,8 @@ messenger, one forge and the Planner's (and Workers') model:
     "slack": { "type": "slack", "owner": "U0123ABCD" },
     "github": { "type": "github", "owner": "your-login", "repos": ["you/your-repo"] }
   },
-  "planner": { "provider": "ollama-cloud", "model": "deepseek-v4.1-flash:1017" },
-  "worker": { "provider": "ollama-cloud", "model": "deepseek-v4.1-flash:1017" }
+  "planner": { "provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash-1017" },
+  "worker": { "provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash-1017" }
 }
 ```
 
@@ -144,7 +144,7 @@ that uses it and, optionally, the hosts it may go to. Values are write-only. The
 | `slack-app` | token | slack | | the app-level token for Socket Mode (`xapp-…`) |
 | `github` | github-app | github | | App id, installation id, private key |
 | `github-webhook` | webhook-secret | github | | the App's webhook secret |
-| `ollama-cloud` | token | openai | `ollama.com` | the API key |
+| `openrouter` | token | openrouter | | the API key |
 
 `slack-app` and webhook secrets stay `hortusd`'s: a session is not offered them.
 

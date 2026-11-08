@@ -10,7 +10,6 @@ const PROVIDERS: Record<string, { type: string; host: string; path: string }> = 
   anthropic: { type: "anthropic", host: "api.anthropic.com", path: "" },
   openai: { type: "openai", host: "api.openai.com", path: "/v1" },
   openrouter: { type: "openai", host: "openrouter.ai", path: "/api/v1" },
-  ollama: { type: "openai", host: "ollama.com", path: "/v1" },
 };
 
 export function providerSecret(name: string): { type: string; apiKey: string; endpoint?: string } {

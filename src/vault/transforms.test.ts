@@ -30,7 +30,7 @@ fixture("notion", "export function request(req) { return { ...req, headers: { ..
 await transforms.load([transforms.shippedDir(), fixtures]);
 
 test("every shipped transform passes its tests", () => {
-  for (const name of ["slack", "anthropic", "openai", "openrouter", "ollama"]) {
+  for (const name of ["slack", "anthropic", "openai", "openrouter"]) {
     const r = transforms.runTests(name);
     assert.ok(r.length > 0, name);
     for (const x of r) assert.ok(x.ok, `${name}/${x.file}: ${x.diff}`);

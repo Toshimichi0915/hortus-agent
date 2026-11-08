@@ -130,8 +130,8 @@ test("README's example hortusd.json validates (no unknown top-level key); its pr
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const block = /```json\n([\s\S]*?)\n```/.exec(readme)?.[1] ?? "";
   const c = Config.strict().parse(JSON.parse(block));
-  assert.equal(c.planner.provider, "ollama-cloud");
+  assert.equal(c.planner.provider, "openrouter");
   assert.deepEqual(Object.keys(c.dofs), ["slack", "github"]);
-  assert.match(readme, /\| `ollama-cloud` \| token \| openai \| `ollama.com` \|/);
-  assert.ok(existsSync(new URL("transforms/openai/manifest.json", import.meta.url)));
+  assert.match(readme, /\| `openrouter` \| token \| openrouter \| \|/);
+  assert.ok(existsSync(new URL("transforms/openrouter/manifest.json", import.meta.url)));
 });

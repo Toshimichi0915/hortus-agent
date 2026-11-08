@@ -1,7 +1,7 @@
 /**
  * The Planner, live (HORTUS_TEST_NET=1 and HORTUS_TEST_LLM=1, passwordless sudo), set up like host-runtime.live.test.ts:
  * the daemon as a transient system unit with its capabilities, the fake Slack behind `dev.upstreams`, and a real model
- * for both the Planner and the Worker (`ollama-cloud` copied from the owner's ~/.hortus/secrets.json into the temp
+ * for both the Planner and the Worker (`openrouter` copied from the owner's ~/.hortus/secrets.json into the temp
  * vault). The owner's DM → one batch → `task_create` on project foo → the Worker replies in the DM thread through
  * chat.postMessage (one approval, announced by an owner.notify DM) → a follow-up in that thread routes to the same task.
  * 3b (clones, merge) is not built yet, so the README edit lands in the task's scratch directory, not the project.
@@ -19,7 +19,7 @@ import { tempDir, until } from "../test/until.ts";
 
 const LIVE = process.env.HORTUS_TEST_NET === "1" && process.env.HORTUS_TEST_LLM === "1";
 const UNIT = "hortusd-planner-live-test";
-const MODEL = "deepseek-v4.1-flash:1017";
+const MODEL = "deepseek/deepseek-v4.1-flash-1017";
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 const realHome = homedir();
 
@@ -113,8 +113,8 @@ before(async () => {
     string,
     { apiKey: string }
   >;
-  const key = owner["ollama-cloud"]?.apiKey;
-  assert.ok(key, "~/.hortus/secrets.json has no ollama-cloud entry");
+  const key = owner.openrouter?.apiKey;
+  assert.ok(key, "~/.hortus/secrets.json has no openrouter entry");
   home = tempDir("hortus-planner-live-");
   process.env.HORTUS_HOME = join(home, ".hortus");
   mkdirSync(paths.home(), { recursive: true, mode: 0o700 });
@@ -136,16 +136,16 @@ before(async () => {
       owner: { tz: "UTC", notify: "slack" },
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": fake.url } },
-      planner: { provider: "ollama-cloud", model: MODEL, runtime: "host" },
-      worker: { provider: "ollama-cloud", model: MODEL, budget: { usd: 1000, hours: 1 } },
-      prices: { "ollama-cloud": { [MODEL]: { input: 1, cached: 0.1, output: 1 } } },
+      planner: { provider: "openrouter", model: MODEL, runtime: "host" },
+      worker: { provider: "openrouter", model: MODEL, budget: { usd: 1000, hours: 1 } },
+      prices: { openrouter: { [MODEL]: { input: 1, cached: 0.1, output: 1 } } },
       projects: { foo: { path: project } },
       policy: { "*": "human", deny: deny.map((d) => join(realHome, d)) },
     }),
   );
   writeFileSync(
     paths.vault(),
-    JSON.stringify({ ...fake.vault("slack"), "ollama-cloud": { type: "token", value: key, transform: "ollama" } }),
+    JSON.stringify({ ...fake.vault("slack"), openrouter: { type: "token", value: key, transform: "openrouter" } }),
     { mode: 0o600 },
   );
   cleanupNet();
@@ -279,7 +279,7 @@ test("a Worker's own curl to its model is counted, streamed or not, and past the
   timeout: 600_000,
 }, async () => {
   const curl = (body: string) =>
-    `curl -s https://ollama.com/v1/chat/completions -H 'Authorization: Bearer hortus-secret-ollama-cloud' -H 'Content-Type: application/json' -d '{"model":"${MODEL}","messages":[{"role":"user","content":"Say hi"}]${body}}' | tail -c 200`;
+    `curl -s https://openrouter.ai/api/v1/chat/completions -H 'Authorization: Bearer hortus-secret-openrouter' -H 'Content-Type: application/json' -d '{"model":"${MODEL}","messages":[{"role":"user","content":"Say hi"}]${body}}' | tail -c 200`;
   const text = `Run these three commands with bash, once each, then call done with a one-line summary.\n${curl("")}\n${curl(',"stream":true')}\n${curl(',"stream":true,"stream_options":{"include_usage":true}')}`;
   const { id } = await api<{ id: string }>("task.open", { text });
   const row = () =>

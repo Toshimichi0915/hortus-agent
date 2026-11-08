@@ -16,7 +16,7 @@ import { FakeDiscord } from "../test/fakes/discord.ts";
 import { FakeTelegram } from "../test/fakes/telegram.ts";
 
 const live = process.env.HORTUS_TEST_LLM === "1";
-const MODEL = process.env.HORTUS_TEST_MODEL ?? "deepseek-v4.1-flash:1017";
+const MODEL = process.env.HORTUS_TEST_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
 const TRANSFORMS = fileURLToPath(new URL("../transforms", import.meta.url));
 
 let dc: FakeDiscord;
@@ -41,20 +41,20 @@ after(async () => {
 /** The session's stdout, kept for the failure message: what the Worker did is all a model's failure leaves. */
 async function worker(credential: string, ref: string, summary: string): Promise<string> {
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
-  const key = all["ollama-cloud"];
-  assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");
+  const key = all.openrouter;
+  assert.ok(key, "openrouter missing from ~/.hortus/secrets.json");
   const dir = setup(
     {
       title: "Say the build is green",
       brief: `Tell the owner, as a reply in the originating thread, that the build is green. Nothing else.\n\n## Originating events\n- [e1] ${ref} (owner, trusted) at 2026-11-04T09:00:00Z\n${summary}`,
-      provider: "ollama-cloud",
+      provider: "openrouter",
       model: MODEL,
       context_window: 131072,
       scope: { credentials: [credential], repos: [], dofs: ["transforms"] },
       origins: ["discord.com", "api.telegram.org"],
     },
-    { "ollama-cloud": { type: "openai", endpoint: "https://ollama.com/v1", apiKey: key.apiKey } },
-    { provider: "ollama-cloud", model: MODEL },
+    { openrouter: { type: "openai", endpoint: "https://openrouter.ai/api/v1", apiKey: key.apiKey } },
+    { provider: "openrouter", model: MODEL },
   );
   mkdirSync(join(dir, "dof"));
   cpSync(TRANSFORMS, join(dir, "dof", "transforms"), { recursive: true });

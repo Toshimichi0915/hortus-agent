@@ -1,4 +1,4 @@
-/** Live DeepSeek through ollama.com (opt-in: HORTUS_TEST_LLM=1). The key is copied into the temp ctl/home only. */
+/** Live DeepSeek through openrouter.ai (opt-in: HORTUS_TEST_LLM=1). The key is copied into the temp ctl/home only. */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -7,15 +7,15 @@ import { test } from "node:test";
 import { outbox, run, sessionFiles, setup, writeInbox } from "./testkit.ts";
 
 const live = process.env.HORTUS_TEST_LLM === "1";
-const MODEL = "deepseek-v4.1-flash:1017";
+const MODEL = "deepseek/deepseek-v4.1-flash-1017";
 
 function liveTask(brief: string): string {
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
-  const key = all["ollama-cloud"];
-  assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");
-  const secrets = { "ollama-cloud": { type: "openai", endpoint: "https://ollama.com/v1", apiKey: key.apiKey } };
-  return setup({ provider: "ollama-cloud", model: MODEL, brief, context_window: 131072 }, secrets, {
-    provider: "ollama-cloud",
+  const key = all.openrouter;
+  assert.ok(key, "openrouter missing from ~/.hortus/secrets.json");
+  const secrets = { openrouter: { type: "openai", endpoint: "https://openrouter.ai/api/v1", apiKey: key.apiKey } };
+  return setup({ provider: "openrouter", model: MODEL, brief, context_window: 131072 }, secrets, {
+    provider: "openrouter",
     model: MODEL,
   });
 }

@@ -169,14 +169,14 @@ function greeting(tz?: string): string {
   return h < 5 ? "Working late?" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-const PROVIDERS = new Set(["anthropic", "openai", "openrouter", "ollama"]);
+const PROVIDERS = new Set(["anthropic", "openai", "openrouter"]);
 
 function setupSteps(c: Config, creds: Credential[]) {
   return [
     {
       done: creds.some((x) => x.transform && PROVIDERS.has(x.transform)),
       title: "Add a model provider",
-      text: "An API key for Anthropic, OpenAI, OpenRouter or Ollama.",
+      text: "An API key for Anthropic, OpenAI or OpenRouter.",
       to: "/settings/credentials?add=provider",
     },
     {

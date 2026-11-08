@@ -1,6 +1,6 @@
 /**
- * The judge against a real model (HORTUS_TEST_LLM=1): `ollama-cloud` copied from the owner's ~/.hortus/secrets.json
- * into the temp vault as transform `ollama` (the only read of that file, test-only), called through `coreFetch`.
+ * The judge against a real model (HORTUS_TEST_LLM=1): `openrouter` copied from the owner's ~/.hortus/secrets.json
+ * into the temp vault as transform `openrouter` (the only read of that file, test-only), called through `coreFetch`.
  * The three live scenarios are soft: verdicts are logged, not asserted; only that the model was
  * reached (tokens counted) is.
  */
@@ -23,11 +23,11 @@ const LIVE = process.env.HORTUS_TEST_LLM === "1";
 test("live judge: routine reads and posts allowed, DROP TABLE escalated (soft)", { skip: !LIVE }, async () => {
   process.env.HORTUS_HOME = tempDir("hortus-judge-live-");
   const all = JSON.parse(readFileSync(join(homedir(), ".hortus", "secrets.json"), "utf8"));
-  const key = all["ollama-cloud"]?.apiKey as string | undefined;
-  assert.ok(key, "ollama-cloud missing from ~/.hortus/secrets.json");
+  const key = all.openrouter?.apiKey as string | undefined;
+  assert.ok(key, "openrouter missing from ~/.hortus/secrets.json");
   const ctx: Ctx = {
     config: Config.parse({
-      planner: { provider: "ollama-cloud", model: process.env.HORTUS_TEST_MODEL ?? "deepseek-v4.1-flash:1017" },
+      planner: { provider: "openrouter", model: process.env.HORTUS_TEST_MODEL ?? "deepseek/deepseek-v4.1-flash-1017" },
       policy: { "credential:slack": "auto" },
     }),
     db: openDb(paths.db()),
@@ -36,7 +36,7 @@ test("live judge: routine reads and posts allowed, DROP TABLE escalated (soft)",
     reload: async () => {},
   };
   writeVault({
-    "ollama-cloud": { type: "token", value: key, transform: "ollama" },
+    openrouter: { type: "token", value: key, transform: "openrouter" },
     slack: { type: "token", value: "xoxb-unused", transform: "slack" },
   });
   await vaultModule.start(ctx);

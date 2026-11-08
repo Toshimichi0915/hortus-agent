@@ -33,7 +33,6 @@ export const TRANSFORMS: Record<string, { label: string; hosts: string[]; provid
   anthropic: { label: "Anthropic", hosts: ["api.anthropic.com"], provider: true },
   openai: { label: "OpenAI-compatible API", hosts: ["api.openai.com"], provider: true },
   openrouter: { label: "OpenRouter", hosts: ["openrouter.ai"], provider: true },
-  ollama: { label: "Ollama", hosts: ["ollama.com"], provider: true },
   slack: { label: "Slack", hosts: ["slack.com", "files.slack.com"] },
   discord: { label: "Discord", hosts: ["discord.com", "gateway.discord.gg"] },
   telegram: { label: "Telegram", hosts: ["api.telegram.org"] },
