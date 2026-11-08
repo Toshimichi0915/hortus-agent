@@ -253,7 +253,7 @@ export function DofFileView({ dof, path }: { dof: string; path: string }) {
       {f.data.text.includes("\0") ? (
         <p className="text-muted-foreground">A binary file, {f.data.size.toLocaleString()} bytes.</p>
       ) : (
-        <div className="mb-0! grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 rounded-xl bg-card px-5 py-4 text-[13px] ring-1 ring-foreground/10 [&_dd]:min-w-0 [&_dd]:wrap-anywhere [&_dt]:text-muted-foreground">
+        <div className="rounded-xl bg-card px-5 py-4 ring-1 ring-foreground/10">
           <Markdown text={body} />
         </div>
       )}
