@@ -33,6 +33,16 @@ test("renderBatch: a request no open task counts (a merge outliving its task) is
   assert.match(renderBatch(c, [], []), /1 approval waiting for the owner in all/);
 });
 
+test("renderBatch: the configured projects are named, for scope.project", () => {
+  const db = openDb(`${tempDir("hortus-batch-")}/db.sqlite`);
+  const c = { config: Config.parse({}), db, log: logger } as unknown as Ctx;
+  assert.match(renderBatch(c, [], []), /## Projects\nnone/);
+  c.config = Config.parse({ projects: { foo: { path: "/x/foo" }, bar: { path: "/x/bar" } } });
+  const text = renderBatch(c, [], []);
+  assert.match(text, /## Projects\n- foo\n- bar/);
+  assert.doesNotMatch(text, /\/x\/foo/);
+});
+
 test("a reply in a chat's thread says the chat is open, as no card does", () => {
   const db = openDb(`${tempDir("hortus-batch-")}/db.sqlite`);
   const c = { config: Config.parse({}), db, log: logger } as unknown as Ctx;

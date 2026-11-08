@@ -234,7 +234,15 @@ export function renderBatch(c: Ctx, events: EventRow[], results: ResultRow[]): s
     n: number;
   };
   const total = all ? [`${all} approval${all > 1 ? "s" : ""} waiting for the owner in all`] : [];
-  return [section("Events", ev), section("Results", res), section("Open tasks", open), ...total].join("\n\n");
+  // scope.project takes one of these, and nothing else told the Planner their names
+  const projects = Object.keys(c.config.projects).map((n) => `- ${n}`);
+  return [
+    section("Events", ev),
+    section("Results", res),
+    section("Open tasks", open),
+    section("Projects", projects),
+    ...total,
+  ].join("\n\n");
 }
 
 /** false when a guard skipped it or there was nothing to do */

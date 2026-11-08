@@ -41,6 +41,9 @@ issue_comment.created o/r#12 by toshi: please fix the typo in the README
 none
 
 ## Open tasks
+none
+
+## Projects
 none`;
 /** the events whose task needs a DOF beyond the brief */
 const NEEDS = new Set(["e3", "e5"]);
