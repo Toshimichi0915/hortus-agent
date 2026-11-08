@@ -496,6 +496,17 @@ const listFailed = (why: string) => `Could not list its models (${why}): type it
 
 export const asOptions = (names: string[]) => [...new Set(names)].map((m) => ({ value: m, label: m }));
 
+/** What a provider lists, plus the Claude models hortus knows of for Anthropic, for the owner to pick from. */
+function useProviderModels(provider: string | undefined, transform: string | null | undefined) {
+  const list = useCall<{ models: string[]; error?: string }>(provider ? "provider.models" : null, { provider });
+  const error = list.error ?? list.data?.error;
+  return {
+    models: [...(list.data?.models ?? []), ...(transform === "anthropic" ? CLAUDE : [])],
+    failed: error && listFailed(error),
+    placeholder: list.loading && !list.data ? "Loading its models…" : "Pick a model",
+  };
+}
+
 function ProviderModelField({
   provider,
   transform,
@@ -507,16 +518,15 @@ function ProviderModelField({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const list = useCall<{ models: string[]; error?: string }>(provider ? "provider.models" : null, { provider });
-  const failed = list.error ?? list.data?.error;
+  const { models, failed, placeholder } = useProviderModels(provider, transform);
   return (
     <ComboboxField
       label="Model"
-      hint={failed ? listFailed(failed) : "Exactly as the provider names it."}
+      hint={failed || "Exactly as the provider names it."}
       value={value}
       onChange={onChange}
-      options={asOptions([...(list.data?.models ?? []), ...(transform === "anthropic" ? CLAUDE : [])])}
-      placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
+      options={asOptions(models)}
+      placeholder={placeholder}
       typed
     />
   );
@@ -628,16 +638,14 @@ function AddPriceModel({
   transform: string | null | undefined;
 }) {
   const [model, setModel] = useState("");
-  const list = useCall<{ models: string[]; error?: string }>("provider.models", { provider });
+  const { models: listed, failed, placeholder } = useProviderModels(provider, transform);
   const { prices, worker, planner } = d.draft;
-  // what hortus knows of it, for a provider that does not list its models, or when the list could not be read
-  const known = [
+  // the models in use too, for a provider that does not list its models, or when the list could not be read
+  const models = [
+    ...listed,
     ...(worker.provider === provider && worker.model ? [worker.model] : []),
     ...(planner.provider === provider && planner.model ? [planner.model] : []),
-    ...(transform === "anthropic" ? CLAUDE : []),
-  ];
-  const models = [...new Set([...(list.data?.models ?? []), ...known])].filter((m) => !prices[provider]?.[m]);
-  const error = list.error ?? list.data?.error;
+  ].filter((m) => !prices[provider]?.[m]);
   // the combobox offers a typed name it does not list, and Add would put zeros over its rates
   const priced = !!prices[provider]?.[model];
   return (
@@ -647,9 +655,9 @@ function AddPriceModel({
         value={model}
         onChange={setModel}
         options={asOptions(models)}
-        placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
+        placeholder={placeholder}
         typed
-        hint={priced ? "It already has rates above." : error && listFailed(error)}
+        hint={priced ? "It already has rates above." : failed}
       />
       <Button
         disabled={!model || priced}
