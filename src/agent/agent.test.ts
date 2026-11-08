@@ -194,7 +194,7 @@ test("handoff: a 1M window fills at a fixed reserve, not at 70%", async () => {
   const dir = setup({ context_window: 1_000_000, budget: { usd: 1e8, hours: 10 } });
   script(dir, [
     { calls: [bash("echo a")], usage: { input: 800_000, output: 0 } },
-    { calls: [bash("echo b")], usage: { input: 936_000, output: 0 } },
+    { calls: [bash("echo b")], usage: { input: 935_000, output: 0 } },
     { calls: [bash("echo c")], usage: { input: 936_000, output: 1 } },
     { calls: [done("ok")] },
   ]);
@@ -203,7 +203,20 @@ test("handoff: a 1M window fills at a fixed reserve, not at 70%", async () => {
   assert.deepEqual(
     withTools(dir).map((q) => q.messages.length),
     [1, 3, 5, 1],
-    "no handoff at 800k or at the line, one past it",
+    "no handoff at 800k or just under the line, one past it",
+  );
+});
+
+test("handoff: tool results the model has not reported yet count towards the line", async () => {
+  const dir = setup({ context_window: 1_000_000, budget: { usd: 1e8, hours: 10 } });
+  const big = bash("head -c 40000 /dev/zero | tr '\\0' a");
+  script(dir, [{ calls: Array(8).fill(big), usage: { input: 900_000, output: 0 } }, { calls: [done("ok")] }]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(
+    withTools(dir).map((q) => q.messages.length),
+    [1, 1],
+    "900k and eight results of 10k tokens each: the next call would pass the line, so it goes to a new session",
   );
 });
 

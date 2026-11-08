@@ -103,9 +103,10 @@ function readSummary(dir: string): string {
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Tokens kept free for what can still arrive once usage nears the line: `lastUsage` predates the latest tool results, so
- * up to two turns of them (50KB a call), a reply and the handoff's own. An overflow fails the task, so a window under
- * ~213k keeps 30% instead. ponytail: an estimate, not measured; raise it if tasks fail on context length.
+ * Tokens kept free for what can still arrive past the line: the next turn's tool results (50KB a call), a reply and the
+ * handoff's own. `lastUsage` predates the latest results, so they count by size on top of it. An overflow fails the task,
+ * so a window under ~213k keeps 30% instead. ponytail: an estimate, not measured, and one turn's results bigger than the
+ * reserve still overflow; raise it if tasks fail on context length.
  */
 const HANDOFF_RESERVE = 64_000;
 
@@ -116,7 +117,15 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   let { usd, cursor } = scan(sessionsDir, task.price);
   let session = await resume(sessionsDir);
   let lastUsage: Usage | undefined;
-  for (const m of session.getState().messages) if (m.role === "assistant") lastUsage = m.usage;
+  // tool results since `lastUsage`, at 4 chars a token: the model has not reported them yet
+  let unreported = 0;
+  const resultTokens = (m: Extract<Message, { role: "tool" }>) => JSON.stringify(m.results).length / 4;
+  for (const m of session.getState().messages) {
+    if (m.role === "assistant") {
+      lastUsage = m.usage;
+      unreported = 0;
+    } else if (m.role === "tool") unreported += resultTokens(m);
+  }
   let abort = new AbortController();
   let done = false;
   let emptyDone = false;
@@ -131,7 +140,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
     task.kind !== "chat" && ((maxUsd !== undefined && usd >= maxUsd) || hours() >= task.budget.hours);
   let window = task.context_window;
   const contextFull = () =>
-    !!lastUsage && lastUsage.input + lastUsage.output > Math.max(0.7 * window, window - HANDOFF_RESERVE);
+    !!lastUsage && lastUsage.input + lastUsage.output + unreported > Math.max(0.7 * window, window - HANDOFF_RESERVE);
   const context = () => out({ type: "context", tokens: lastUsage ? lastUsage.input + lastUsage.output : 0, window });
   const append = async (msgs: Message[]) => {
     await session.append(msgs);
@@ -147,9 +156,10 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
         if (m.role === "assistant") {
           if (m.usage && task.price) usd += usageCost(m.usage, task.price);
           lastUsage = m.usage;
+          unreported = 0;
           errors = 0;
           if (m.usage) context();
-        }
+        } else if (m.role === "tool") unreported += resultTokens(m);
         await append([m]); // per message, so a crash loses nothing
         // polled here directly (one readdir + stat per tool result), not only by the timer, so steering lands right
         // after the tool that was running; no inotify (virtiofs)
