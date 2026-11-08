@@ -396,7 +396,8 @@ export interface ModelPrice {
 
 /**
  * A model's rates at a provider (`prices` by credential name, as hosts charge differently for one model): its own, or
- * those of the longest listed name it extends, as an API answers `gpt-6-2026-01-01` to a call for `gpt-6`.
+ * those of the name its date extends, as an API answers `gpt-6-2026-01-01` to a call for `gpt-6`. Only a date: `gpt-6-pro`
+ * is another model, and it costs what a model with no price costs.
  */
 export function priceOf(
   prices: Record<string, Record<string, ModelPrice>>,
@@ -406,10 +407,8 @@ export function priceOf(
   if (!provider || !model || !Object.hasOwn(prices, provider)) return undefined;
   const listed = prices[provider] as Record<string, ModelPrice>;
   if (Object.hasOwn(listed, model)) return listed[model];
-  const name = Object.keys(listed)
-    .filter((k) => model.startsWith(`${k}-`) || model.startsWith(`${k}:`))
-    .sort((a, b) => b.length - a.length)[0];
-  return name === undefined ? undefined : listed[name];
+  const name = model.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, "");
+  return Object.hasOwn(listed, name) ? listed[name] : undefined;
 }
 
 /**

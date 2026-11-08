@@ -23,7 +23,11 @@ test("prices: a model's rates, its dated name's, and what a call costs", () => {
   assert.equal(priceOf(prices, undefined, "opus"), undefined);
   assert.equal(priceOf(prices, "a", "opus-2026-01-01"), opus);
   assert.equal(priceOf(prices, "a", "gpt-6-2026-01-01"), six, "the longest name it extends");
+  assert.equal(priceOf(prices, "a", "opus-20260101"), opus);
   assert.equal(priceOf(prices, "a", "opusx"), undefined, "a name is no bare prefix");
+  assert.equal(priceOf(prices, "a", "gpt-6-pro"), undefined, "another model, not a dated name");
+  assert.equal(priceOf(prices, "a", "opus-5"), undefined, "nor a version");
+  assert.equal(priceOf(prices, "a", "opus:free"), undefined, "nor a variant");
   assert.equal(priceOf(prices, "a", undefined), undefined);
   assert.equal(priceOf(prices, "a", "constructor"), undefined, "nothing of Object's");
   assert.equal(priceOf(prices, "constructor", "name"), undefined, "nor as a provider");
