@@ -180,6 +180,23 @@ test("handoff: PROGRESS.md, a second session starting with the brief, two messag
   assert.equal(after?.messages[1]?.content, "[inbox 1] from=owner\ngo on");
 });
 
+test("handoff: a 1M window fills at a fixed reserve, not at 70%", async () => {
+  const dir = setup({ context_window: 1_000_000, budget: { tokens: 1e8, hours: 10 } });
+  script(dir, [
+    { calls: [bash("echo a")], usage: { input: 800_000, output: 0 } },
+    { calls: [bash("echo b")], usage: { input: 936_000, output: 0 } },
+    { calls: [bash("echo c")], usage: { input: 936_000, output: 1 } },
+    { calls: [done("ok")] },
+  ]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(
+    withTools(dir).map((q) => q.messages.length),
+    [1, 3, 5, 1],
+    "no handoff at 800k or at the line, one past it",
+  );
+});
+
 test("handoff: the owner's drained messages go on verbatim, a stranger's do not", async () => {
   const dir = setup({ context_window: 1000 });
   const owner = { seq: 1, from: "owner", trusted: true, text: "never push to main", ts: "t" };

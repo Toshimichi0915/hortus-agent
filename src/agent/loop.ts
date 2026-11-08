@@ -94,6 +94,13 @@ function readSummary(dir: string): string {
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * Tokens kept free for what can still arrive once usage nears the line: `lastUsage` predates the latest tool results, so
+ * up to two turns of them (50KB a call), a reply and the handoff's own. An overflow fails the task, so a window under
+ * ~213k keeps 30% instead. ponytail: an estimate, not measured; raise it if tasks fail on context length.
+ */
+const HANDOFF_RESERVE = 64_000;
+
 /** Runs the task in `dir` to its end; returns the exit code. */
 export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugin): Promise<number> {
   const sessionsDir = join(dir, "out", "sessions");
@@ -113,7 +120,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   // a chat's owner is at the keyboard (its STOP button): no budget
   const overBudget = () => task.kind !== "chat" && (tokens >= task.budget.tokens || hours() >= task.budget.hours);
   let window = task.context_window;
-  const contextFull = () => !!lastUsage && lastUsage.input + lastUsage.output > 0.7 * window;
+  const contextFull = () =>
+    !!lastUsage && lastUsage.input + lastUsage.output > Math.max(0.7 * window, window - HANDOFF_RESERVE);
   const append = async (msgs: Message[]) => {
     await session.append(msgs);
     for (const m of msgs) outMessage(m);
