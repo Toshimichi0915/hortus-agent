@@ -363,3 +363,44 @@ test("open tabs never starve a fetch: one stream a page, none while hidden (HTTP
     for (const t of tabs) await cdp.send("Target.closeTarget", { targetId: t.targetId });
   }
 });
+
+test("a chat past 1,000 rows: scrolling up loads the older ones and what the owner reads stays put", {
+  skip,
+}, async () => {
+  const now = new Date().toISOString();
+  ctx.db
+    .prepare(
+      `INSERT INTO tasks(id, kind, title, status, budget, created, updated) VALUES ('long', 'chat', 'l', 'waiting', '{"usd":1,"hours":1}', ?, ?)`,
+    )
+    .run(now, now);
+  const ins = ctx.db.prepare("INSERT INTO replies(task_id, seq, body, created) VALUES ('long', ?, ?, ?)");
+  const q = (seq: number) => `question ${String(seq).padStart(5, "0")}`;
+  for (let seq = 1; seq <= 2500; seq++)
+    ins.run(
+      seq,
+      JSON.stringify(seq % 50 === 1 ? { type: "owner", text: q(seq) } : { type: "text", text: `w${seq} ` }),
+      now,
+    );
+  const has = (seq: number) => `document.body.innerText.includes(${JSON.stringify(q(seq))})`;
+  const box = `document.querySelector('[aria-live="off"]').parentElement`;
+  const top = (seq: number) =>
+    `[...document.querySelectorAll("article")].find((a) => a.innerText.includes(${JSON.stringify(q(seq))})).getBoundingClientRect().top`;
+  await go("/chat/long");
+  await until(has(2451));
+  await until(`${box}.scrollHeight - ${box}.scrollTop - ${box}.clientHeight < 80`);
+  // opened at the newest: nothing older is fetched until the owner scrolls up
+  await sleep(300);
+  assert.equal(await ev(has(1451)), false);
+  assert.equal(await ev(has(1501)), true);
+
+  const before = await ev<number>(`(${box}.scrollTop = 0, ${top(1501)})`);
+  await until(has(1451));
+  assert.ok(Math.abs((await ev<number>(top(1501))) - before) < 2, "the page landed without moving what was on screen");
+  assert.equal(await ev(has(1)), false);
+
+  await ev(`${box}.scrollTop = 0`);
+  await until(has(1));
+  await until(`!document.body.innerText.includes("Loading earlier lines")`);
+  assert.ok(await ev<boolean>(`${box}.scrollTop > 0`), "the second page kept the place too");
+  ctx.db.exec("DELETE FROM tasks WHERE id = 'long'; DELETE FROM replies WHERE task_id = 'long'");
+});

@@ -79,6 +79,14 @@ export const lastReplies = (ctx: Ctx, task: string, after = -1, limit = 1000): R
       .all(task, after, limit) as unknown as ReplyRow[]
   ).reverse();
 
+/** The newest `limit` rows before a seq, oldest first: a chat's page further back. */
+export const repliesBefore = (ctx: Ctx, task: string, before: number, limit = 1000): ReplyRow[] =>
+  (
+    ctx.db
+      .prepare("SELECT seq, body, created FROM replies WHERE task_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?")
+      .all(task, before, limit) as unknown as ReplyRow[]
+  ).reverse();
+
 /** The next rows after a cursor, oldest first. */
 export const repliesAfter = (ctx: Ctx, task: string, after: number): ReplyRow[] =>
   ctx.db

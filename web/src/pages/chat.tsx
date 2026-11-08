@@ -398,6 +398,7 @@ export function Conversation({ id }: { id: string }) {
   const [budget, setBudget] = useState(false);
   const [log, setLog] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const [earlier] = useState(() => ({ scroller, setRows }));
   const stick = useRef(true);
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -480,7 +481,7 @@ export function Conversation({ id }: { id: string }) {
             className="mx-auto flex max-w-[808px] flex-col gap-5.5 px-4 pt-3 pb-7 sm:gap-7 sm:px-6 sm:pt-4 sm:pb-10"
             aria-live="off"
           >
-            <Thread id={id} rows={rows} live={running} />
+            <Thread key={id} id={id} rows={rows} live={running} earlier={earlier} />
             {running && lastIsOwner && (
               <Pending
                 text={

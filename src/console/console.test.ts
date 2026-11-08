@@ -181,6 +181,14 @@ test("a chat past the replay's 1,000 lines says what it cut and where the rest i
   // the newest 1000: the page counts what it cut from the first seq (thread.tsx) and links /tasks/long/log
   const { replies } = await card();
   assert.deepEqual([replies.length, replies[0]?.seq, replies.at(-1)?.seq], [1000, 501, 1500]);
+  // scrolling back: the rows before a seq, oldest first, a page at a time; before the first there are none
+  const earlier = async (before: number) =>
+    (await call("task.earlier", { id: "long", before }, { role: "owner" })) as { seq: number; body: unknown }[];
+  const page = await earlier(501);
+  assert.deepEqual([page.length, page[0]?.seq, page.at(-1)?.seq], [500, 1, 500]);
+  assert.deepEqual(page[0]?.body, { type: "owner", text: "the first question" });
+  assert.equal((await earlier(1400)).length, 1000);
+  assert.deepEqual(await earlier(1), []);
   ctx.db.exec("DELETE FROM tasks WHERE id = 'long'; DELETE FROM replies WHERE task_id = 'long'");
 });
 

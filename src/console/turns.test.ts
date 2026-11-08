@@ -74,6 +74,10 @@ test("the finished turns stay the same objects, and the whole equals one pass ov
   const c = push(owner("three"));
   assert.deepEqual(c, toTurns(rows));
   assert.equal(c[2], b[2]);
+  // older rows put in front (the page scrolled back) join the turn they cut
+  const tail = rows.slice(1);
+  build(tail);
+  assert.deepEqual(build(rows), toTurns(rows));
   assert.deepEqual(build([row(1, owner("another chat"))]), toTurns([row(1, owner("another chat"))]));
   assert.deepEqual(build([]), []);
 });

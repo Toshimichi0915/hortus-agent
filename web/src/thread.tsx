@@ -2,31 +2,99 @@
  * A task's stream as a conversation: the owner's messages as bubbles, the Worker's text as Markdown, and the steps in
  * between (thinking, tool calls and their output, status lines) folded into one "activity" line per run of them.
  */
-import { memo, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type Dispatch,
+  memo,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { type Part, progress, str, type Tool, type Turn, turnBuilder } from "../../src/console/turns.ts";
-import type { Row } from "./api.ts";
+import { call, type Row } from "./api.ts";
 import { Markdown } from "./markdown.tsx";
 import { CopyButton, cn, Icon, type IconName, Logo, RelTime, Spinner } from "./ui.tsx";
 
-export function Thread({ id, rows, live }: { id: string; rows: Row[]; live: boolean }) {
+/** What scrolling back needs: the box the thread scrolls in, with the thread at its top, and the rows' state. */
+export interface Earlier {
+  scroller: RefObject<HTMLDivElement | null>;
+  setRows: Dispatch<SetStateAction<Row[]>>;
+}
+
+export function Thread({ id, rows, live, earlier }: { id: string; rows: Row[]; live: boolean; earlier?: Earlier }) {
   const [build] = useState(turnBuilder);
+  // ponytail: rows put in front rebuild every turn once, a page of scrolling back; reuse the finished ones if it stutters
   const turns = build(rows);
   // seqs start at 1, so what the stream's last 1000 left out is plain
-  const cut = (rows[0]?.seq ?? 1) - 1;
+  const first = rows[0]?.seq ?? 1;
+  const cut = first - 1;
+  const notice = useRef<HTMLParagraphElement>(null);
+  const [failed, setFailed] = useState(false);
+  const held = useRef<{ top: number; height: number }>(undefined);
+  const scroller = earlier?.scroller;
+  const setRows = earlier?.setRows;
+  // a screen before the notice comes into view, the page before it; a new observer each page, so a thread still too
+  // short to scroll goes on loading
+  useEffect(() => {
+    const root = scroller?.current;
+    const el = notice.current;
+    if (!root || !setRows || !el || first <= 1) return;
+    let current = true;
+    const io = new IntersectionObserver(
+      async ([e]) => {
+        if (!e?.isIntersecting) return;
+        io.disconnect();
+        try {
+          const older = await call<Row[]>("task.earlier", { id, before: first });
+          if (!current) return;
+          if (!older.length) return setFailed(true);
+          held.current = { top: root.scrollTop, height: root.scrollHeight };
+          setRows((p) => (p[0]?.seq === first ? [...older, ...p] : p));
+        } catch {
+          if (current) setFailed(true);
+        }
+      },
+      { root, rootMargin: "100% 0px 0px" },
+    );
+    io.observe(el);
+    return () => {
+      current = false;
+      io.disconnect();
+    };
+  }, [id, first, scroller, setRows]);
+  // what the owner reads stays put as the page lands above it (a browser's own anchoring gives up at the very top)
+  useLayoutEffect(() => {
+    const h = held.current;
+    const root = scroller?.current;
+    if (!h || !root) return;
+    held.current = undefined;
+    root.scrollTop = h.top + root.scrollHeight - h.height;
+  });
   return (
     <>
       {cut > 0 && (
-        <p className="text-center text-xs text-muted-foreground">
-          {cut.toLocaleString("en")} earlier lines not shown (a line can be a few words of a reply): the whole
-          conversation is in{" "}
-          <a
-            href={`/tasks/${encodeURIComponent(id)}/log`}
-            target="_blank"
-            rel="noopener"
-            className="text-brand-text underline underline-offset-2"
-          >
-            session.md
-          </a>
+        <p ref={notice} className="text-center text-xs text-muted-foreground">
+          {earlier && !failed ? (
+            <span role="status" className="inline-flex items-center gap-2">
+              <Spinner /> Loading earlier lines…
+            </span>
+          ) : (
+            <>
+              {cut.toLocaleString("en")} earlier lines not shown (a line can be a few words of a reply): the whole
+              conversation is in{" "}
+              <a
+                href={`/tasks/${encodeURIComponent(id)}/log`}
+                target="_blank"
+                rel="noopener"
+                className="text-brand-text underline underline-offset-2"
+              >
+                session.md
+              </a>
+            </>
+          )}
         </p>
       )}
       {turns.map((t, i) =>

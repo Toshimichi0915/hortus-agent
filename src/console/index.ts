@@ -26,6 +26,7 @@ import {
   PAGE,
   PENDING_FOR,
   parse,
+  repliesBefore,
   type ScheduleListRow,
   type TaskRow,
   taskOrigin,
@@ -131,6 +132,15 @@ define("task.messages", {
       .db.prepare(`SELECT * FROM ${box} WHERE task_id = ? ORDER BY seq DESC LIMIT ? OFFSET ?`)
       .all(id, limit, skip) as unknown as { body: string }[];
     return rows.map((m) => ({ ...m, body: line(m.body) }));
+  },
+});
+
+/** A chat's rows before `before`, oldest first: the stream starts at the last 1000, and the page scrolls back from there. */
+define("task.earlier", {
+  roles: [...owner],
+  input: z.object({ id: z.string(), before: z.number().int() }),
+  run({ id, before }) {
+    return repliesBefore(ctx(), id, before).map((r) => ({ ...r, body: line(r.body) }));
   },
 });
 
