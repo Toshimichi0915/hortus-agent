@@ -100,8 +100,8 @@ export interface Target {
 export interface TaskRow {
   scope: { credentials?: string[]; repos?: string[] } | null;
   origins: "*" | string[] | null;
-  /** null for a chat: no limit. `tokens`: a Planner batch's */
-  budget: { usd?: number; tokens?: number } | null;
+  /** null for a chat: no limit */
+  budget: { usd?: number } | null;
   /** tokens counted on its model calls here, and its schedules' runs' (their own limit is what was left at their start) */
   metered: number;
   /** the same in dollars */
@@ -128,7 +128,7 @@ export function taskRow(id: string): TaskRow | undefined {
     scope: r.scope ? JSON.parse(r.scope) : null,
     origins: r.origins ? JSON.parse(r.origins) : null,
     // a chat has no limit (its owner is at the keyboard)
-    budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { usd?: number; tokens?: number }) : null,
+    budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { usd?: number }) : null,
     metered: r.metered + (usage.runs ?? 0),
     spent: r.metered_usd + (usage.runs_usd ?? 0),
   };
@@ -852,11 +852,9 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // files are the Worker's. Past the budget and one context (the agent's own stop and its summary call come first) they end
   const model = found.length > 0 && found.every((f) => f.h.name === llm);
   const metered = model && !!client.task && (client.role === "worker" || client.role === "planner");
-  if (metered && task?.budget) {
-    const { tokens, usd } = task.budget;
-    if (tokens !== undefined && task.metered >= overdrawn(tokens, cfg))
-      return refuse(403, `budget exceeded: ${task.metered}/${tokens} tokens through the proxy`, { host });
-    const line = usd === undefined ? undefined : overdrawnUsd(usd, cfg);
+  if (metered && task?.budget?.usd !== undefined) {
+    const { usd } = task.budget;
+    const line = overdrawnUsd(usd, cfg, client.role === "planner" ? cfg.planner : cfg.worker);
     if (line !== undefined && task.spent >= line)
       return refuse(403, `budget exceeded: $${task.spent.toFixed(2)}/$${usd} through the proxy`, { host });
   }
@@ -1134,15 +1132,16 @@ async function slot(c: Client): Promise<() => void> {
   };
 }
 
-/** Where the proxy refuses a Planner batch's model calls: its `tokens` plus one context, for what follows the agent's stop. */
-export const overdrawn = (tokens: number, c: Pick<Config, "worker">): number => tokens + c.worker.context_window;
-
 /**
- * The same for a task's `budget.usd`: plus one context at its model's input rate. Undefined for a model with no price,
- * which has no spending limit.
+ * Where the proxy refuses a session's model calls: its `usd` plus one context at its model's input rate, for what follows
+ * the agent's own stop. Undefined for a model with no price, which has no spending limit.
  */
-export function overdrawnUsd(usd: number, c: Pick<Config, "worker" | "prices">): number | undefined {
-  const p = priceOf(c.prices, c.worker.provider, c.worker.model);
+export function overdrawnUsd(
+  usd: number,
+  c: Pick<Config, "worker" | "prices">,
+  who: { provider?: string | undefined; model?: string | undefined } = c.worker,
+): number | undefined {
+  const p = priceOf(c.prices, who.provider, who.model);
   return p && usd + (c.worker.context_window * p.input) / 1e6;
 }
 
@@ -1183,16 +1182,16 @@ function usageOf(v: unknown): MeteredUsage | undefined {
 
 /**
  * Counts a model call: `u` as the response reported it, or `tokens` from its bytes when it reported nothing. Dollars only
- * for a Worker whose own model has a price (without one it has no spending limit). A call to a model with no price, as
+ * for a session whose own model has a price (without one it has no spending limit). A call to a model with no price, as
  * a Worker's `curl` can make, or one whose model cannot be read, costs its provider's highest listed rates, or naming it
  * would be a way round the budget.
  */
 function charge(p: Prepared, tokens: number, u?: MeteredUsage): void {
   if (tokens <= 0) return;
-  const { prices, worker } = ctx().config;
-  const counted = p.client.role === "worker" && priceOf(prices, worker.provider, worker.model);
-  const rate = () =>
-    priceOf(prices, worker.provider, u?.model) ?? highestPrice(prices[worker.provider as string] ?? {});
+  const { prices, worker, planner } = ctx().config;
+  const { provider, model } = p.client.role === "planner" ? planner : worker;
+  const counted = priceOf(prices, provider, model);
+  const rate = () => priceOf(prices, provider, u?.model) ?? highestPrice(prices[provider as string] ?? {});
   const usd = counted ? usageCost(u ?? { input: tokens, output: 0 }, rate()) : 0;
   ctx()
     .db.prepare("UPDATE tasks SET metered = metered + ?, metered_usd = metered_usd + ? WHERE id = ?")

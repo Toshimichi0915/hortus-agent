@@ -2,7 +2,7 @@
  * The Planner's batch loop: `wake()` (gateway, a non-chat result, recovery, unpause) →
  * after 2 s one batch of unconsumed events and results, marked consumed before the run, rendered by `renderBatch` as
  * the one user message of a one-shot `planner` session (`tasks/planner-<n>/`, deleted after the run). Guards: PAUSED,
- * `planner.daily_tokens`. The verdicts come back as RPCs (tools.ts).
+ * `planner.daily_usd`. The verdicts come back as RPCs (tools.ts).
  */
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +19,7 @@ import * as paths from "../paths.ts";
 import { define } from "../rpc.ts";
 import { isStopping, runPlanner, tasks } from "../runtime/index.ts";
 import { missingImage } from "../runtime/vm.ts";
-import type { OutboxMsg, TaskJson } from "../types.ts";
+import { type OutboxMsg, priceOf, type TaskJson } from "../types.ts";
 import { read as readVault } from "../vault/vault.ts";
 
 export const DEBOUNCE_MS = 2000;
@@ -49,12 +49,10 @@ export function pctx(): Ctx {
 }
 const log = () => ctx?.log("planner") ?? { info() {}, error() {} };
 
+/** Dollars the Planner and the judge spent today. */
 export const usedToday = (c: Ctx): number =>
-  (
-    c.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(today(c.config)) as
-      | { tokens: number }
-      | undefined
-  )?.tokens ?? 0;
+  (c.db.prepare("SELECT usd FROM planner_usage WHERE day = ?").get(today(c.config)) as { usd: number } | undefined)
+    ?.usd ?? 0;
 
 /** Debounced: the first wake starts a 2 s timer, later ones within it join that batch; one batch at a time. */
 export function wake(): void {
@@ -129,7 +127,7 @@ export function renderEvent(c: Config, e: EventRow, matches: string[] = []): str
   const text = e.summary ?? "(no summary)";
   // every ref: a Discord thread's first, `<parent>:<thread>`, reads like a message in the parent (2 live runs in 8
   // answered there); its second, `<thread>:<thread>`, says where to post
-  // a stranger's text is enough to route by at 500: every model call of a batch re-reads it, against daily_tokens
+  // a stranger's text is enough to route by at 500: every model call of a batch re-reads it, against daily_usd
   const shown = e.trusted ? text : text.slice(0, 500);
   return `- [e${e.id}] ${refsOf(e).join(" ") || `${e.dof}:${e.key}`} (${tags.join(", ")}) at ${e.ts}\n${owner ? text : quote(shown)}`;
 }
@@ -245,15 +243,16 @@ async function batch(): Promise<boolean> {
   const cfg = c.config.planner;
   if (existsSync(paths.paused())) return false;
   const used = usedToday(c);
-  if (used >= cfg.daily_tokens) {
+  // a model with no price has no limit
+  if (priceOf(c.config.prices, cfg.provider, cfg.model) && used >= cfg.daily_usd) {
     if (Date.now() - capLogged > CAP_LOG_MS) {
-      log().info("planner.daily_tokens reached: batches skipped until tomorrow", { used, cap: cfg.daily_tokens });
+      log().info("planner.daily_usd reached: batches skipped until tomorrow", { used, cap: cfg.daily_usd });
       capLogged = Date.now();
     }
     // an order that gets no answer and no word why reads as a dead daemon
     if (capTold !== today(c.config) && pending() > 0) {
       capTold = today(c.config);
-      tasks.hooks.failed("the Planner reached daily_tokens: what arrives waits until tomorrow");
+      tasks.hooks.failed("the Planner reached its daily spending limit: what arrives waits until tomorrow");
     }
     return false;
   }
@@ -286,7 +285,7 @@ async function batch(): Promise<boolean> {
   // a tainted task's result taints every task the batch creates (tools.ts › batchTaint), and on
   // a busy day nearly every batch carries one; so with events waiting, those results get the next batch of their own
   // (events wait for it, so a steady stream of events cannot hold results back for more than one batch). Not when a
-  // stranger's event taints these events anyway: a second batch would keep nothing clean and spend daily_tokens
+  // stranger's event taints these events anyway: a second batch would keep nothing clean and spend daily_usd
   const tainted = (r: ResultRow) => taintOf(c.db, r.task_id, c.config).length > 0;
   if (owed) {
     owed = false;
@@ -301,7 +300,7 @@ async function batch(): Promise<boolean> {
   // no row for the next start to give back (chaos). A dead batch's go back (planner start, release)
   const brief = renderBatch(c, events, results);
   const t = now();
-  const budget = { tokens: Math.max(1, cfg.daily_tokens - used), hours: 0.5 };
+  const budget = { usd: Math.max(0, cfg.daily_usd - used), hours: 0.5 };
   let n = 0;
   c.db.exec("BEGIN IMMEDIATE");
   try {
@@ -348,9 +347,9 @@ async function batch(): Promise<boolean> {
     ok = run.ok;
     c.db
       .prepare(
-        "INSERT INTO planner_usage(day, tokens) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens",
+        "INSERT INTO planner_usage(day, tokens, usd) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens, usd = usd + excluded.usd",
       )
-      .run(today(c.config), run.tokens);
+      .run(today(c.config), run.tokens, run.usd);
   } finally {
     // what it holds goes back, then its directory goes, then its row: a kill between them leaves the row and the next
     // start does it again, and no row means nothing left (a batch run again takes the same id)
@@ -386,7 +385,8 @@ export interface PlannerStatus {
   last?: string;
   routed: number;
   tokens: number;
-  cap: number;
+  usd: number;
+  cap?: number;
 }
 
 /** The Sources page's Planner row (RPC `planner.status`, so the console does not import the runtime). */
@@ -398,13 +398,18 @@ export function status(c: Ctx): PlannerStatus {
       "SELECT COUNT(*) AS n FROM events WHERE (task_id IS NOT NULL OR ignored IS NOT NULL) AND substr(created, 1, 10) = ?",
     )
     .get(new Date().toISOString().slice(0, 10)) as { n: number };
-  const row = c.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(day) as { tokens: number } | undefined;
+  const row = c.db.prepare("SELECT tokens, usd FROM planner_usage WHERE day = ?").get(day) as
+    | { tokens: number; usd: number }
+    | undefined;
+  const { prices, planner } = c.config;
   // ponytail: the last batch time is in memory; "—" after a restart until the next batch
   return {
     ...(lastBatch ? { last: lastBatch } : {}),
     routed: n,
     tokens: row?.tokens ?? 0,
-    cap: c.config.planner.daily_tokens,
+    usd: row?.usd ?? 0,
+    // none: its model has no price, so nothing stops it
+    ...(priceOf(prices, planner.provider, planner.model) ? { cap: planner.daily_usd } : {}),
   };
 }
 

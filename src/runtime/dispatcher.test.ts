@@ -99,7 +99,7 @@ test("vm.max_concurrent counts the Planner's VM: a Worker VM waits for the batch
         `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated,
           started, hours) VALUES ('planner-1', 'planner', 'p', 'b', 'running', ?, ?, '{"tokens":0}', 'vm', '[]', ?, ?, ?, 0)`,
       )
-      .run(JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1, hours: 0.5 }), t, t, t);
+      .run(JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ usd: 1, hours: 0.5 }), t, t, t);
     const p = tasks.get("planner-1");
     const batch = runPlanner(p, tasks.taskJson(ctx.config, p), "vm");
     const w = tasks.create({ kind: "unattended", title: "w", brief: "b", scope: { credentials: [] } });

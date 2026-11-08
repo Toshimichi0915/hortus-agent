@@ -945,7 +945,7 @@ test("the session's own model credential: no gate, placeholders in its body (the
   }
 });
 
-test("a task's model calls are counted at the proxy, streamed or not, and end at its budget plus one context", async () => {
+test("a task's model calls are counted at the proxy, streamed or not", async () => {
   const prev = ctx.config.worker.provider;
   ctx.config.worker.provider = "gh";
   const row = () => ctx.db.prepare("SELECT metered FROM tasks WHERE id = 'T'").get() as { metered: number };
@@ -1004,28 +1004,6 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
     await until(() => row().metered !== n, 2000, "a GET's usage");
     assert.equal(row().metered - n, 120);
     ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(n);
-    const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
-    // T is a chat, which has no token limit: as an unattended task first
-    ctx.db
-      .prepare("UPDATE tasks SET budget = ?, kind = 'unattended' WHERE id = 'T'")
-      .run(JSON.stringify({ tokens: 10, hours: 1 }));
-    ctx.db.prepare("UPDATE tasks SET metered = ? WHERE id = 'T'").run(10 + ctx.config.worker.context_window - 1);
-    assert.equal((await model("none")).status, 200, "the agent's summary call, past its own stop");
-    ctx.db.prepare("UPDATE tasks SET metered = metered + 1 WHERE id = 'T'").run();
-    const over = await model("json");
-    assert.equal(over.status, 403);
-    assert.match(over.body, /budget exceeded/);
-    ctx.db.prepare("UPDATE tasks SET kind = 'chat' WHERE id = 'T'").run();
-    assert.equal((await model("json")).status, 200, "a chat has no token limit");
-    ctx.db.prepare("UPDATE tasks SET kind = 'unattended' WHERE id = 'T'").run();
-    // what its schedules' runs spent is its own: a session after them gets what is left, not the budget again
-    const cw = ctx.config.worker.context_window;
-    ctx.db
-      .prepare("UPDATE tasks SET metered = 0, usage = ? WHERE id = 'T'")
-      .run(JSON.stringify({ tokens: 10 + cw, runs: 10 + cw }));
-    assert.equal((await model("json")).status, 403, "its runs' tokens count");
-    ctx.db.prepare("UPDATE tasks SET usage = NULL WHERE id = 'T'").run();
-    ctx.db.prepare("UPDATE tasks SET budget = ?, metered = 0, kind = 'chat' WHERE id = 'T'").run(budget.budget);
   } finally {
     ctx.config.worker.provider = prev;
   }
@@ -1034,6 +1012,7 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
 test("a Worker's dollars: each token type at its model's rate, the budget's line, and no line for a model with no price", async () => {
   const { prices } = ctx.config;
   const { provider, model: workerModel } = ctx.config.worker;
+  const plannerWas = ctx.config.planner;
   ctx.config.worker.provider = "gh";
   ctx.config.worker.model = "m";
   const spent = () => (ctx.db.prepare("SELECT metered_usd AS n FROM tasks WHERE id = 'T'").get() as { n: number }).n;
@@ -1078,6 +1057,44 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
     const over = await call("json");
     assert.equal(over.status, 403);
     assert.match(over.body, /budget exceeded: \$\d+\.\d\d\/\$10 through the proxy/);
+    ctx.db.prepare("UPDATE tasks SET kind = 'chat' WHERE id = 'T'").run();
+    assert.equal((await call("json")).status, 200, "a chat has no limit");
+    ctx.db
+      .prepare("UPDATE tasks SET kind = 'unattended', metered_usd = 0, usage = ? WHERE id = 'T'")
+      .run(JSON.stringify({ tokens: 1, runs: 1, usd: 1e7, runs_usd: 1e7 }));
+    assert.equal((await call("json")).status, 403, "what its schedules' runs spent is its own");
+    ctx.db.prepare("UPDATE tasks SET usage = NULL WHERE id = 'T'").run();
+
+    // a Planner batch counts at the Planner's rates: only its model has a price here, and that is enough
+    ctx.config.planner = { ...ctx.config.planner, provider: "gh", model: "pm" };
+    ctx.config.worker.model = "m";
+    ctx.config.prices = { gh: { pm: { input: 2, cached: 1, output: 2 } } };
+    ctx.db
+      .prepare(
+        "INSERT OR REPLACE INTO tasks(id, kind, status, budget, metered_usd) VALUES ('planner-9', 'planner', 'running', ?, 0)",
+      )
+      .run(JSON.stringify({ usd: 10, hours: 1 }));
+    links.register("127.0.0.9", "planner", "planner-9", "session");
+    const spentBy = () =>
+      (ctx.db.prepare("SELECT metered_usd AS n FROM tasks WHERE id = 'planner-9'").get() as { n: number }).n;
+    const asPlanner = () =>
+      send({
+        host: "api.gh.test",
+        method: "POST",
+        path: "/model/json",
+        headers: { authorization: "Bearer hortus-secret-gh" },
+        body: "{}",
+        from: "127.0.0.9",
+      });
+    assert.equal((await asPlanner()).status, 200);
+    await until(() => spentBy() > 0, 2000, "the batch's dollars");
+    close(spentBy(), (100 * 2 + 20 * 2) / 1e6, "at the Planner model's rates");
+    ctx.db.prepare("UPDATE tasks SET metered_usd = 1000 WHERE id = 'planner-9'").run();
+    assert.equal((await asPlanner()).status, 403, "past its line");
+    ctx.config.prices = { gh: { m: { input: 1, cached: 1, output: 1 } } };
+    assert.equal((await asPlanner()).status, 200, "the Planner's model has no price, whatever the Workers' has");
+    links.release("127.0.0.9");
+    ctx.db.prepare("DELETE FROM tasks WHERE id = 'planner-9'").run();
 
     // the owner took the price away: whatever the row says, nothing stops it but its hours, and nothing is counted
     ctx.config.prices = {
@@ -1093,6 +1110,7 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
       .prepare("UPDATE tasks SET budget = ?, metered_usd = ?, kind = 'chat' WHERE id = 'T'")
       .run(budget.budget, before);
     ctx.config.prices = prices;
+    ctx.config.planner = plannerWas;
     ctx.config.worker.provider = provider;
     ctx.config.worker.model = workerModel;
   }

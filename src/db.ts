@@ -83,10 +83,12 @@ const migrations: string[] = [
   `ALTER TABLE events ADD COLUMN heard TEXT;
   CREATE INDEX events_heard ON events(dof, heard) WHERE heard IS NOT NULL;`,
   // a task's budget is in dollars: what the proxy counted, and open tasks move to the default (a token count converts to
-  // no price). A Planner batch keeps its share of daily_tokens
+  // no price). A Planner batch's row is gone at the next start
   `ALTER TABLE tasks ADD COLUMN metered_usd REAL NOT NULL DEFAULT 0;
   UPDATE tasks SET budget = json_set(json_remove(budget, '$.tokens'), '$.usd', 20)
     WHERE json_valid(budget) AND kind <> 'planner';`,
+  // the Planner's and the judge's day in dollars; `tokens` stays what Settings shows for a model with no price
+  "ALTER TABLE planner_usage ADD COLUMN usd REAL NOT NULL DEFAULT 0;",
 ];
 
 const TAINT_MAX = 5;

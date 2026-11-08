@@ -77,7 +77,7 @@ export function setup(task: Partial<TaskJson> = {}, secrets?: unknown, config?: 
     brief: "Do the test thing.",
     scope: { credentials: [], repos: [] },
     origins: [],
-    budget: { tokens: 1_000_000, hours: 10 },
+    budget: { usd: 1_000_000, hours: 10 },
     hours_used: 0,
     provider: "fake",
     model: "m",

@@ -133,7 +133,7 @@ before(async () => {
       owner: { tz: "UTC" },
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": fake.url } },
-      worker: { provider: "ollama-cloud", model: "deepseek-v4.1-flash:1017", budget: { tokens: 3e6, hours: 1 } },
+      worker: { provider: "ollama-cloud", model: "deepseek-v4.1-flash:1017", budget: { usd: 1000, hours: 1 } },
       projects: { foo: { path: project } },
       policy: { "*": "human", deny: deny.map((d) => join(realHome, d)) },
     }),

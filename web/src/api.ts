@@ -341,7 +341,9 @@ export interface PlannerStatus {
   last?: string;
   routed: number;
   tokens: number;
-  cap: number;
+  usd: number;
+  /** dollars a day; none: its model has no price, so nothing stops it */
+  cap?: number;
 }
 
 export interface Schedule {

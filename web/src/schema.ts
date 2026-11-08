@@ -57,7 +57,7 @@ export const FIELDS = [
   "dofs.*",
   "projects.*",
   "planner.batch_max",
-  "planner.daily_tokens",
+  "planner.daily_usd",
   "worker.context_window",
   "worker.budget.usd",
   "worker.budget.hours",
@@ -93,7 +93,7 @@ export function validateConfig(c: Config): Record<string, string> {
   for (const n of Object.keys(c.projects))
     if (!PROJECT_NAME.test(n)) e[`projects.${n}`] = `the name ${n}: ${PROJECT_NAME_HINT}`;
   int("planner.batch_max", c.planner.batch_max, 1);
-  int("planner.daily_tokens", c.planner.daily_tokens, 0);
+  if (!(c.planner.daily_usd >= 0)) e["planner.daily_usd"] = "0 or more";
   int("worker.context_window", c.worker.context_window, 1);
   if (!(c.worker.budget.usd >= 0)) e["worker.budget.usd"] = "0 or more";
   for (const [provider, listed] of Object.entries(c.prices))

@@ -25,7 +25,7 @@ const host: TaskJson = {
   brief: "b",
   scope: { credentials: [], repos: [] },
   origins: [],
-  budget: { tokens: 1, hours: 1 },
+  budget: { usd: 1, hours: 1 },
   hours_used: 0,
   provider: "fake",
   model: "m",

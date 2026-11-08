@@ -222,9 +222,8 @@ export interface TaskJson {
   brief: string;
   scope: TaskScope;
   origins: "*" | string[];
-  /** `usd` only when the model has a price (none: no spending limit); `tokens` is a Planner batch's share of
-   * `daily_tokens` */
-  budget: { usd?: number; tokens?: number; hours: number };
+  /** `usd` only when the model has a price (none: no spending limit) */
+  budget: { usd?: number; hours: number };
   /** the rates of `model` from `prices`, for the Worker's own count */
   price?: ModelPrice;
   /** hortusd's sum over earlier starts */
@@ -362,15 +361,14 @@ export interface ResponseResult {
 export type ApprovalSummary = Record<string, unknown>;
 
 /**
- * What a cache read counts for against a budget, about its price next to a fresh input token. ponytail: one weight for
- * every provider (Anthropic's reads cost 0.1, OpenAI's 0.25-0.5); a per-provider weight in config if that bites.
+ * What a cache read counts for in the token figure a card shows for a model with no price: a rough price next to a
+ * fresh input token, as nothing says what it costs.
  */
 export const CACHED_WEIGHT = 0.1;
 
 /**
- * Tokens a model call counts against `daily_tokens`, and what a task's card shows when its model has no price. `input`
- * includes `cached`, as core and the proxy both report it: counted whole, every call re-read the whole context and a
- * long conversation spent the limit at a rate quadratic in its length.
+ * Tokens of a model call as a card shows them when its model has no price, and nothing stops at them. `input` includes
+ * `cached`, as core and the proxy both report it.
  */
 export function budgetTokens(u: { input: number; output: number; cached?: number }): number {
   const cached = Math.min(u.cached ?? 0, u.input);

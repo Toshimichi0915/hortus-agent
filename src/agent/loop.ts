@@ -113,7 +113,7 @@ const HANDOFF_RESERVE = 64_000;
 export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugin): Promise<number> {
   const sessionsDir = join(dir, "out", "sessions");
   const started = Date.now();
-  let { tokens, usd, cursor } = scan(sessionsDir, task.price);
+  let { usd, cursor } = scan(sessionsDir, task.price);
   let session = await resume(sessionsDir);
   let lastUsage: Usage | undefined;
   for (const m of session.getState().messages) if (m.role === "assistant") lastUsage = m.usage;
@@ -126,12 +126,9 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   const hasInbox = () => pending(dir, cursor).length > 0;
   const hours = () => task.hours_used + (Date.now() - started) / 3_600_000;
   // a chat's owner is at the keyboard (its STOP button): no budget
-  const { usd: maxUsd, tokens: maxTokens } = task.budget;
+  const { usd: maxUsd } = task.budget;
   const overBudget = () =>
-    task.kind !== "chat" &&
-    ((maxUsd !== undefined && usd >= maxUsd) ||
-      (maxTokens !== undefined && tokens >= maxTokens) ||
-      hours() >= task.budget.hours);
+    task.kind !== "chat" && ((maxUsd !== undefined && usd >= maxUsd) || hours() >= task.budget.hours);
   let window = task.context_window;
   const contextFull = () =>
     !!lastUsage && lastUsage.input + lastUsage.output > Math.max(0.7 * window, window - HANDOFF_RESERVE);
@@ -147,7 +144,6 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       tool_call: (c) => out({ type: "tool_call", id: c.id, name: c.name, input: c.input }),
       message: async (m) => {
         if (m.role === "assistant") {
-          if (m.usage) tokens += budgetTokens(m.usage);
           if (m.usage && task.price) usd += usageCost(m.usage, task.price);
           lastUsage = m.usage;
           errors = 0;
@@ -282,7 +278,6 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
         "budget_exceeded",
         `budget exceeded: ${[
           maxUsd !== undefined && `$${usd.toFixed(2)}/$${maxUsd}`,
-          maxTokens !== undefined && `${tokens}/${maxTokens} tokens`,
           `${hours().toFixed(2)}/${task.budget.hours} hours`,
         ]
           .filter(Boolean)

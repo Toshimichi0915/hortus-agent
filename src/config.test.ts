@@ -47,7 +47,7 @@ test("missing file → defaults", () => {
   assert.deepEqual(c.chat.allow, []);
   assert.deepEqual(c.policy, { "*": "human" });
   assert.equal(c.planner.batch_max, 50);
-  assert.equal(c.planner.daily_tokens, 5e6);
+  assert.equal(c.planner.daily_usd, 5);
   assert.equal(c.planner.effort, "low");
   assert.equal(c.planner.runtime, undefined);
   assert.deepEqual(c.worker.budget, { usd: 20, hours: 4 });

@@ -71,7 +71,8 @@ export const Config = z.looseObject({
       model: z.string().optional(),
       effort: Effort.default("low"),
       batch_max: z.number().int().positive().default(50),
-      daily_tokens: z.number().int().nonnegative().default(5e6),
+      /** with its model in `prices`: dollars a day, the judge's calls too. A model with no price has no limit */
+      daily_usd: z.number().nonnegative().default(5),
       /** unset: a VM once the image is there, the host until then */
       runtime: z.enum(["host", "vm"]).optional(),
     })

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { today } from "../config.ts";
 import { logger } from "../log.ts";
 import { coreFetch } from "../proxy/index.ts";
+import { budgetTokens, priceOf, usageCost } from "../types.ts";
 import { providerSecret } from "./providers.ts";
 import { ctx } from "./vault.ts";
 
@@ -45,12 +46,15 @@ export function prompt(category: string, summary: unknown, task: { title?: strin
 
 const day = (): string => today(ctx().config);
 
-function addTokens(n: number): void {
+/** What a call cost, counted as a Planner batch's is: the day's total is one, and one limit. */
+function addUsage(u: { input: number; output: number; cached: number }): void {
+  const { prices, planner } = ctx().config;
+  const price = priceOf(prices, planner.provider, planner.model);
   ctx()
     .db.prepare(
-      "INSERT INTO planner_usage(day, tokens) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens",
+      "INSERT INTO planner_usage(day, tokens, usd) VALUES (?, ?, ?) ON CONFLICT(day) DO UPDATE SET tokens = tokens + excluded.tokens, usd = usd + excluded.usd",
     )
-    .run(day(), n);
+    .run(day(), budgetTokens(u), price ? usageCost(u, price) : 0);
 }
 
 export async function judge(category: string, summary: unknown, taskId: string | null): Promise<Verdict> {
@@ -65,11 +69,12 @@ export async function judge(category: string, summary: unknown, taskId: string |
     log.info("escalate", { category, task: taskId, reason });
     return { verdict: "escalate", reason, prompt_hash: p.hash };
   };
-  const { provider, model, daily_tokens } = c.config.planner;
+  const { provider, model, daily_usd } = c.config.planner;
   if (!provider || !model) return esc("judge: planner.provider and planner.model are not set");
-  const used = (c.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(day()) as { tokens: number })
-    ?.tokens;
-  if ((used ?? 0) >= daily_tokens) return esc("judge: planner.daily_tokens reached today");
+  const used = c.db.prepare("SELECT usd FROM planner_usage WHERE day = ?").get(day()) as { usd: number } | undefined;
+  // a model with no price has no limit
+  if (priceOf(c.config.prices, provider, model) && (used?.usd ?? 0) >= daily_usd)
+    return esc("judge: the Planner's daily spending limit is reached today");
   let p0: ReturnType<typeof providerSecret>;
   try {
     p0 = providerSecret(provider);
@@ -101,7 +106,12 @@ export async function judge(category: string, summary: unknown, taskId: string |
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
       return JSON.parse(text) as {
         choices?: { message?: { content?: string } }[];
-        usage?: { total_tokens?: number };
+        usage?: {
+          prompt_tokens?: unknown;
+          completion_tokens?: unknown;
+          total_tokens?: unknown;
+          prompt_tokens_details?: { cached_tokens?: unknown } | null;
+        };
       };
     })();
     const timeout = new Promise<never>((_, reject) => {
@@ -109,7 +119,13 @@ export async function judge(category: string, summary: unknown, taskId: string |
     });
     const body = await Promise.race([call, timeout]);
     // ponytail: a provider without `usage` is counted at ~4 chars per token of the prompt
-    addTokens(body.usage?.total_tokens ?? Math.ceil((p.system.length + p.user.length) / 4));
+    const n = (x: unknown) => (typeof x === "number" && x > 0 && x < 1e12 ? x : 0);
+    const u = body.usage;
+    addUsage({
+      input: n(u?.prompt_tokens) || n(u?.total_tokens) || Math.ceil((p.system.length + p.user.length) / 4),
+      output: n(u?.completion_tokens),
+      cached: n(u?.prompt_tokens_details?.cached_tokens),
+    });
     const content = body.choices?.[0]?.message?.content ?? "";
     // json_object is not honoured by every provider: take the outermost {...} of the answer
     const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);

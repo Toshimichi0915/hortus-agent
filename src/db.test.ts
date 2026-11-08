@@ -88,9 +88,10 @@ test("the WAL file shrinks back to journal_size_limit after a big transaction is
   db.close();
 });
 
-test("a task's token budget moves to dollars; a Planner batch keeps its share of daily_tokens", () => {
+test("a task's token budget moves to dollars, and the Planner's day takes a dollar count", () => {
   const db = new DatabaseSync(":memory:");
-  migrate(db, 1); // the schema as it was before the move: every migration but the last
+  migrate(db, 2); // the schema as it was before the move
+  db.prepare("INSERT INTO planner_usage(day, tokens) VALUES ('2026-01-01', 7)").run();
   const add = db.prepare("INSERT INTO tasks(id, kind, title, status, budget) VALUES (?, ?, 't', 'waiting', ?)");
   add.run("w", "unattended", JSON.stringify({ tokens: 2e6, hours: 4 }));
   add.run("p", "planner", JSON.stringify({ tokens: 500, hours: 0.5 }));
@@ -101,5 +102,6 @@ test("a task's token budget moves to dollars; a Planner batch keeps its share of
   assert.deepEqual(JSON.parse(budget("w")), { hours: 4, usd: 20 });
   assert.deepEqual(JSON.parse(budget("p")), { tokens: 500, hours: 0.5 });
   assert.equal(budget("broken"), "not json");
+  assert.deepEqual({ ...(db.prepare("SELECT tokens, usd FROM planner_usage").get() as object) }, { tokens: 7, usd: 0 });
   db.close();
 });

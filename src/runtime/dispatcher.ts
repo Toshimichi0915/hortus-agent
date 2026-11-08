@@ -18,7 +18,7 @@ import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
-import { overdrawn, overdrawnUsd } from "../proxy/pipeline.ts";
+import { overdrawnUsd } from "../proxy/pipeline.ts";
 import { type OutboxMsg, priceOf, type StdoutLine, type TaskJson, type TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
@@ -364,12 +364,10 @@ async function finish(
   // (tasks.ts › restarts)
   // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
   const b = tasks.get(id);
-  const limit = JSON.parse(b.budget ?? "{}") as { usd?: number; tokens?: number; hours?: number };
-  const metered = b.metered + tasks.runsOf(b);
+  const limit = JSON.parse(b.budget ?? "{}") as { usd?: number; hours?: number };
   const spentUsd = b.metered_usd + tasks.runsUsd(b);
   const usdLine = limit.usd === undefined ? undefined : overdrawnUsd(limit.usd, config);
-  const overTokens = limit.tokens !== undefined && metered >= overdrawn(limit.tokens, config);
-  const overdrawnBy = row.kind !== "chat" && (overTokens || (usdLine !== undefined && spentUsd >= usdLine));
+  const overdrawnBy = row.kind !== "chat" && usdLine !== undefined && spentUsd >= usdLine;
   // the session ran on its start's budget (task.json): a raise meanwhile found it running, so task.budget sent nothing,
   // and the stop at the old limit sat waiting with `budget_exceeded` on the card the owner had just raised
   const was = JSON.parse(row.budget ?? "{}") as { usd?: number; hours?: number };
@@ -380,7 +378,7 @@ async function finish(
       : overBudget
         ? `budget_exceeded: the session was stopped after ${hours.toFixed(2)} h (budget hours)`
         : overdrawnBy
-          ? `budget_exceeded: budget exceeded: ${overTokens ? `${metered}/${limit.tokens} tokens` : `$${spentUsd.toFixed(2)}/$${limit.usd}`} through the proxy`
+          ? `budget_exceeded: budget exceeded: $${spentUsd.toFixed(2)}/$${limit.usd} through the proxy`
           : failed
             ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
             : spent !== undefined
@@ -481,7 +479,7 @@ export async function runPlanner(
   row: tasks.TaskRow,
   task: TaskJson,
   runtime: "host" | "vm",
-): Promise<{ tokens: number; ok: boolean }> {
+): Promise<{ tokens: number; usd: number; ok: boolean }> {
   if (!ctx || stopping) throw new Error("dispatcher not started");
   tasks.prepare(ctx.config, task);
   const consoleLog = join(paths.out(row.id), "console.log");
@@ -492,9 +490,14 @@ export async function runPlanner(
     entry.child = await RUNTIMES[runtime](task, (l) => appendText(consoleLog, `${l}\n`));
     if (stopping) await entry.child.kill();
     const exit = await entry.child.wait();
-    const { tokens } = scan(join(paths.out(row.id), "sessions"));
-    log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens });
-    return { tokens: Math.max(tokens, tasks.get(row.id).metered), ok: exit.code === 0 };
+    const { tokens, usd } = scan(join(paths.out(row.id), "sessions"), task.price);
+    log().info("planner batch ended", { task: row.id, code: exit.code, signal: exit.signal, tokens, usd });
+    const counted = tasks.get(row.id);
+    return {
+      tokens: Math.max(tokens, counted.metered),
+      usd: Math.max(usd, counted.metered_usd),
+      ok: exit.code === 0,
+    };
   } finally {
     releaseLinks(row.id);
     running.delete(row.id);

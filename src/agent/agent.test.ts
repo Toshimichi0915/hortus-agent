@@ -125,8 +125,8 @@ test("STOP: aborts after the current tool, no summary, no result, exit 0", async
   assert.ok(!existsSync(join(dir, "out", "summary.md")));
 });
 
-test("token budget: exceeded after the second turn, reported once", async () => {
-  const dir = setup({ budget: { tokens: 100, hours: 10 } });
+test("budget: exceeded after the second turn, reported once", async () => {
+  const dir = setup({ budget: { usd: 100, hours: 10 }, price: { input: 1e6, cached: 1e5, output: 1e6 } });
   const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
   script(dir, [turn, turn, turn, turn]);
   const r = await run(dir);
@@ -138,8 +138,13 @@ test("token budget: exceeded after the second turn, reported once", async () => 
   );
 });
 
-test("budget: a chat has none, tokens or hours", async () => {
-  const dir = setup({ kind: "chat", budget: { tokens: 100, hours: 1 }, hours_used: 2 });
+test("budget: a chat has none, dollars or hours", async () => {
+  const dir = setup({
+    kind: "chat",
+    budget: { usd: 100, hours: 1 },
+    price: { input: 1e6, cached: 1e5, output: 1e6 },
+    hours_used: 2,
+  });
   const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
   script(dir, [turn, turn, turn, turn, { calls: [done("ok")] }]);
   const r = await run(dir);
@@ -149,7 +154,7 @@ test("budget: a chat has none, tokens or hours", async () => {
 });
 
 test("hours budget: hours_used close to the limit stops the task within seconds", async () => {
-  const dir = setup({ budget: { tokens: 1_000_000, hours: 4 }, hours_used: 4 - 1.5 / 3600 });
+  const dir = setup({ budget: { usd: 1_000_000, hours: 4 }, hours_used: 4 - 1.5 / 3600 });
   script(dir, Array(20).fill({ calls: [bash("sleep 0.5")] }));
   const t = Date.now();
   const r = await run(dir);
@@ -181,7 +186,7 @@ test("handoff: PROGRESS.md, a second session starting with the brief, two messag
 });
 
 test("handoff: a 1M window fills at a fixed reserve, not at 70%", async () => {
-  const dir = setup({ context_window: 1_000_000, budget: { tokens: 1e8, hours: 10 } });
+  const dir = setup({ context_window: 1_000_000, budget: { usd: 1e8, hours: 10 } });
   script(dir, [
     { calls: [bash("echo a")], usage: { input: 800_000, output: 0 } },
     { calls: [bash("echo b")], usage: { input: 936_000, output: 0 } },
@@ -229,22 +234,12 @@ test("a dollar budget: each token type at the model's rate; the stop says what i
   assert.match(outbox(dir)[0]?.text ?? "", /^budget exceeded: \$16\.00\/\$10, 0\.\d\d\/10 hours$/);
 });
 
-test("no dollars and no tokens in the budget, as for a model with no price: only the hours stop it", async () => {
+test("no dollars in the budget, as for a model with no price: only the hours stop it", async () => {
   const dir = setup({ budget: { hours: 10 } });
   script(dir, [{ calls: [bash("echo a")], usage: { input: 1e9, output: 1e9 } }, { calls: [done("ok")] }]);
   const r = await run(dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(withTools(dir).length, 2, "not stopped");
-});
-
-test("token budget: cache reads count at a tenth", async () => {
-  const dir = setup({ budget: { tokens: 100, hours: 10 } });
-  // 50 input of which 40 cached, 10 output: 10 + 4 + 10 = 24 a turn, over 100 at the fifth
-  const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10, cached: 40 } };
-  script(dir, Array(8).fill(turn));
-  const r = await run(dir);
-  assert.equal(r.code, 0, r.stderr);
-  assert.equal(withTools(dir).length, 5);
 });
 
 test("errors: retried with the error in the session; four in a row end with failed:", async () => {

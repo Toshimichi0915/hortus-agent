@@ -239,7 +239,7 @@ before(async () => {
       owner: { tz: "UTC", notify: "slack" },
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": slack.url } },
-      planner: { provider: "fake", model: "m" },
+      planner: { provider: "fake", model: "m", daily_usd: 5e6 },
       worker: {
         provider: "fake",
         model: "m",
@@ -966,10 +966,13 @@ test("system prompt byte-identical across batches; the user message differs; Sou
   assert.equal(hash(reqs(a)[0]?.system ?? "a"), hash(reqs(b)[0]?.system ?? "b"));
   assert.notEqual(batchText(a), batchText(b));
   assert.match(reqs(a)[0]?.system ?? "", /^You are the hortus Planner\./);
-  // Settings › Planner: the last batch, what it routed today and its tokens against the cap
-  const ps = await api<{ last: string | null; routed: number; tokens: number; cap: number }>("planner.status");
+  // Settings › Planner: the last batch, what it routed today and its dollars against the limit
+  const ps = await api<{ last: string | null; routed: number; tokens: number; usd: number; cap: number }>(
+    "planner.status",
+  );
   assert.ok(ps.last && Date.parse(ps.last) > 0);
   assert.ok(Number.isInteger(ps.routed) && Number.isInteger(ps.tokens));
+  assert.ok(ps.usd > 0, "at this test's rates");
   assert.equal(ps.cap, 5_000_000);
 });
 
@@ -1001,12 +1004,12 @@ test("planner RPCs from a worker-role address → forbidden", { skip }, async ()
   }
 });
 
-test("daily_tokens: a batch over the cap → the next wakes are skipped and logged once; the next day resumes", {
+test("daily_usd: a batch over the limit → the next wakes are skipped and logged once; the next day resumes", {
   skip,
 }, async () => {
   await killDaemon(); // a fresh notify window
   await configure((c) => {
-    c.planner = { ...c.planner, daily_tokens: 1000 };
+    c.planner = { ...c.planner, daily_usd: 1000 };
   });
   try {
     db((d) => d.prepare("DELETE FROM planner_usage").run());
@@ -1024,9 +1027,11 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
     await sleep(3000);
     assert.equal(batches().length, count, "skipped");
     const log = readFileSync(join(fake, "hortusd.log"), "utf8");
-    assert.equal(log.match(/planner\.daily_tokens reached/g)?.length, 1);
+    assert.equal(log.match(/planner\.daily_usd reached/g)?.length, 1);
     const told = () =>
-      slack.calls.filter((c) => c.method === "chat.postMessage" && /reached daily_tokens/.test(c.params.text ?? ""));
+      slack.calls.filter(
+        (c) => c.method === "chat.postMessage" && /reached its daily spending limit/.test(c.params.text ?? ""),
+      );
     await until(() => told().length, 70_000, "the owner told why nothing answers");
     // the next day: the usage row is keyed by the owner's date; what waited goes without a new event to wake it
     db((d) => d.prepare("UPDATE planner_usage SET day = '2000-01-01'").run());
@@ -1035,7 +1040,7 @@ test("daily_tokens: a batch over the cap → the next wakes are skipped and logg
     assert.equal(told().length, 1);
   } finally {
     await configure((c) => {
-      c.planner = { ...c.planner, daily_tokens: 5e6 };
+      c.planner = { ...c.planner, daily_usd: 5e6 };
     });
   }
 });
@@ -1047,12 +1052,12 @@ test("a batch a guard skipped runs on the Settings save that lifts it: nothing e
     ? { usage: { input: 1500, output: 0 }, calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
     : { text: "ok" };`);
   await configure((c) => {
-    c.planner = { ...c.planner, daily_tokens: 1000 };
+    c.planner = { ...c.planner, daily_usd: 1000 };
   });
   try {
     db((d) =>
       d
-        .prepare("INSERT INTO planner_usage(day, tokens) VALUES (?, 5000) ON CONFLICT(day) DO UPDATE SET tokens = 5000")
+        .prepare("INSERT INTO planner_usage(day, usd) VALUES (?, 5000) ON CONFLICT(day) DO UPDATE SET usd = 5000")
         .run(new Date().toISOString().slice(0, 10)),
     );
     let count = batches().length;
@@ -1061,13 +1066,40 @@ test("a batch a guard skipped runs on the Settings save that lifts it: nothing e
     await sleep(3000);
     assert.equal(batches().length, count, "skipped");
     await configure((c) => {
-      c.planner = { ...c.planner, daily_tokens: 5e6 };
+      c.planner = { ...c.planner, daily_usd: 5e6 };
     });
     await nextBatch(count++);
   } finally {
     db((d) => d.prepare("DELETE FROM planner_usage").run());
     await configure((c) => {
-      c.planner = { ...c.planner, daily_tokens: 5e6 };
+      c.planner = { ...c.planner, daily_usd: 5e6 };
+    });
+  }
+});
+
+test("no price for the Planner's model: no daily limit, and Settings is told so", { skip }, async () => {
+  planner(`export default ({ n, events }) => n === 0
+    ? { calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
+    : { text: "ok" };`);
+  const prices = { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } };
+  await configure((c) => {
+    c.prices = {};
+    c.planner = { ...c.planner, daily_usd: 0 };
+  });
+  try {
+    db((d) => d.prepare("DELETE FROM planner_usage").run());
+    const count = batches().length;
+    slack.post("C1", { user: "U1", text: "nothing stops this" });
+    await nextBatch(count);
+    const ps = await api<{ tokens: number; usd: number; cap?: number }>("planner.status");
+    assert.equal(ps.cap, undefined);
+    assert.equal(ps.usd, 0);
+    assert.ok(ps.tokens > 0, "what it spent still shows");
+  } finally {
+    db((d) => d.prepare("DELETE FROM planner_usage").run());
+    await configure((c) => {
+      c.prices = prices;
+      c.planner = { ...c.planner, daily_usd: 5e6 };
     });
   }
 });

@@ -580,7 +580,6 @@ function ModelFields({
 }
 
 const efforts = EFFORTS.map((e) => ({ value: e, label: e === "xhigh" ? "x-high" : e[0]?.toUpperCase() + e.slice(1) }));
-const tokenPresets = (vs: number[]) => vs.map((v) => ({ label: fmtTokens(v), value: v }));
 
 /** One rate of a model: typing into a model with no price yet starts its entry, which saves once input and output are set. */
 function Rate({
@@ -669,11 +668,14 @@ function ModelPrices({ d }: { d: Draft }) {
   const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
   const offered = modelCredentials(creds.data);
   const [picked, setPicked] = useState<string>();
-  const { prices, worker } = d.draft;
-  // the Workers' model first, whether or not it has a price, then its provider's, then the rest
+  const { prices, worker, planner } = d.draft;
+  // the models in use first, whether or not they have a price, then the Workers' provider's, then the rest
   const own = worker.provider;
+  const inUse = [worker, planner].flatMap(({ provider: p, model: m }) =>
+    p && m && !priceOf(prices, p, m) ? [[p, m] as const] : [],
+  );
   const rows = [
-    ...(own && worker.model && !priceOf(prices, own, worker.model) ? [[own, worker.model] as const] : []),
+    ...inUse.filter(([p, m], i) => inUse.findIndex(([q, n]) => q === p && n === m) === i),
     ...Object.entries(prices)
       .sort(([a], [b]) => Number(b === own) - Number(a === own))
       .flatMap(([p, listed]) => Object.keys(listed).map((m) => [p, m] as const)),
@@ -682,7 +684,7 @@ function ModelPrices({ d }: { d: Draft }) {
   return (
     <Card
       title="Model prices"
-      description="Dollars per million tokens by provider, from its pricing page, as hosts charge differently for one model. A Worker's budget is counted at the rates of its provider. A call to a model not listed counts at that provider's highest rates."
+      description="Dollars per million tokens by provider, from its pricing page, as hosts charge differently for one model. A Worker's budget and the Planner's daily limit are counted at the rates of their provider, and a model with no price has no limit. A call to a model not listed counts at that provider's highest rates."
     >
       <div className="flex flex-col gap-5 *:data-[slot=button]:self-start">
         {rows.map(([p, m]) => (
@@ -747,6 +749,7 @@ function Planner({ d }: { d: Draft }) {
   const p = d.draft.planner;
   const ps = useCall<PlannerStatus>("planner.status", {}, ["settings"]);
   const unset = !d.saved.planner.provider || !d.saved.planner.model;
+  const priced = !!priceOf(d.draft.prices, p.provider, p.model);
   return (
     <>
       <SectionHead
@@ -772,23 +775,38 @@ function Planner({ d }: { d: Draft }) {
               <p className="mt-0.5 text-lg font-semibold">{ps.data ? fmtNum(ps.data.routed) : "—"}</p>
             </div>
           </div>
-          {ps.data && (
-            <Meter
-              value={ps.data.tokens}
-              max={ps.data.cap}
-              label="Tokens today"
-              detail={`${fmtTokens(ps.data.tokens)} of ${fmtTokens(ps.data.cap)}`}
-            />
-          )}
-          {ps.data && ps.data.tokens >= ps.data.cap && (
+          {ps.data &&
+            (ps.data.cap === undefined ? (
+              <Meter
+                value={ps.data.tokens}
+                max={0}
+                label="Spending today"
+                detail={`${fmtTokens(ps.data.tokens)} tokens, no spending limit`}
+              />
+            ) : (
+              <Meter
+                value={ps.data.usd}
+                max={ps.data.cap}
+                label="Spending today"
+                detail={`${fmtUsd(ps.data.usd)} of ${fmtUsd(ps.data.cap)}`}
+              />
+            ))}
+          {ps.data?.cap !== undefined && ps.data.usd >= ps.data.cap && (
             <p className="text-muted-foreground text-[13px]">
-              The cap is reached: batches wait until tomorrow, in your time zone.
+              The limit is reached: batches wait until tomorrow, in your time zone, and the judge passes its decisions
+              to you.
             </p>
           )}
         </div>
       </Card>
       <Card title="Model">
         <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
+          {p.provider && p.model && !priced && (
+            <Callout tone="warning" title={`No price for ${p.model} at ${p.provider}`}>
+              The Planner and the judge have no spending limit, and a message from anyone can wake the Planner. Add its
+              rates under Workers › Model prices to set one.
+            </Callout>
+          )}
           <ModelFields
             provider={p.provider}
             model={p.model}
@@ -848,22 +866,24 @@ function Planner({ d }: { d: Draft }) {
                 : undefined
             }
           />
-          <NumberField
-            label="Tokens per day"
-            hint="Past it, batches wait until tomorrow. Input and output count in full, cache reads at a tenth."
-            def="5M"
-            unit="tokens"
-            value={p.daily_tokens}
-            min={0}
-            step={500_000}
-            presets={tokenPresets([1e6, 5e6, 10e6, 20e6])}
-            onChange={(v) =>
-              d.set((x) => {
-                x.planner.daily_tokens = v;
-              })
-            }
-            error={d.errors["planner.daily_tokens"]}
-          />
+          {priced && (
+            <NumberField
+              label="Spending per day"
+              hint="Every batch and every call of the judge, at its model's rates. Past it, batches wait until tomorrow and the judge passes its decisions to you."
+              def={fmtUsd(DEFAULTS.planner.daily_usd)}
+              unit="USD"
+              value={p.daily_usd}
+              min={0}
+              step={1}
+              presets={[1, 5, 20, 50].map((v) => ({ label: fmtUsd(v), value: v }))}
+              onChange={(v) =>
+                d.set((x) => {
+                  x.planner.daily_usd = v;
+                })
+              }
+              error={d.errors["planner.daily_usd"]}
+            />
+          )}
         </div>
       </Card>
       <Card title="Where it runs">

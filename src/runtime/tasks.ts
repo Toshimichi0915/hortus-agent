@@ -376,7 +376,7 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
   const { provider, model, effort, context_window } = c.worker;
   if (!provider || !model) throw new Error("worker.provider and worker.model must be set (Settings)");
   const price = priceOf(c.prices, provider, model);
-  const limit = parse<{ usd?: number; tokens?: number; hours: number }>(row.budget, c.worker.budget);
+  const limit = parse<{ usd?: number; hours: number }>(row.budget, c.worker.budget);
   const scope = parse<TaskScope>(row.scope, { credentials: [], repos: [] });
   const project = scope.project ?? row.project ?? undefined;
   const out = paths.out(row.id);
@@ -411,7 +411,6 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
     // no price has no spending limit, whatever the row says
     budget: {
       hours: limit.hours,
-      ...(limit.tokens !== undefined ? { tokens: Math.max(0, limit.tokens - runsOf(row)) } : {}),
       ...(price && limit.usd !== undefined ? { usd: Math.max(0, limit.usd - runsUsd(row)) } : {}),
     },
     ...(price ? { price } : {}),

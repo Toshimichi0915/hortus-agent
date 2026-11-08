@@ -25,7 +25,7 @@ import { links, listen, proxyModule } from "../proxy/index.ts";
 import { HISTORY } from "../proxy/pipeline.ts";
 import { call, define } from "../rpc.ts";
 import * as tasks from "../runtime/tasks.ts";
-import { tempDir } from "../test/until.ts";
+import { tempDir, until } from "../test/until.ts";
 import type { InboxMsg } from "../types.ts";
 import { caCert } from "./ca.ts";
 import { gate, transforms, vaultModule } from "./index.ts";
@@ -472,15 +472,29 @@ test("judge_notes come after the fixed prompt and before the summary; prompt_has
   setConfig({});
 });
 
-test("planner.daily_tokens exhausted → escalate without a call", async () => {
-  const day = today(ctx.config); // the owner's day, the Planner's key: at UTC+9 a UTC date split one day's cap in two
-  const used = (ctx.db.prepare("SELECT tokens FROM planner_usage WHERE day = ?").get(day) as { tokens: number }).tokens;
-  assert.ok(used >= 100, "the judge's tokens are counted");
-  setConfig({ planner: { provider: "llm", model: "judge-1", daily_tokens: used } });
+test("planner.daily_usd: the judge's dollars are the Planner's day; spent → escalate without a call; no price, no limit", async () => {
+  const day = today(ctx.config); // the owner's day, the Planner's key: at UTC+9 a UTC date split one day's limit in two
+  const usage = () =>
+    ctx.db.prepare("SELECT tokens, usd FROM planner_usage WHERE day = ?").get(day) as { tokens: number; usd: number };
+  const was = usage();
+  assert.ok(was.tokens >= 100, "the judge's tokens are counted");
+  assert.equal(was.usd, 0, "with no price, in no dollars");
+  // the fake answers 100 tokens in all, as input: a dollar each
+  const prices = { llm: { "judge-1": { input: 1e6, cached: 1e5, output: 1e6 } } };
+  setConfig({ prices, planner: { provider: "llm", model: "judge-1", daily_usd: 1000 } });
+  await send({});
+  await until(() => usage().usd === 100, 3000, "the judge's dollars");
+
+  setConfig({ prices, planner: { provider: "llm", model: "judge-1", daily_usd: 100 } });
   const before = llmSeen.length;
   const id = pendingId(await send({}));
   assert.equal(llmSeen.length, before);
-  assert.match(JSON.parse(row(id).payload ?? "{}").judge, /daily_tokens/);
+  assert.match(JSON.parse(row(id).payload ?? "{}").judge, /daily spending limit/);
+
+  // the price taken away: the same day's dollars stop nothing
+  setConfig({ planner: { provider: "llm", model: "judge-1", daily_usd: 0 } });
+  await send({});
+  assert.equal(llmSeen.length, before + 1, "asked");
   setConfig({});
 });
 
