@@ -94,6 +94,7 @@ import {
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { buttonVariants, Button as UiButton } from "@/components/ui/button";
 import { CardAction, CardContent, CardDescription, CardHeader, CardTitle, Card as UiCard } from "@/components/ui/card";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   DialogContent,
   DialogDescription,
@@ -113,6 +114,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Toaster } from "@/components/ui/sonner";
@@ -776,6 +778,74 @@ export interface Option<T extends string = string> {
   hint?: ReactNode;
   icon?: IconName;
   disabled?: boolean;
+}
+
+/**
+ * A long list to search, by substring: a native select only jumps by a name's first letters. What was typed can be used
+ * as it is, as a list is never sure to be whole. A short list stays a SelectField.
+ */
+export function ComboboxField({
+  value,
+  onChange,
+  options,
+  placeholder,
+  ...p
+}: FieldProps & { value: string; onChange: (v: string) => void; options: string[]; placeholder: string }) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const typed = query.trim();
+  const shown = options.filter((o) => o.toLowerCase().includes(typed.toLowerCase()));
+  const pick = (v: string) => {
+    onChange(v);
+    setQuery("");
+    setOpen(false);
+  };
+  return (
+    <Shell id={id} {...p}>
+      <Popover
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) setQuery("");
+        }}
+      >
+        <PopoverTrigger asChild>
+          <button
+            id={id}
+            type="button"
+            role="combobox"
+            aria-expanded={open}
+            aria-invalid={!!p.error || undefined}
+            aria-describedby={described(id, p)}
+            className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
+          >
+            <span className={cn("truncate", !value && "text-muted-foreground")}>{value || placeholder}</span>
+            <Icon name="chevronDown" size={16} className="shrink-0 text-muted-foreground" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-(--radix-popover-trigger-width) min-w-64 p-0">
+          {/* our own filter: cmdk's fuzzy one matches scattered letters and reorders the list */}
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="Search…" value={query} onValueChange={setQuery} />
+            <CommandList>
+              <CommandEmpty>Nothing to pick yet: type a name.</CommandEmpty>
+              {shown.map((o) => (
+                <CommandItem key={o} value={o} onSelect={() => pick(o)}>
+                  <span className="truncate">{o}</span>
+                </CommandItem>
+              ))}
+              {typed && !options.includes(typed) && (
+                <CommandItem value={`use:${typed}`} onSelect={() => pick(typed)}>
+                  <span className="truncate">Use "{typed}"</span>
+                </CommandItem>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </Shell>
+  );
 }
 
 export function SelectField<T extends string>({

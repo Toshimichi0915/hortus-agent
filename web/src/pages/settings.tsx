@@ -29,6 +29,7 @@ import {
   Callout,
   Card,
   Choice,
+  ComboboxField,
   CopyButton,
   cn,
   confirmAction,
@@ -610,18 +611,12 @@ function AddPriceModel({
   const error = list.error ?? list.data?.error;
   return (
     <>
-      <SelectField
+      <ComboboxField
         label="Model"
         value={model}
         onChange={setModel}
-        options={[
-          {
-            value: "",
-            label:
-              list.loading && !list.data ? "Loading its models…" : models.length ? "Pick a model" : "No models to add",
-          },
-          ...models.map((m) => ({ value: m, label: m })),
-        ]}
+        options={models}
+        placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
         error={error && `Could not list its models: ${error}`}
       />
       <Button
