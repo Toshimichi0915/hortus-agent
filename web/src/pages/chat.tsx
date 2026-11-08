@@ -2,7 +2,6 @@
 
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Kbd } from "@/components/ui/kbd";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { tokens as fmt } from "../../../src/console/text.ts";
 import { contextOf } from "../../../src/console/turns.ts";
 import {
@@ -348,18 +347,20 @@ export function Home() {
           placeholder="Ask hortus to do something…"
           tools={
             <>
-              <label className="flex items-center gap-1.5 text-muted-foreground" title="The project the chat works in">
+              <div className="flex items-center gap-1.5 text-muted-foreground" title="The project the chat works in">
                 <Icon name="folder" size={16} />
-                <span className="sr-only">Project</span>
-                <NativeSelect value={cwd} onChange={(e) => setCwd(e.target.value)}>
-                  <NativeSelectOption value="">No project</NativeSelectOption>
-                  {projects.map(([name, p]) => (
-                    <NativeSelectOption key={name} value={p.path}>
-                      {name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </label>
+                <ComboboxField
+                  label={<span className="sr-only">Project</span>}
+                  className="w-40 gap-0 text-foreground sm:w-48"
+                  value={cwd}
+                  onChange={setCwd}
+                  options={[
+                    { value: "", label: "No project" },
+                    ...projects.map(([name, p]) => ({ value: p.path, label: name })),
+                  ]}
+                  placeholder="No project"
+                />
+              </div>
               <ModelPicker
                 provider={(pick ?? config?.worker)?.provider}
                 model={(pick ?? config?.worker)?.model}
