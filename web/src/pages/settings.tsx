@@ -638,6 +638,8 @@ function AddPriceModel({
   ];
   const models = [...new Set([...(list.data?.models ?? []), ...known])].filter((m) => !prices[provider]?.[m]);
   const error = list.error ?? list.data?.error;
+  // the combobox offers a typed name it does not list, and Add would put zeros over its rates
+  const priced = !!prices[provider]?.[model];
   return (
     <>
       <ComboboxField
@@ -647,10 +649,10 @@ function AddPriceModel({
         options={asOptions(models)}
         placeholder={list.loading && !list.data ? "Loading its models…" : "Pick a model"}
         typed
-        hint={error && listFailed(error)}
+        hint={priced ? "It already has rates above." : error && listFailed(error)}
       />
       <Button
-        disabled={!model}
+        disabled={!model || priced}
         onClick={() => {
           d.set((x) => {
             x.prices[provider] = { ...x.prices[provider], [model]: { input: 0, cached: 0, output: 0 } };
