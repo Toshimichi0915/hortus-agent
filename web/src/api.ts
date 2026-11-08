@@ -223,6 +223,9 @@ export interface Task {
   /** the proxy's count so far (usage is written when a session ends) */
   metered?: number;
   metered_usd?: number;
+  /** what it runs on: a chat's own pick, or the Workers' */
+  provider?: string;
+  model?: string;
   /** its model has a price: without one a task has no spending limit, only its hours */
   priced?: boolean;
   hours: number;

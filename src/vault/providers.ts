@@ -22,6 +22,12 @@ export function providerSecret(name: string): { type: string; apiKey: string; en
   return { type: p.type, apiKey, endpoint: `https://${entry.hosts?.[0] ?? p.host}${p.path}` };
 }
 
+/** A token for one of the model APIs above, under whatever name. */
+export function isModelApi(name: string): boolean {
+  const entry = readVault()[name];
+  return entry?.type === "token" && Object.hasOwn(PROVIDERS, entry.transform ?? name);
+}
+
 const MODELS_TIMEOUT_MS = 10_000;
 const MODELS_MAX_BYTES = 8 * 1024 * 1024;
 const MODEL_ID_MAX = 200;

@@ -18,6 +18,7 @@ import {
   budgetTokens,
   highestPrice,
   type Manifest,
+  modelOf,
   priceOf,
   type Req,
   type ResponseResult,
@@ -106,11 +107,16 @@ export interface TaskRow {
   metered: number;
   /** the same in dollars */
   spent: number;
+  /** a chat's own pick; null follows `worker` */
+  provider: string | null;
+  model: string | null;
 }
 
 export function taskRow(id: string): TaskRow | undefined {
   const r = ctx()
-    .db.prepare("SELECT kind, scope, origins, budget, metered, metered_usd, usage FROM tasks WHERE id = ?")
+    .db.prepare(
+      "SELECT kind, scope, origins, budget, metered, metered_usd, usage, provider, model FROM tasks WHERE id = ?",
+    )
     .get(id) as
     | {
         kind: string;
@@ -120,6 +126,8 @@ export function taskRow(id: string): TaskRow | undefined {
         metered: number;
         metered_usd: number;
         usage: string | null;
+        provider: string | null;
+        model: string | null;
       }
     | undefined;
   if (!r) return undefined;
@@ -131,6 +139,8 @@ export function taskRow(id: string): TaskRow | undefined {
     budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { usd?: number }) : null,
     metered: r.metered + (usage.runs ?? 0),
     spent: r.metered_usd + (usage.runs_usd ?? 0),
+    provider: r.provider,
+    model: r.model,
   };
 }
 
@@ -218,9 +228,14 @@ function devUpstream(host: string): URL | undefined {
 }
 
 /** The host of the session's own model: how it thinks, not egress, and in no list an owner writes for a task's data. */
-function modelHost(client: Client): string | undefined {
+function modelHost(client: Client, task: TaskRow | undefined): string | undefined {
   const { planner, worker } = ctx().config;
-  const name = client.role === "planner" ? planner.provider : client.role === "worker" ? worker.provider : undefined;
+  const name =
+    client.role === "planner"
+      ? planner.provider
+      : client.role === "worker"
+        ? modelOf(worker, task).provider
+        : undefined;
   try {
     const endpoint = name && providerSecret(name).endpoint;
     return endpoint ? new URL(endpoint).hostname : undefined;
@@ -236,7 +251,7 @@ export async function egress(
   task: TaskRow | undefined,
 ): Promise<Target | Out> {
   const origins = client.role === "core" ? "*" : originsFor(task);
-  if (origins !== "*" && !origins.includes(host) && host !== modelHost(client))
+  if (origins !== "*" && !origins.includes(host) && host !== modelHost(client, task))
     return refuse(403, `host not in origins: ${host}`, { host });
   const dev = devUpstream(host);
   if (dev) {
@@ -640,7 +655,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
     client.role === "planner" || client.role === "core"
       ? cfg.planner.provider
       : client.role === "worker"
-        ? cfg.worker.provider
+        ? modelOf(cfg.worker, task).provider
         : undefined;
   const llmEntry = llm === undefined ? undefined : readVault()[llm];
   // a credential's transform defaults to its name (vault/providers.ts)
@@ -854,7 +869,7 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   const metered = model && !!client.task && (client.role === "worker" || client.role === "planner");
   if (metered && task?.budget?.usd !== undefined) {
     const { usd } = task.budget;
-    const line = overdrawnUsd(usd, cfg, client.role === "planner" ? cfg.planner : cfg.worker);
+    const line = overdrawnUsd(usd, cfg, client.role === "planner" ? cfg.planner : modelOf(cfg.worker, task));
     if (line !== undefined && task.spent >= line)
       return refuse(403, `budget exceeded: $${task.spent.toFixed(2)}/$${usd} through the proxy`, { host });
   }
@@ -1189,7 +1204,7 @@ function usageOf(v: unknown): MeteredUsage | undefined {
 function charge(p: Prepared, tokens: number, u?: MeteredUsage): void {
   if (tokens <= 0) return;
   const { prices, worker, planner } = ctx().config;
-  const { provider, model } = p.client.role === "planner" ? planner : worker;
+  const { provider, model } = p.client.role === "planner" ? planner : modelOf(worker, taskRow(p.client.task as string));
   const counted = priceOf(prices, provider, model);
   const rate = () => priceOf(prices, provider, u?.model) ?? highestPrice(prices[provider as string] ?? {});
   const usd = counted ? usageCost(u ?? { input: tokens, output: 0 }, rate()) : 0;

@@ -792,6 +792,7 @@ export function ComboboxField({
   options,
   placeholder,
   typed: free,
+  disabled,
   ...p
 }: FieldProps & {
   value: string;
@@ -799,6 +800,7 @@ export function ComboboxField({
   options: { value: string; label: string }[];
   placeholder: string;
   typed?: boolean;
+  disabled?: boolean | undefined;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -828,7 +830,8 @@ export function ComboboxField({
             aria-expanded={open}
             aria-invalid={!!p.error || undefined}
             aria-describedby={described(id, p)}
-            className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
+            disabled={disabled}
+            className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive"
           >
             <span className={cn("truncate", !current && "text-muted-foreground")}>{current || placeholder}</span>
             <Icon name="chevronDown" size={16} className="shrink-0 text-muted-foreground" />

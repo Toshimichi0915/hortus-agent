@@ -473,7 +473,7 @@ function General({ d }: { d: Draft }) {
 // ---------------------------------------------------------------------------------------------------------------------
 // Planner and Workers
 
-const CLAUDE = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
+export const CLAUDE = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 
 /** The credentials a model call can go out with, the ones whose transform is a provider first. */
 function modelCredentials(creds: Credential[] | undefined): Credential[] {
@@ -484,7 +484,7 @@ function modelCredentials(creds: Credential[] | undefined): Credential[] {
   ];
 }
 
-const credentialLabel = (x: Credential) =>
+export const credentialLabel = (x: Credential) =>
   `${x.name}${x.transform ? ` (${TRANSFORMS[x.transform]?.label ?? x.transform})` : ""}`;
 
 /**
@@ -494,7 +494,7 @@ const credentialLabel = (x: Credential) =>
 /** No error: a typed name is as good as a listed one, so the field says so and stays calm. */
 const listFailed = (why: string) => `Could not list its models (${why}): type its name.`;
 
-const asOptions = (names: string[]) => [...new Set(names)].map((m) => ({ value: m, label: m }));
+export const asOptions = (names: string[]) => [...new Set(names)].map((m) => ({ value: m, label: m }));
 
 function ProviderModelField({
   provider,

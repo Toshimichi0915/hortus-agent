@@ -90,7 +90,7 @@ test("the WAL file shrinks back to journal_size_limit after a big transaction is
 
 test("a task's token budget moves to dollars, and the Planner's day takes a dollar count", () => {
   const db = new DatabaseSync(":memory:");
-  migrate(db, 2); // the schema as it was before the move
+  migrate(db, 3); // the schema as it was before the move
   db.prepare("INSERT INTO planner_usage(day, tokens) VALUES ('2026-01-01', 7)").run();
   const add = db.prepare("INSERT INTO tasks(id, kind, title, status, budget) VALUES (?, ?, 't', 'waiting', ?)");
   add.run("w", "unattended", JSON.stringify({ tokens: 2e6, hours: 4 }));

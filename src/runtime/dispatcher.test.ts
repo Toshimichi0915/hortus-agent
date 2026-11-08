@@ -2,7 +2,7 @@
  * keeps it queued with the image error on the card (the fallback-to-host path needs Landlock and a provider). */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -14,6 +14,7 @@ import { logger } from "../log.ts";
 import { mirrorModule } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { plannerModule, renderBatch } from "../planner/planner.ts";
+import { type ScheduleRow, start as startRun } from "../schedules/runs.ts";
 import { fakeVm, hasScope, inScope } from "../test/fakes/vm.ts";
 import { tempDir, until } from "../test/until.ts";
 import "../planner/tools.ts";
@@ -400,6 +401,52 @@ test("a failed task: the owner's acts and its one-shot timer start it again, wha
     assert.match(open, new RegExp(`- ${id} .*waiting.* — failed, only the owner starts it again: "the last line"`));
   } finally {
     await plannerModule.stop();
+  }
+});
+
+test("a chat's model: only a model API's credential, only between sessions; its session and its runs use it", async () => {
+  writeFileSync(
+    paths.vault(),
+    JSON.stringify({
+      alt: { type: "token", value: "x", transform: "anthropic" },
+      gh: { type: "token", value: "y", transform: "github" },
+    }),
+    { mode: 0o600 },
+  );
+  writeFileSync(paths.paused(), ""); // nothing starts: this is about the rows
+  const ctx: Ctx = {
+    config: Config.parse({ worker: { provider: "fake", model: "m" } }),
+    db: openDb(paths.db()),
+    paths,
+    log: logger,
+    reload: async () => {},
+  };
+  await dispatcherModule.start(ctx);
+  const owner = { role: "owner" } as const;
+  const open = (i: object) => call("task.open", { text: "hi", ...i }, owner) as Promise<{ id: string }>;
+  try {
+    await assert.rejects(open({ provider: "alt" }), /go together/);
+    await assert.rejects(open({ provider: "gh", model: "x" }), /not a model provider/);
+    await assert.rejects(open({ provider: "ghost", model: "x" }), /not a model provider/);
+
+    const follows = await open({});
+    assert.equal(tasks.taskJson(ctx.config, tasks.get(follows.id)).model, "m");
+
+    const { id } = await open({ provider: "alt", model: "a1" });
+    const started = tasks.taskJson(ctx.config, tasks.get(id));
+    assert.deepEqual([started.provider, started.model], ["alt", "a1"]);
+    const row = { id: 1, task_id: id, text: "tick" } as ScheduleRow;
+    assert.equal(startRun(row, new Date()).provider, "alt", "a run is its chat's");
+
+    const change = (i: object) => call("task.model", { id, ...i }, owner);
+    await assert.rejects(change({ provider: "alt", model: "a2" }), /waiting for you/);
+    ctx.db.prepare("UPDATE tasks SET status = 'waiting' WHERE id = ?").run(id);
+    await assert.rejects(change({ provider: "gh", model: "a2" }), /not a model provider/);
+    await change({ provider: "alt", model: "a2" });
+    assert.equal(tasks.taskJson(ctx.config, tasks.get(id)).model, "a2");
+  } finally {
+    rmSync(paths.paused(), { force: true });
+    await dispatcherModule.stop();
   }
 });
 

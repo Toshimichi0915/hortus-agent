@@ -89,6 +89,8 @@ const migrations: string[] = [
     WHERE json_valid(budget) AND kind <> 'planner';`,
   // the Planner's and the judge's day in dollars; `tokens` stays what Settings shows for a model with no price
   "ALTER TABLE planner_usage ADD COLUMN usd REAL NOT NULL DEFAULT 0;",
+  // a chat's own model (and its runs'); null follows `worker` in the config
+  "ALTER TABLE tasks ADD COLUMN provider TEXT; ALTER TABLE tasks ADD COLUMN model TEXT;",
 ];
 
 const TAINT_MAX = 5;

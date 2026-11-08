@@ -19,7 +19,7 @@ import * as paths from "../paths.ts";
 import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
 import { overdrawnUsd } from "../proxy/pipeline.ts";
-import { type OutboxMsg, priceOf, type StdoutLine, type TaskJson, type TaskKind } from "../types.ts";
+import { modelOf, type OutboxMsg, priceOf, type StdoutLine, type TaskJson, type TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
@@ -337,10 +337,8 @@ async function finish(
   const out = paths.out(id);
   const hours = row.hours + (Date.now() - startedAt) / 3.6e6;
   const config = ctx?.config as Config;
-  const { tokens, usd, cursor } = scan(
-    join(out, "sessions"),
-    priceOf(config.prices, config.worker.provider, config.worker.model),
-  );
+  const used = modelOf(config.worker, row);
+  const { tokens, usd, cursor } = scan(join(out, "sessions"), priceOf(config.prices, used.provider, used.model));
   const seen = (d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM outbox WHERE task_id = ?").get(id) as { n: number })
     .n;
   const msgs = readOutbox(id, seen);

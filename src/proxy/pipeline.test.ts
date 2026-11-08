@@ -34,7 +34,7 @@ import { gate, transforms, vaultModule } from "../vault/index.ts";
 import { installationToken } from "../vault/ops.ts";
 import { mint, minted, read as readVault, scrubber, write as writeVault } from "../vault/vault.ts";
 import { coreFetch, links, listen, proxyModule, unlisten } from "./index.ts";
-import { egress, hashTemplate } from "./pipeline.ts";
+import { egress, hashTemplate, taskRow } from "./pipeline.ts";
 import { CLIENT_IDLE } from "./server.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-proxy-");
@@ -1153,6 +1153,44 @@ test("a model credential's manifest `consequential` is gated: fine-tuning, delet
   }
 });
 
+test("a chat's own provider is its model: its calls pass the gate and its host the origins, as the Workers' do", async () => {
+  const prev = ctx.config;
+  const vault = readVault();
+  writeVault({ ...vault, llm: { type: "token", value: "sk-model", transform: "openai", hosts: ["models.test"] } });
+  ctx.config = Config.parse({ ...prev, worker: { provider: "other", model: "m" } });
+  const set = (provider: string | null) =>
+    ctx.db.prepare("UPDATE tasks SET provider = ?, model = ? WHERE id = 'T'").run(provider, provider && "pick");
+  const modelCall = () =>
+    send({
+      host: "models.test",
+      method: "POST",
+      path: "/v1/chat/completions",
+      headers: { authorization: "Bearer hortus-secret-llm", "content-length": "2" },
+      body: "{}",
+    });
+  const allowed = async () => {
+    ctx.config = Config.parse({ ...ctx.config, origins: ["registry.npmjs.org"] });
+    const t = await egress({ role: "worker", task: "T" }, "models.test", true, taskRow("T"));
+    ctx.config = Config.parse({ ...ctx.config, origins: "*" });
+    return !("status" in t && t.status === 403);
+  };
+  try {
+    assert.equal(await allowed(), false);
+    let n = approvals();
+    assert.equal((await modelCall()).status, 403, "on the Workers' provider, this key is any other credential");
+    assert.equal(approvals(), n + 1);
+    set("llm");
+    assert.equal(await allowed(), true);
+    n = approvals();
+    assert.equal((await modelCall()).status, 200);
+    assert.equal(approvals(), n);
+  } finally {
+    set(null);
+    ctx.config = prev;
+    writeVault(vault);
+  }
+});
+
 test("a credential without a transform follows only a manifest naming it, never another's same-type entry", async () => {
   const prev = ctx.config.worker.provider;
   writeVault({
@@ -1230,7 +1268,7 @@ test("origins: a list never cuts a session off its own model; a stranger's host,
   writeVault({ ...vault, llm: { type: "token", value: "sk-x", transform: "openai", hosts: ["models.test"] } });
   ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" }, origins: ["registry.npmjs.org"] });
   try {
-    const task = { scope: null, origins: null, budget: null, metered: 0, spent: 0 };
+    const task = { scope: null, origins: null, budget: null, metered: 0, spent: 0, provider: null, model: null };
     const worker = await egress({ role: "worker", task: "T" }, "models.test", true, task);
     assert.equal("status" in worker && worker.status === 403, false);
     const other = await egress({ role: "worker", task: "T" }, "example.com", true, task);

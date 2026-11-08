@@ -34,6 +34,8 @@ export interface TaskRow {
   runtime?: string | null;
   started?: string | null;
   brief?: string | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 // ponytail: OFFSET paging (rows shift while tasks update; deep pages scan); a keyset cursor if that bites

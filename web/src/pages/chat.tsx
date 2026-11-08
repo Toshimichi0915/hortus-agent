@@ -22,6 +22,7 @@ import {
   Button,
   buttonVariants,
   Card,
+  ComboboxField,
   confirmAction,
   Icon,
   IconButton,
@@ -35,7 +36,9 @@ import {
   useTitle,
 } from "../ui.tsx";
 import { ApprovalCard, approvalTitle } from "./approvals.tsx";
+import { TRANSFORMS } from "./credentials.tsx";
 import { ScheduleWhen } from "./schedules.tsx";
+import { asOptions, CLAUDE, credentialLabel } from "./settings.tsx";
 import {
   BudgetDialog,
   isOpen,
@@ -71,6 +74,7 @@ function Composer({
   onStop,
   running,
   busy,
+  blocked,
   placeholder,
   autoFocus,
   tools,
@@ -80,6 +84,8 @@ function Composer({
   onStop?: () => void;
   running?: boolean;
   busy?: boolean;
+  /** a half-made pick in `tools`: what is typed waits for it */
+  blocked?: boolean;
   placeholder: string;
   autoFocus?: boolean;
   tools?: ReactNode;
@@ -101,7 +107,7 @@ function Composer({
   });
   const submit = async () => {
     const text = value.trim();
-    if (!text || busy) return;
+    if (!text || busy || blocked) return;
     setValue("");
     drafts.delete(draftKey);
     // a failed send gives the text back
@@ -135,7 +141,7 @@ function Composer({
         }}
       />
       <div className="mt-1.5 flex items-center gap-2.5">
-        <div className="flex min-w-0 flex-1 items-center gap-2">{tools}</div>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{tools}</div>
         {running && value.trim() && (
           <span className="text-xs text-muted-foreground">It reads this after its current step</span>
         )}
@@ -155,11 +161,65 @@ function Composer({
             aria-label="Send"
             title="Send (Enter)"
             loading={busy}
-            disabled={!value.trim()}
+            disabled={!value.trim() || blocked}
           />
         )}
       </div>
     </form>
+  );
+}
+
+interface ModelPick {
+  provider: string;
+  /** "": the provider changed and its model is not picked yet */
+  model: string;
+}
+
+/** A chat's credential and model; a name can be typed, as a provider's list is never sure to be whole. */
+function ModelPicker({
+  provider,
+  model,
+  fallback,
+  onChange,
+  disabled,
+}: {
+  provider: string | undefined;
+  model: string | undefined;
+  /** the Workers' provider: offered whatever its transform, as the config already runs on it */
+  fallback: string | undefined;
+  onChange: (pick: ModelPick) => void;
+  disabled?: boolean | undefined;
+}) {
+  const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
+  const list = useCall<{ models: string[] }>(provider ? "provider.models" : null, { provider });
+  const named = (x: Credential) => x.transform ?? x.name;
+  // the server refuses the rest (task.open): a model call skips the gate, so no other credential may be one
+  const offered = (creds.data ?? []).filter(
+    (x) => x.type === "token" && (x.name === fallback || TRANSFORMS[named(x)]?.provider),
+  );
+  const claude = creds.data?.some((x) => x.name === provider && named(x) === "anthropic");
+  return (
+    <>
+      <ComboboxField
+        label={<span className="sr-only">Provider</span>}
+        className="w-40 gap-0 sm:w-48"
+        value={provider ?? ""}
+        onChange={(p) => p !== provider && onChange({ provider: p, model: "" })}
+        options={offered.map((x) => ({ value: x.name, label: credentialLabel(x) }))}
+        placeholder="Provider"
+        disabled={disabled}
+      />
+      <ComboboxField
+        label={<span className="sr-only">Model</span>}
+        className="w-full gap-0 sm:w-48"
+        value={model ?? ""}
+        onChange={(m) => provider && onChange({ provider, model: m })}
+        options={asOptions([...((list.current && list.data?.models) || []), ...(claude ? CLAUDE : [])])}
+        placeholder="Pick a model"
+        typed
+        disabled={disabled || !provider}
+      />
+    </>
   );
 }
 
@@ -258,8 +318,10 @@ export function Home() {
   const tasks = useCall<Task[]>("task.list", {}, ["tasks"]);
   const pending = useCall<Approval[]>("approval.list", {}, ["approvals"]);
   const [cwd, setCwd] = useState("");
+  // none: the chat follows the Workers' model in Settings
+  const [pick, setPick] = useState<ModelPick | null>(null);
   const [open, opening] = useAction(async (text: string) => {
-    const r = await call<{ id: string }>("task.open", { text, ...(cwd ? { cwd } : {}) });
+    const r = await call<{ id: string }>("task.open", { text, ...(cwd ? { cwd } : {}), ...pick });
     navigate(`/chat/${r.id}`);
     return r;
   });
@@ -281,21 +343,30 @@ export function Home() {
           draftKey=""
           autoFocus
           busy={opening}
+          blocked={!!pick && !pick.model}
           onSend={open}
           placeholder="Ask hortus to do something…"
           tools={
-            <label className="flex items-center gap-1.5 text-muted-foreground" title="The project the chat works in">
-              <Icon name="folder" size={16} />
-              <span className="sr-only">Project</span>
-              <NativeSelect value={cwd} onChange={(e) => setCwd(e.target.value)}>
-                <NativeSelectOption value="">No project</NativeSelectOption>
-                {projects.map(([name, p]) => (
-                  <NativeSelectOption key={name} value={p.path}>
-                    {name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
+            <>
+              <label className="flex items-center gap-1.5 text-muted-foreground" title="The project the chat works in">
+                <Icon name="folder" size={16} />
+                <span className="sr-only">Project</span>
+                <NativeSelect value={cwd} onChange={(e) => setCwd(e.target.value)}>
+                  <NativeSelectOption value="">No project</NativeSelectOption>
+                  {projects.map(([name, p]) => (
+                    <NativeSelectOption key={name} value={p.path}>
+                      {name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              <ModelPicker
+                provider={(pick ?? config?.worker)?.provider}
+                model={(pick ?? config?.worker)?.model}
+                fallback={config?.worker.provider}
+                onChange={setPick}
+              />
+            </>
           }
         />
         <p className="-mt-1 text-center text-xs text-muted-foreground">
@@ -392,6 +463,8 @@ function ContextRing({ tokens, window }: { tokens: number; window: number }) {
 export function Conversation({ id }: { id: string }) {
   const d = useCall<TaskDetail>("task.get", { id }, ["tasks", "approvals"]);
   const paused = useCall<{ paused: boolean }>("pause.get", {}, ["tasks"]);
+  const cfg = useCall<{ config: Config }>("settings.get", {}, ["settings"]);
+  const [pick, setPick] = useState<ModelPick | null>(null);
   const down = useStore(reconnecting);
   const [rows, setRows] = useState<Row[]>([]);
   const [panel, setPanel] = useState(false);
@@ -403,6 +476,7 @@ export function Conversation({ id }: { id: string }) {
   const [away, setAway] = useState(false);
   useEffect(() => {
     setRows([]);
+    setPick(null);
     stick.current = true;
     return streamRows(id, (r) => setRows((p) => [...p, ...r]));
   }, [id]);
@@ -419,6 +493,14 @@ export function Conversation({ id }: { id: string }) {
     () => undefined,
   );
   const [stop] = useAction(() => call("task.stop", { id }));
+  const [switchModel] = useAction(async (p: ModelPick) => {
+    try {
+      await call("task.model", { id, ...p });
+      await d.reload();
+    } finally {
+      setPick(null); // refused: back to what it still runs on
+    }
+  });
   const t = d.data?.task;
   useTitle(t?.title ?? "Chat");
   if (d.error && !t)
@@ -532,10 +614,23 @@ export function Conversation({ id }: { id: string }) {
               key={id}
               draftKey={id}
               running={running}
+              blocked={!!pick && !pick.model}
               onSend={send}
               onStop={() => stop()}
               placeholder="Reply to hortus…"
               autoFocus
+              tools={
+                <ModelPicker
+                  provider={(pick ?? t)?.provider}
+                  model={(pick ?? t)?.model}
+                  fallback={cfg.data?.config.worker.provider}
+                  disabled={running}
+                  onChange={(p) => {
+                    setPick(p);
+                    if (p.model) switchModel(p);
+                  }}
+                />
+              }
             />
           )}
           <span className="sr-only" role="status">

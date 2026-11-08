@@ -33,6 +33,7 @@ import { define } from "../rpc.ts";
 import {
   GOES_ON,
   type InboxMsg,
+  modelOf,
   priceOf,
   RpcError,
   type TaskJson,
@@ -40,7 +41,7 @@ import {
   type TaskScope,
   type TaskStatus,
 } from "../types.ts";
-import { providerSecret } from "../vault/providers.ts";
+import { isModelApi, providerSecret } from "../vault/providers.ts";
 import { read as readVault } from "../vault/vault.ts";
 
 export interface TaskRow {
@@ -67,12 +68,17 @@ export interface TaskRow {
   hours: number;
   cwd: string | null;
   error: string | null;
+  /** a chat's own pick, a run's from its chat; null follows `worker` in the config */
+  provider: string | null;
+  model: string | null;
 }
 
 export interface CreateInput {
   kind: TaskKind;
   title: string;
   brief: string;
+  provider?: string;
+  model?: string;
   /** credentials default to `worker.credentials`, or every vault name when that is empty */
   scope?: Partial<TaskScope>;
   project?: string;
@@ -169,7 +175,8 @@ export function create(i: CreateInput): TaskRow {
   c.db
     .prepare(
       `INSERT INTO tasks(id, kind, title, brief, status, scope, origins, budget, usage, project, runtime, parent,
-        event_keys, created, updated, hours, cwd) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        event_keys, created, updated, hours, cwd, provider, model)
+        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
     )
     .run(
       id,
@@ -187,6 +194,8 @@ export function create(i: CreateInput): TaskRow {
       t,
       t,
       i.cwd ?? null,
+      i.provider ?? null,
+      i.model ?? null,
     );
   for (const ref of keys) c.db.prepare("INSERT OR REPLACE INTO task_refs(ref, task_id) VALUES (?, ?)").run(ref, id);
   mkdirSync(join(paths.ctl(id), "inbox"), { recursive: true });
@@ -373,7 +382,8 @@ function mirrored(c: Config): string[] {
 
 /** Rebuilt from the row and the current config at every start. */
 export function taskJson(c: Config, row: TaskRow): TaskJson {
-  const { provider, model, effort, context_window } = c.worker;
+  const { effort, context_window } = c.worker;
+  const { provider, model } = modelOf(c.worker, row);
   if (!provider || !model) throw new Error("worker.provider and worker.model must be set (Settings)");
   const price = priceOf(c.prices, provider, model);
   const limit = parse<{ usd?: number; hours: number }>(row.budget, c.worker.budget);
@@ -510,11 +520,28 @@ export function projectFor(c: Config, cwd: string | undefined): string | undefin
 const owner = ["owner"] as const;
 const Id = z.object({ id: z.string() });
 
+/**
+ * The proxy passes a session's own model credential without the gate, so a pick is a model API's: a chat "on" `github`
+ * would push ungated. The config's own providers pass as they are, custom ones too.
+ */
+function checkProvider(c: Config, provider: string): void {
+  if (provider !== c.worker.provider && provider !== c.planner.provider && !isModelApi(provider))
+    throw new RpcError("invalid", `${provider} is not a model provider's credential`);
+}
+
 define("task.open", {
   roles: [...owner],
-  input: z.object({ text: z.string().min(1), cwd: z.string().optional() }),
-  run({ text, cwd }) {
+  input: z
+    .object({
+      text: z.string().min(1),
+      cwd: z.string().optional(),
+      provider: z.string().min(1).optional(),
+      model: z.string().min(1).optional(),
+    })
+    .refine((i) => !i.provider === !i.model, "provider and model go together"),
+  run({ text, cwd, provider, model }) {
     const c = ctx().config;
+    if (provider) checkProvider(c, provider);
     const project = projectFor(c, cwd);
     const t = create({
       kind: "chat",
@@ -524,10 +551,26 @@ define("task.open", {
       scope: { credentials: sessionCredentials(), repos: mirrored(c) },
       ...(project ? { project } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(provider && model ? { provider, model } : {}),
     });
     inboxWrite(t.id, { from: "owner", trusted: true, text });
     ownerLine(t.id, text);
     return { id: t.id };
+  },
+});
+
+// only between sessions: the proxy reads the row at each call, so a running session's calls would turn into gated ones
+define("task.model", {
+  roles: [...owner],
+  input: z.object({ id: z.string(), provider: z.string().min(1), model: z.string().min(1) }),
+  run({ id, provider, model }) {
+    const t = get(id);
+    if (t.kind !== "chat") throw new RpcError("invalid", "only a chat picks its model");
+    if (t.status !== "waiting") throw new RpcError("invalid", "only a chat waiting for you can change its model");
+    checkProvider(ctx().config, provider);
+    ctx().db.prepare("UPDATE tasks SET provider = ?, model = ? WHERE id = ?").run(provider, model, id);
+    bus.emit("tasks", { id, status: t.status });
+    return { ok: true };
   },
 });
 

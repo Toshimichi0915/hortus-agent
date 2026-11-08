@@ -12,7 +12,7 @@ import { replaceFile } from "../hostile.ts";
 import { removeLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import * as tasks from "../runtime/tasks.ts";
-import { type OutboxMsg, priceOf } from "../types.ts";
+import { modelOf, type OutboxMsg, priceOf } from "../types.ts";
 
 export interface ScheduleRow {
   id: number;
@@ -53,7 +53,8 @@ export function local(at: Date, tz: string): string {
  */
 export function overBudget(t: tasks.TaskRow): boolean {
   const b = parse<{ usd?: number; hours?: number }>(t.budget, {});
-  const priced = !!ctx && !!priceOf(ctx.config.prices, ctx.config.worker.provider, ctx.config.worker.model);
+  const m = ctx && modelOf(ctx.config.worker, t);
+  const priced = !!ctx && !!priceOf(ctx.config.prices, m?.provider, m?.model);
   const overUsd = priced && b.usd !== undefined && usdOf(t) >= b.usd;
   return t.kind !== "chat" && (overUsd || (t.hours ?? 0) >= (b.hours ?? Number.POSITIVE_INFINITY));
 }
@@ -84,6 +85,7 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     event_keys: [`schedule:${row.id}`],
     scope: parse(p.scope, {}),
     ...(p.project ? { project: p.project } : {}),
+    ...(p.provider && p.model ? { provider: p.provider, model: p.model } : {}),
     // a run is unattended, so a chat's (which has no budget) is held to the chat's whole budget on its own
     budget:
       p.kind === "chat"

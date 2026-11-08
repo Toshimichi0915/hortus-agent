@@ -112,7 +112,8 @@ messenger, one forge and the Planner's (and Workers') model:
   start and every 10 minutes; it never wakes the Planner and never taints. The built-in `hortus` DOF is the Workers'
   guide to hortus (`guide/`), synced from each release and readable by every task; it cannot be removed.
 - `owner.notify`: the DOF whose DM tells you about new approvals, failed tasks and tasks that stopped with nothing left to wake them.
-- `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks.
+- `planner.provider` / `worker.provider` name a credential (below); its transform says which API it speaks. A chat can
+  pick its own model API credential and model in its composer, while it waits for you; its schedule's runs use the same.
 - `policy`: `human` (the default) asks you for **every** credentialed request, one decision each. It is
   many: a clone is 3 decisions, a push 3, and a PR from issue to merge took 25-55 clicks and 1-2M tokens in a live walk,
   now and then reaching a task's budget, as each decision wakes the Worker with its whole context. `auto` is the

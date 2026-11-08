@@ -377,6 +377,14 @@ export function budgetTokens(u: { input: number; output: number; cached?: number
   return u.input - cached + Math.ceil(cached * CACHED_WEIGHT) + u.output;
 }
 
+/** What a task's session runs on: the chat's own pick (a run: its chat's), or the Workers'. */
+export function modelOf(
+  worker: { provider?: string | undefined; model?: string | undefined },
+  task: { provider?: string | null; model?: string | null } | undefined,
+): { provider?: string | undefined; model?: string | undefined } {
+  return task?.provider && task.model ? { provider: task.provider, model: task.model } : worker;
+}
+
 /** One model's rates in dollars per million tokens (`prices` in hortusd.json). */
 export interface ModelPrice {
   input: number;
