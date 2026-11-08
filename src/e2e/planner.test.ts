@@ -246,7 +246,7 @@ before(async () => {
         plugins: [join(fake, "plugins", "fake")],
         budget: { usd: 2e6, hours: 4 },
       },
-      prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } }, // a token is a dollar
+      prices: { fake: { m: { input: 1e6, cache_read: 1e5, output: 1e6 } } }, // a token is a dollar
       projects: { foo: { path: join(fake, "foo") } },
       proxy: { https: await freePort(), http: httpPort, dns: 0 },
     }),
@@ -1081,7 +1081,7 @@ test("no price for the Planner's model: no daily limit, and Settings is told so"
   planner(`export default ({ n, events }) => n === 0
     ? { calls: [{ name: "event_ignore", input: { event_ids: events.map((e) => e.id), reason: "t" } }] }
     : { text: "ok" };`);
-  const prices = { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } };
+  const prices = { fake: { m: { input: 1e6, cache_read: 1e5, output: 1e6 } } };
   await configure((c) => {
     c.prices = {};
     c.planner = { ...c.planner, daily_usd: 0 };

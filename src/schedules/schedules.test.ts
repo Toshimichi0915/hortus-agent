@@ -32,7 +32,7 @@ const ctx: Ctx = {
   config: Config.parse({
     owner: { tz: "UTC" },
     worker: { provider: "fake", model: "m" },
-    prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } },
+    prices: { fake: { m: { input: 1e6, cache_read: 1e5, output: 1e6 } } },
     projects: { foo: { path: project } },
   }),
   db: openDb(paths.db()),

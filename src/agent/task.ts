@@ -28,7 +28,7 @@ export const TaskSchema = z.object({
   origins: z.union([z.literal("*"), z.array(z.string())]),
   budget: z.object({ usd: z.number().optional(), hours: z.number() }),
   price: z
-    .object({ input: z.number(), cached: z.number(), cache_write: z.number().optional(), output: z.number() })
+    .object({ input: z.number(), cache_read: z.number(), cache_write: z.number().optional(), output: z.number() })
     .optional(),
   hours_used: z.number(),
   provider: z.string(),

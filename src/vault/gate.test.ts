@@ -480,7 +480,7 @@ test("planner.daily_usd: the judge's dollars are the Planner's day; spent → es
   assert.ok(was.tokens >= 100, "the judge's tokens are counted");
   assert.equal(was.usd, 0, "with no price, in no dollars");
   // the fake answers 100 tokens in all, as input: a dollar each
-  const prices = { llm: { "judge-1": { input: 1e6, cached: 1e5, output: 1e6 } } };
+  const prices = { llm: { "judge-1": { input: 1e6, cache_read: 1e5, output: 1e6 } } };
   setConfig({ prices, planner: { provider: "llm", model: "judge-1", daily_usd: 1000 } });
   await send({});
   await until(() => usage().usd === 100, 3000, "the judge's dollars");

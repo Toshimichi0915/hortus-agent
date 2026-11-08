@@ -126,7 +126,7 @@ test("STOP: aborts after the current tool, no summary, no result, exit 0", async
 });
 
 test("budget: exceeded after the second turn, reported once", async () => {
-  const dir = setup({ budget: { usd: 100, hours: 10 }, price: { input: 1e6, cached: 1e5, output: 1e6 } });
+  const dir = setup({ budget: { usd: 100, hours: 10 }, price: { input: 1e6, cache_read: 1e5, output: 1e6 } });
   const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
   script(dir, [turn, turn, turn, turn]);
   const r = await run(dir);
@@ -142,7 +142,7 @@ test("budget: a chat has none, dollars or hours", async () => {
   const dir = setup({
     kind: "chat",
     budget: { usd: 100, hours: 1 },
-    price: { input: 1e6, cached: 1e5, output: 1e6 },
+    price: { input: 1e6, cache_read: 1e5, output: 1e6 },
     hours_used: 2,
   });
   const turn = { calls: [bash("echo a")], usage: { input: 50, output: 10 } };
@@ -241,7 +241,7 @@ test("handoff: the owner's drained messages go on verbatim, a stranger's do not"
 test("a dollar budget: each token type at the model's rate; the stop says what it spent", async () => {
   const dir = setup({
     budget: { usd: 10, hours: 10 },
-    price: { input: 1e6, cached: 1e5, output: 1e6 },
+    price: { input: 1e6, cache_read: 1e5, output: 1e6 },
   });
   // 5 fresh + 10 read at a tenth + 2 output: $8 a turn, over $10 at the second
   const turn = { calls: [bash("echo a")], usage: { input: 15, output: 2, cached: 10 } };
@@ -410,7 +410,7 @@ test("scan: planted null lines and bogus usage neither throw nor bend the token 
   const lines = ["null", "7", '"x"', asst({ input: -1e12, output: "5" }), asst({ input: 10, output: 2 })];
   writeFileSync(join(dir, "1_a.jsonl"), `${lines.join("\n")}\n`);
   assert.deepEqual(scan(dir), { tokens: 12, usd: 0, cursor: 0 });
-  const price = { input: 1e6, cached: 1e6, output: 1e6 };
+  const price = { input: 1e6, cache_read: 1e6, output: 1e6 };
   assert.ok(Number.isFinite(scan(dir, price).usd) && scan(dir, price).usd >= 0, "dollars bend no more than tokens");
 });
 

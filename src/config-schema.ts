@@ -98,12 +98,20 @@ export const Config = z.looseObject({
       z.string().min(1),
       z.record(
         z.string().min(1),
-        z.object({
-          input: z.number().positive(),
-          cached: z.number().nonnegative(),
-          cache_write: z.number().nonnegative().optional(),
-          output: z.number().positive(),
-        }),
+        // `cache_read` was once `cached`, and a hortusd.json keeps what it was written with
+        z.preprocess(
+          (p) => {
+            if (!p || typeof p !== "object" || !("cached" in p) || "cache_read" in p) return p;
+            const { cached, ...rest } = p;
+            return { ...rest, cache_read: cached };
+          },
+          z.object({
+            input: z.number().positive(),
+            cache_read: z.number().nonnegative(),
+            cache_write: z.number().nonnegative().optional(),
+            output: z.number().positive(),
+          }),
+        ),
       ),
     )
     .default({}),

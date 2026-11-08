@@ -138,7 +138,7 @@ before(async () => {
       dev: { upstreams: { "slack.com": fake.url } },
       planner: { provider: "openrouter", model: MODEL, runtime: "host" },
       worker: { provider: "openrouter", model: MODEL, budget: { usd: 1000, hours: 1 } },
-      prices: { openrouter: { [MODEL]: { input: 1, cached: 0.1, output: 1 } } },
+      prices: { openrouter: { [MODEL]: { input: 1, cache_read: 0.1, output: 1 } } },
       projects: { foo: { path: project } },
       policy: { "*": "human", deny: deny.map((d) => join(realHome, d)) },
     }),

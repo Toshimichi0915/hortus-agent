@@ -388,7 +388,7 @@ export function modelOf(
 /** One model's rates in dollars per million tokens (`prices` in hortusd.json). */
 export interface ModelPrice {
   input: number;
-  cached: number;
+  cache_read: number;
   /** a cache write; unset: at `input` (OpenAI's cost no more than input) */
   cache_write?: number;
   output: number;
@@ -420,7 +420,7 @@ export function highestPrice(listed: Record<string, ModelPrice>): ModelPrice {
   const top = (f: (p: ModelPrice) => number) => Math.max(0, ...all.map(f));
   return {
     input: top((p) => p.input),
-    cached: top((p) => p.cached),
+    cache_read: top((p) => p.cache_read),
     cache_write: top((p) => p.cache_write ?? p.input),
     output: top((p) => p.output),
   };
@@ -438,7 +438,7 @@ export function usageCost(
   const written = Math.min(u.written ?? 0, u.input - cached);
   return (
     ((u.input - cached - written) * p.input +
-      cached * p.cached +
+      cached * p.cache_read +
       written * (p.cache_write ?? p.input) +
       u.output * p.output) /
     1e6

@@ -98,7 +98,7 @@ export function validateConfig(c: Config): Record<string, string> {
   if (!(c.worker.budget.usd >= 0)) e["worker.budget.usd"] = "0 or more";
   for (const [provider, listed] of Object.entries(c.prices))
     for (const [m, p] of Object.entries(listed))
-      if (!(p.input > 0 && p.output > 0 && p.cached >= 0 && (p.cache_write ?? 0) >= 0))
+      if (!(p.input > 0 && p.output > 0 && p.cache_read >= 0 && (p.cache_write ?? 0) >= 0))
         e[`prices.${provider}.${m}`] = "input and output above 0, the cache rates 0 or more";
   if (!(c.worker.budget.hours >= 0)) e["worker.budget.hours"] = "0 or more";
   for (const p of c.worker.plugins) if (checkPath(p)) e["worker.plugins"] = `${p}: ${checkPath(p)}`;

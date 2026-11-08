@@ -10,11 +10,11 @@ import { highestPrice, priceOf, usageCost } from "./types.ts";
 process.env.HORTUS_HOME = tempDir("hortus-config-");
 
 test("prices: a model's rates, its dated name's, and what a call costs", () => {
-  const opus = { input: 4, cached: 0.2, cache_write: 5, output: 20 };
-  const gpt = { input: 2, cached: 0.1, output: 10 };
-  const six = { input: 10, cached: 1, output: 50 };
+  const opus = { input: 4, cache_read: 0.2, cache_write: 5, output: 20 };
+  const gpt = { input: 2, cache_read: 0.1, output: 10 };
+  const six = { input: 10, cache_read: 1, output: 50 };
   const listed = { opus, gpt, "gpt-6": six };
-  const hosted = { input: 1, cached: 0.1, output: 2 };
+  const hosted = { input: 1, cache_read: 0.1, output: 2 };
   const prices = { a: listed, b: { opus: hosted } };
   assert.equal(priceOf(prices, "a", "opus"), opus);
   assert.equal(priceOf(prices, "b", "opus"), hosted, "one model, another host's rates");
@@ -37,11 +37,16 @@ test("prices: a model's rates, its dated name's, and what a call costs", () => {
   assert.ok(Math.abs(usageCost(u, opus) - (0.7 * 4 + 0.2 * 0.2 + 0.1 * 5 + 20)) < 1e-9);
   assert.ok(Math.abs(usageCost(u, gpt) - (0.7 * 2 + 0.2 * 0.1 + 0.1 * 2 + 10)) < 1e-9, "a write at input by default");
   // a Worker's own file or `curl` reports what it likes: more cached than input cannot pay it back
-  assert.equal(usageCost({ input: 10, cached: 1e9, written: 1e9, output: 0 }, { ...gpt, cached: 0 }), 0);
+  assert.equal(usageCost({ input: 10, cached: 1e9, written: 1e9, output: 0 }, { ...gpt, cache_read: 0 }), 0);
 
-  assert.deepEqual(highestPrice(listed), { input: 10, cached: 1, cache_write: 10, output: 50 });
-  assert.deepEqual(highestPrice({}), { input: 0, cached: 0, cache_write: 0, output: 0 });
-  assert.throws(() => Config.parse({ prices: { p: { m: { input: 0, cached: 0, output: 1 } } } }), /prices/);
+  assert.deepEqual(highestPrice(listed), { input: 10, cache_read: 1, cache_write: 10, output: 50 });
+  assert.deepEqual(highestPrice({}), { input: 0, cache_read: 0, cache_write: 0, output: 0 });
+  assert.deepEqual(
+    Config.parse({ prices: { p: { m: { input: 1, cached: 0.1, output: 2 } } } }).prices.p?.m,
+    { input: 1, cache_read: 0.1, output: 2 },
+    "a hortusd.json from before the rename",
+  );
+  assert.throws(() => Config.parse({ prices: { p: { m: { input: 0, cache_read: 0, output: 1 } } } }), /prices/);
 });
 
 test("missing file → defaults", () => {

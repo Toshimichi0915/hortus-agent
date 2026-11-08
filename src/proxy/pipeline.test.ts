@@ -1038,11 +1038,14 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
     // a million tokens at these rates cost this many dollars
     ctx.config.prices = {
       gh: {
-        m: { input: 1e6, cached: 1e5, cache_write: 2e6, output: 1e7 },
-        other: { input: 1, cached: 1, output: 1 },
+        m: { input: 1e6, cache_read: 1e5, cache_write: 2e6, output: 1e7 },
+        other: { input: 1, cache_read: 1, output: 1 },
       },
       // one model at another host, and rates far above: neither is what this provider's calls cost
-      elsewhere: { other: { input: 9e9, cached: 9e9, output: 9e9 }, dear: { input: 9e9, cached: 9e9, output: 9e9 } },
+      elsewhere: {
+        other: { input: 9e9, cache_read: 9e9, output: 9e9 },
+        dear: { input: 9e9, cache_read: 9e9, output: 9e9 },
+      },
     };
     close(await charged("priced"), 3 + 1 + 2 * 2 + 5 * 10 + 7 * 0, "a stream of model m");
     close(await charged("other"), (100 + 20) / 1e6, "a response of a model with its own rates");
@@ -1068,7 +1071,7 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
     // a Planner batch counts at the Planner's rates: only its model has a price here, and that is enough
     ctx.config.planner = { ...ctx.config.planner, provider: "gh", model: "pm" };
     ctx.config.worker.model = "m";
-    ctx.config.prices = { gh: { pm: { input: 2, cached: 1, output: 2 } } };
+    ctx.config.prices = { gh: { pm: { input: 2, cache_read: 1, output: 2 } } };
     ctx.db
       .prepare(
         "INSERT OR REPLACE INTO tasks(id, kind, status, budget, metered_usd) VALUES ('planner-9', 'planner', 'running', ?, 0)",
@@ -1091,15 +1094,15 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
     close(spentBy(), (100 * 2 + 20 * 2) / 1e6, "at the Planner model's rates");
     ctx.db.prepare("UPDATE tasks SET metered_usd = 1000 WHERE id = 'planner-9'").run();
     assert.equal((await asPlanner()).status, 403, "past its line");
-    ctx.config.prices = { gh: { m: { input: 1, cached: 1, output: 1 } } };
+    ctx.config.prices = { gh: { m: { input: 1, cache_read: 1, output: 1 } } };
     assert.equal((await asPlanner()).status, 200, "the Planner's model has no price, whatever the Workers' has");
     links.release("127.0.0.9");
     ctx.db.prepare("DELETE FROM tasks WHERE id = 'planner-9'").run();
 
     // the owner took the price away: whatever the row says, nothing stops it but its hours, and nothing is counted
     ctx.config.prices = {
-      gh: { other: { input: 1, cached: 1, output: 1 } },
-      elsewhere: { m: { input: 1, cached: 1, output: 1 } },
+      gh: { other: { input: 1, cache_read: 1, output: 1 } },
+      elsewhere: { m: { input: 1, cache_read: 1, output: 1 } },
     };
     const held = spent();
     assert.equal((await call("json")).status, 200, "no line for a model with no price");

@@ -361,7 +361,7 @@ test("sessions: render and scan any JSONL in bounded time and size; cursor ignor
     else if (g.chance(0.5)) symlinkSync(OUTSIDE, join(paths.out(id), "summary.md"));
     const t0 = Date.now();
     const md = await within(renderSession(dir), 5000, `seed ${g.seed} render`);
-    const { tokens, usd, cursor } = scan(dir, { input: 1e6, cached: 1e6, output: 1e6 });
+    const { tokens, usd, cursor } = scan(dir, { input: 1e6, cache_read: 1e6, output: 1e6 });
     await within(publishLog(db, id, g.str(10) || "t", "running"), 5000, `seed ${g.seed} publish`);
     const ms = Date.now() - t0;
     assert.ok(ms < 3000, `seed ${g.seed}: ${ms} ms`);

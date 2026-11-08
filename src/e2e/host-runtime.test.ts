@@ -172,7 +172,7 @@ before(async () => {
       policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC" },
       worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
-      prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } }, // a token is a dollar
+      prices: { fake: { m: { input: 1e6, cache_read: 1e5, output: 1e6 } } }, // a token is a dollar
       projects: { foo: { path: join(fake, "foolink") } },
       proxy: { https: await freePort(), http: await freePort(), dns: 0 },
     }),

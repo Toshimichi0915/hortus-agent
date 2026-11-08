@@ -603,7 +603,7 @@ function Rate({
   d: Draft;
   provider: string;
   model: string;
-  rate: "input" | "cached" | "cache_write" | "output";
+  rate: "input" | "cache_read" | "cache_write" | "output";
   label: string;
   hint?: string;
 }) {
@@ -619,7 +619,7 @@ function Rate({
       onChange={(v) =>
         d.set((x) => {
           const listed = x.prices[provider] ?? {};
-          listed[model] = { input: 0, cached: 0, output: 0, ...listed[model], [rate]: v };
+          listed[model] = { input: 0, cache_read: 0, output: 0, ...listed[model], [rate]: v };
           x.prices[provider] = listed;
         })
       }
@@ -663,7 +663,7 @@ function AddPriceModel({
         disabled={!model || priced}
         onClick={() => {
           d.set((x) => {
-            x.prices[provider] = { ...x.prices[provider], [model]: { input: 0, cached: 0, output: 0 } };
+            x.prices[provider] = { ...x.prices[provider], [model]: { input: 0, cache_read: 0, output: 0 } };
           });
           setModel("");
         }}
@@ -722,7 +722,7 @@ function ModelPrices({ d }: { d: Draft }) {
             </div>
             <div className="grid gap-4 sm:grid-cols-4">
               <Rate d={d} provider={p} model={m} rate="input" label="Input" />
-              <Rate d={d} provider={p} model={m} rate="cached" label="Cache read" />
+              <Rate d={d} provider={p} model={m} rate="cache_read" label="Cache read" />
               <Rate d={d} provider={p} model={m} rate="cache_write" label="Cache write" />
               <Rate d={d} provider={p} model={m} rate="output" label="Output" />
             </div>
