@@ -32,6 +32,24 @@ const MODELS_TIMEOUT_MS = 10_000;
 const MODELS_MAX_BYTES = 8 * 1024 * 1024;
 const MODEL_ID_MAX = 200;
 
+/** A response's text, refused as soon as it passes `max` bytes: an upstream can stream without end. */
+export async function textCapped(res: Response, max: number): Promise<string> {
+  const reader = res.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > max) {
+      await reader.cancel();
+      throw new Error("its list is too long");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /**
  * The model ids a provider lists, for the owner to pick from. Through the proxy with its placeholder, as the judge's calls
  * go, so hortusd never holds the key here. What comes back is the upstream's: strings of a sane length, and no more of
@@ -48,8 +66,7 @@ export async function listModels(name: string): Promise<string[]> {
     signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const text = await res.text();
-  if (text.length > MODELS_MAX_BYTES) throw new Error("its list is too long");
+  const text = await textCapped(res, MODELS_MAX_BYTES);
   const data = (JSON.parse(text) as { data?: unknown } | null)?.data;
   if (!Array.isArray(data)) throw new Error("its answer has no list of models");
   const ids = data
