@@ -43,6 +43,7 @@ export function Thread({ id, rows, live, earlier }: { id: string; rows: Row[]; l
     const el = notice.current;
     if (!root || !setRows || !el || first <= 1) return;
     let current = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const io = new IntersectionObserver(
       async ([e]) => {
         if (!e?.isIntersecting) return;
@@ -50,11 +51,15 @@ export function Thread({ id, rows, live, earlier }: { id: string; rows: Row[]; l
         try {
           const older = await call<Row[]>("task.earlier", { id, before: first });
           if (!current) return;
+          // nothing there is the answer; a failed call (a daemon restarting) is not, so it asks again while in view
           if (!older.length) return setFailed(true);
+          setFailed(false);
           held.current = { top: root.scrollTop, height: root.scrollHeight };
           setRows((p) => (p[0]?.seq === first ? [...older, ...p] : p));
         } catch {
-          if (current) setFailed(true);
+          if (!current) return;
+          setFailed(true);
+          retry = setTimeout(() => io.observe(el), 5000);
         }
       },
       { root, rootMargin: "100% 0px 0px" },
@@ -62,6 +67,7 @@ export function Thread({ id, rows, live, earlier }: { id: string; rows: Row[]; l
     io.observe(el);
     return () => {
       current = false;
+      clearTimeout(retry);
       io.disconnect();
     };
   }, [id, first, scroller, setRows]);
