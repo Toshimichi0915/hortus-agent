@@ -451,10 +451,6 @@ export function liveEnroll(db: DatabaseSync): { code: string; url: string; expir
   return r && { ...r, url: `${state.url}/enroll?code=${r.code}` };
 }
 
-/** Where the served certificate comes from, for the Settings page. */
-export const certSource = (): string | undefined =>
-  state && (state.tls ? `console.tls (${state.ctx.config.console?.tls?.cert})` : "minted from the hortus CA");
-
 const running = (): State => {
   if (!state) throw new RpcError("invalid", "the remote console is off: set console.listen and console.host");
   return state;

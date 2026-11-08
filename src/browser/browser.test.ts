@@ -61,7 +61,7 @@ before(async () => {
     "INSERT INTO tasks(id, kind, title, brief, status, scope, created, updated) VALUES (?, 'unattended', ?, 'b', 'running', ?, 't', 't')",
   );
   const scope = JSON.stringify({ credentials: [], repos: [] });
-  for (const id of ["T", "T2", "T3", "T4", "T5", "T6"]) insert.run(id, id, scope);
+  for (const id of ["T", "T3", "T4", "T5", "T6"]) insert.run(id, id, scope);
   ctx.config.origins = "*";
   mkdirSync(join(fixtures, "fakesite"), { recursive: true });
   writeFileSync(
@@ -87,7 +87,6 @@ before(async () => {
   for (const [a, t] of [
     ["127.0.0.2", "T"],
     ["127.0.0.3", "T3"],
-    ["127.0.0.4", "T2"],
   ] as const)
     links.register(a, "worker", t, "session");
   console_ = await startServer(ctx, 0);
@@ -337,13 +336,13 @@ test("a site manifest: GET /logout is consequential; a bearer token in a body is
 test("origins: a list refuses other hosts with the final page and browser.login refuses them, no entry", {
   skip: !hasChromium,
 }, async () => {
-  const { s } = await worker("T2", "127.0.0.4");
+  const { s } = await worker("T", "127.0.0.2");
   const n = approvals();
   ctx.config.origins = ["fake.test"];
   try {
     assert.match(await s.navigate("http://other.test/"), /host not in origins: other\.test — final/);
     await assert.rejects(
-      call("browser.login", { url: "https://other.test/login", why: "x" }, { role: "worker", task: "T2" }),
+      call("browser.login", { url: "https://other.test/login", why: "x" }, { role: "worker", task: "T" }),
       /host not in origins/,
     );
   } finally {

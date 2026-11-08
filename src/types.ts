@@ -359,9 +359,6 @@ export interface ResponseResult {
   refs?: string[];
 }
 
-/** What the Approvals page shows for one entry; the shape depends on `kind`/`category`. */
-export type ApprovalSummary = Record<string, unknown>;
-
 /**
  * What a cache read counts for in the token figure a card shows for a model with no price: a rough price next to a
  * fresh input token, as nothing says what it costs.

@@ -274,8 +274,7 @@ define("browser.login", {
   run({ url, why }, caller: Caller) {
     const task = caller.task;
     if (!task) throw new RpcError("forbidden", "browser.login needs a task");
-    const row = taskRow(task);
-    if (!row) throw new RpcError("not_found", `no task ${task}`);
+    if (!taskRow(task)) throw new RpcError("not_found", `no task ${task}`);
     const host = new URL(url).hostname.toLowerCase();
     const allowed = ctx().config.origins;
     if (allowed !== "*" && !allowed.includes(host))
