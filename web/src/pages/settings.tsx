@@ -10,6 +10,7 @@ import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/compon
 import { Textarea } from "@/components/ui/textarea";
 import { mergePatch } from "../../../src/config-schema.ts";
 import { fieldErrors } from "../../../src/console/forms.ts";
+import { priceOf } from "../../../src/types.ts";
 import { ApiError, type Approval, type Config, type Credential, call, type PlannerStatus, useCall } from "../api.ts";
 import {
   ALWAYS_ASKS,
@@ -34,6 +35,7 @@ import {
   errorText,
   fmtNum,
   fmtTokens,
+  fmtUsd,
   Icon,
   IconButton,
   type IconName,
@@ -102,6 +104,7 @@ export function sectionOf(path: string): string {
       owner: "general",
       planner: "planner",
       worker: "workers",
+      prices: "workers",
       judge_notes: "approvals",
       dofs: "sources",
       projects: "projects",
@@ -471,6 +474,18 @@ function General({ d }: { d: Draft }) {
 
 const CLAUDE = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"];
 
+/** The credentials a model call can go out with, the ones whose transform is a provider first. */
+function modelCredentials(creds: Credential[] | undefined): Credential[] {
+  const tokens = (creds ?? []).filter((x) => x.type === "token" && !coreOnly(x));
+  return [
+    ...tokens.filter((x) => x.transform && TRANSFORMS[x.transform]?.provider),
+    ...tokens.filter((x) => !(x.transform && TRANSFORMS[x.transform]?.provider)),
+  ];
+}
+
+const credentialLabel = (x: Credential) =>
+  `${x.name}${x.transform ? ` (${TRANSFORMS[x.transform]?.label ?? x.transform})` : ""}`;
+
 function ModelFields({
   provider,
   model,
@@ -486,11 +501,7 @@ function ModelFields({
 }) {
   const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
   const [adding, setAdding] = useState(false);
-  const tokens = (creds.data ?? []).filter((x) => x.type === "token" && !coreOnly(x));
-  const ranked = [
-    ...tokens.filter((x) => x.transform && TRANSFORMS[x.transform]?.provider),
-    ...tokens.filter((x) => !(x.transform && TRANSFORMS[x.transform]?.provider)),
-  ];
+  const ranked = modelCredentials(creds.data);
   const transform = creds.data?.find((x) => x.name === provider)?.transform;
   const missing = provider && creds.data && !creds.data.some((x) => x.name === provider);
   return (
@@ -503,10 +514,7 @@ function ModelFields({
           onChange={onProvider}
           options={[
             { value: "", label: "Not set" },
-            ...ranked.map((x) => ({
-              value: x.name,
-              label: `${x.name}${x.transform ? ` (${TRANSFORMS[x.transform]?.label ?? x.transform})` : ""}`,
-            })),
+            ...ranked.map((x) => ({ value: x.name, label: credentialLabel(x) })),
             ...(missing ? [{ value: provider, label: `${provider} (no such credential)` }] : []),
           ]}
           error={missing ? `there is no credential ${provider}: add it, or pick another` : errorProvider}
@@ -542,6 +550,171 @@ function ModelFields({
 
 const efforts = EFFORTS.map((e) => ({ value: e, label: e === "xhigh" ? "x-high" : e[0]?.toUpperCase() + e.slice(1) }));
 const tokenPresets = (vs: number[]) => vs.map((v) => ({ label: fmtTokens(v), value: v }));
+
+/** One rate of a model: typing into a model with no price yet starts its entry, which saves once input and output are set. */
+function Rate({
+  d,
+  provider,
+  model,
+  rate,
+  label,
+  hint,
+}: {
+  d: Draft;
+  provider: string;
+  model: string;
+  rate: "input" | "cached" | "cache_write" | "output";
+  label: string;
+  hint?: string;
+}) {
+  const p = d.draft.prices[provider]?.[model];
+  return (
+    <NumberField
+      label={label}
+      hint={hint}
+      unit="$/M"
+      min={0}
+      step={0.05}
+      value={p?.[rate] ?? (rate === "cache_write" ? (p?.input ?? 0) : 0)}
+      onChange={(v) =>
+        d.set((x) => {
+          const listed = x.prices[provider] ?? {};
+          listed[model] = { input: 0, cached: 0, output: 0, ...listed[model], [rate]: v };
+          x.prices[provider] = listed;
+        })
+      }
+    />
+  );
+}
+
+/** The model half of the add row: a new one per provider, so a list never shows under another provider's name. */
+function AddPriceModel({
+  d,
+  provider,
+  transform,
+}: {
+  d: Draft;
+  provider: string;
+  transform: string | null | undefined;
+}) {
+  const [model, setModel] = useState("");
+  const list = useCall<{ models: string[]; error?: string }>("provider.models", { provider });
+  const { prices, worker, planner } = d.draft;
+  // what hortus knows of it, for a provider that does not list its models, or when the list could not be read
+  const known = [
+    ...(worker.provider === provider && worker.model ? [worker.model] : []),
+    ...(planner.provider === provider && planner.model ? [planner.model] : []),
+    ...(transform === "anthropic" ? CLAUDE : []),
+  ];
+  const models = [...new Set([...(list.data?.models ?? []), ...known])].filter((m) => !prices[provider]?.[m]);
+  const error = list.error ?? list.data?.error;
+  return (
+    <>
+      <SelectField
+        label="Model"
+        value={model}
+        onChange={setModel}
+        options={[
+          {
+            value: "",
+            label:
+              list.loading && !list.data ? "Loading its models…" : models.length ? "Pick a model" : "No models to add",
+          },
+          ...models.map((m) => ({ value: m, label: m })),
+        ]}
+        error={error && `Could not list its models: ${error}`}
+      />
+      <Button
+        disabled={!model}
+        onClick={() => {
+          d.set((x) => {
+            x.prices[provider] = { ...x.prices[provider], [model]: { input: 0, cached: 0, output: 0 } };
+          });
+          setModel("");
+        }}
+      >
+        Add
+      </Button>
+    </>
+  );
+}
+
+function ModelPrices({ d }: { d: Draft }) {
+  const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
+  const offered = modelCredentials(creds.data);
+  const [picked, setPicked] = useState<string>();
+  const { prices, worker } = d.draft;
+  // the Workers' model first, whether or not it has a price, then its provider's, then the rest
+  const own = worker.provider;
+  const rows = [
+    ...(own && worker.model && !priceOf(prices, own, worker.model) ? [[own, worker.model] as const] : []),
+    ...Object.entries(prices)
+      .sort(([a], [b]) => Number(b === own) - Number(a === own))
+      .flatMap(([p, listed]) => Object.keys(listed).map((m) => [p, m] as const)),
+  ];
+  const adding = picked ?? (offered.some((x) => x.name === own) ? own : offered[0]?.name);
+  return (
+    <Card
+      title="Model prices"
+      description="Dollars per million tokens by provider, from its pricing page, as hosts charge differently for one model. A Worker's budget is counted at the rates of its provider. A call to a model not listed counts at that provider's highest rates."
+    >
+      <div className="flex flex-col gap-5 *:data-[slot=button]:self-start">
+        {rows.map(([p, m]) => (
+          <div key={`${p}/${m}`} className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <code className="truncate text-[13px]">
+                {p} / {m}
+              </code>
+              {prices[p]?.[m] && (
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    d.set((x) => {
+                      const rest = { ...x.prices[p] };
+                      delete rest[m];
+                      // no empty provider left behind: it would read as an unsaved change
+                      if (Object.keys(rest).length) x.prices[p] = rest;
+                      else delete x.prices[p];
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-4">
+              <Rate d={d} provider={p} model={m} rate="input" label="Input" />
+              <Rate d={d} provider={p} model={m} rate="cached" label="Cache read" />
+              <Rate d={d} provider={p} model={m} rate="cache_write" label="Cache write" />
+              <Rate d={d} provider={p} model={m} rate="output" label="Output" />
+            </div>
+            {d.errors[`prices.${p}.${m}`] && (
+              <p className="text-[13px] text-destructive">{d.errors[`prices.${p}.${m}`]}</p>
+            )}
+          </div>
+        ))}
+        {adding ? (
+          <div className="flex items-start gap-2 max-sm:flex-col max-sm:items-stretch [&>div]:flex-1 [&>[data-slot=button]]:mt-[21px] max-sm:[&>[data-slot=button]]:mt-0">
+            <SelectField
+              label="Provider"
+              value={adding}
+              onChange={setPicked}
+              options={offered.map((x) => ({ value: x.name, label: credentialLabel(x) }))}
+            />
+            <AddPriceModel
+              key={adding}
+              d={d}
+              provider={adding}
+              transform={offered.find((x) => x.name === adding)?.transform}
+            />
+          </div>
+        ) : (
+          <p className="text-[13px] text-muted-foreground">Add a provider above to set rates for its models.</p>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 function Planner({ d }: { d: Draft }) {
   const p = d.draft.planner;
@@ -650,7 +823,7 @@ function Planner({ d }: { d: Draft }) {
           />
           <NumberField
             label="Tokens per day"
-            hint="Past it, batches wait until tomorrow."
+            hint="Past it, batches wait until tomorrow. Input and output count in full, cache reads at a tenth."
             def="5M"
             unit="tokens"
             value={p.daily_tokens}
@@ -689,6 +862,7 @@ function Planner({ d }: { d: Draft }) {
 
 function Workers({ d }: { d: Draft }) {
   const w = d.draft.worker;
+  const priced = !!priceOf(d.draft.prices, w.provider, w.model);
   const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
   const offered = (creds.data ?? []).filter((x) => !coreOnly(x));
   return (
@@ -699,6 +873,12 @@ function Workers({ d }: { d: Draft }) {
       />
       <Card title="Model">
         <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
+          {w.model && !priced && (
+            <Callout tone="warning" title={`No price for ${w.model}${w.provider ? ` at ${w.provider}` : ""}`}>
+              Tasks have no spending limit, only the hours limit. Add its rates under Model prices below to set a
+              budget.
+            </Callout>
+          )}
           <ModelFields
             provider={w.provider}
             model={w.model}
@@ -761,26 +941,30 @@ function Workers({ d }: { d: Draft }) {
           />
         </div>
       </Card>
+      <ModelPrices d={d} />
       <Card
         title="Budget for each task"
         description="A task stops itself at its budget. You can raise one task's on its page."
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <NumberField
-            label="Tokens"
-            def="2M"
-            unit="tokens"
-            value={w.budget.tokens}
-            min={0}
-            step={100_000}
-            presets={tokenPresets([1e6, 2e6, 5e6, 10e6])}
-            onChange={(v) =>
-              d.set((x) => {
-                x.worker.budget.tokens = v;
-              })
-            }
-            error={d.errors["worker.budget.tokens"]}
-          />
+          {priced && (
+            <NumberField
+              label="Spending"
+              hint="Every model call the task makes, at its model's rates."
+              def={fmtUsd(DEFAULTS.worker.budget.usd)}
+              unit="USD"
+              value={w.budget.usd}
+              min={0}
+              step={5}
+              presets={[5, 20, 50, 100].map((v) => ({ label: fmtUsd(v), value: v }))}
+              onChange={(v) =>
+                d.set((x) => {
+                  x.worker.budget.usd = v;
+                })
+              }
+              error={d.errors["worker.budget.usd"]}
+            />
+          )}
           <NumberField
             label="Hours"
             def="4"

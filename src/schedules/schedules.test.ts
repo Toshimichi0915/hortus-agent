@@ -32,6 +32,7 @@ const ctx: Ctx = {
   config: Config.parse({
     owner: { tz: "UTC" },
     worker: { provider: "fake", model: "m" },
+    prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } },
     projects: { foo: { path: project } },
   }),
   db: openDb(paths.db()),
@@ -62,7 +63,7 @@ beforeEach(() => {
   ctx.db.exec("DELETE FROM schedules");
 });
 
-const parent = (budget = { tokens: 1e6, hours: 10 }, kind: "unattended" | "chat" = "unattended", proj?: string) => {
+const parent = (budget = { usd: 1000, hours: 10 }, kind: "unattended" | "chat" = "unattended", proj?: string) => {
   const t = tasks.create({ kind, title: "watch", brief: "b", scope: { credentials: [] }, budget, project: proj });
   tasks.setStatus(t.id, "waiting");
   return tasks.get(t.id);
@@ -191,8 +192,8 @@ test("overlap: a firing while a run of the row is active is skipped (logged); th
 });
 
 test("a run: title, brief, budget = what the parent has left, its script and /schedule in task.json", async () => {
-  const p = parent({ tokens: 1000, hours: 2 });
-  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":400}', hours = 0.5 WHERE id = ?`).run(p.id);
+  const p = parent({ usd: 1000, hours: 2 });
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":400,"usd":400}', hours = 0.5 WHERE id = ?`).run(p.id);
   T = Date.parse("2026-06-01T09:00:00Z");
   const { id } = await set(p.id, { every: 3600, text: "is it there?", script: "echo hi", tz: "Asia/Tokyo" });
   T += 60 * MIN;
@@ -203,7 +204,7 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   // non-owner text, and it says when the timer ends
   assert.match(r.brief, /<<<quoted\nis it there\?\n>>>/);
   assert.match(r.brief, /timers expire at \d{4}-/);
-  assert.deepEqual(JSON.parse(r.budget ?? ""), { tokens: 600, hours: 1.5 });
+  assert.deepEqual(JSON.parse(r.budget ?? ""), { usd: 600, hours: 1.5 });
   const tj = tasks.taskJson(ctx.config, r);
   assert.equal(tj.paths.schedule, paths.schedule(id));
   assert.ok(existsSync(paths.schedule(id)));
@@ -212,15 +213,15 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
 });
 
 test("a chat's run: the chat's whole budget, whatever the chat spent; a chat's spend never stops its schedules", async () => {
-  const p = parent({ tokens: 1000, hours: 2 }, "chat");
-  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":5000}', hours = 3 WHERE id = ?`).run(p.id);
+  const p = parent({ usd: 1000, hours: 2 }, "chat");
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":5000,"usd":5000}', hours = 3 WHERE id = ?`).run(p.id);
   T = Date.parse("2026-06-01T09:00:00Z");
   await set(p.id, { every: 3600 });
   T += 60 * MIN;
   tick();
   const [r] = runsOf(p.id);
-  assert.ok(r, "fired: the chat's 5000/1000 tokens and 3/2 h do not count");
-  assert.deepEqual(JSON.parse(r.budget ?? ""), { tokens: 1000, hours: 2 });
+  assert.ok(r, "fired: the chat's $5000/$1000 and 3/2 h do not count");
+  assert.deepEqual(JSON.parse(r.budget ?? ""), { usd: 1000, hours: 2 });
 });
 
 test("project origins: a chat holds every project's list, its run too; a list extended in the config reaches an open task", async () => {
@@ -345,22 +346,24 @@ test("scope: a chat parent's run on a project is an unattended host task (never 
 test("run exit: usage charged to the parent, summary kept as last-summary.md; over budget → no more firings", async () => {
   const told: string[] = [];
   tasks.hooks.failed = (t) => void told.push(t);
-  const p = parent({ tokens: 100, hours: 10 });
+  const p = parent({ usd: 100, hours: 10 });
   const { id } = await set(p.id, { every: 300 });
   T += 5 * MIN;
   tick();
   const [r] = runsOf(p.id);
   assert.ok(r);
   ctx.db
-    .prepare(`UPDATE tasks SET usage = '{"tokens":150}', summary = 'found one', status = 'waiting' WHERE id = ?`)
+    .prepare(
+      `UPDATE tasks SET usage = '{"tokens":150,"usd":150}', summary = 'found one', status = 'waiting' WHERE id = ?`,
+    )
     .run(r.id);
   const msg: OutboxMsg = { seq: 1, type: "result", text: "found one", ts: "" };
   runs.onExit(tasks.get(r.id), [msg]);
   runs.onExit(tasks.get(r.id), []); // a second exit of the same run is not charged twice
-  assert.deepEqual(JSON.parse(tasks.get(p.id).usage ?? ""), { tokens: 150, runs: 150 });
+  assert.deepEqual(JSON.parse(tasks.get(p.id).usage ?? ""), { tokens: 150, runs: 150, usd: 150, runs_usd: 150 });
   // the parent's own next session gets what its runs left, not its whole budget again
-  assert.equal(tasks.taskJson(ctx.config, tasks.get(p.id)).budget.tokens, 0, "100 less 150");
-  assert.match(tasks.get(p.id).error ?? "", /^budget_exceeded: .*150\/100 tokens/);
+  assert.equal(tasks.taskJson(ctx.config, tasks.get(p.id)).budget.usd, 0, "100 less 150");
+  assert.match(tasks.get(p.id).error ?? "", /^budget_exceeded: .*\$150\.00\/\$100/);
   assert.deepEqual(told, [`task ${p.id} is over budget`], "once");
   const rows = () =>
     ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ? ORDER BY seq DESC").all(p.id) as {
@@ -374,7 +377,7 @@ test("run exit: usage charged to the parent, summary kept as last-summary.md; ov
   tick();
   assert.equal(runsOf(p.id).length, 1);
   assert.ok(row(id)?.fire_at && Date.parse(row(id)?.fire_at as string) <= T, "stays due");
-  tasks.budget(p.id, { tokens: 1000 });
+  tasks.budget(p.id, { usd: 1000 });
   assert.equal(tasks.get(p.id).error, null, "the raise answers it");
   tick();
   assert.equal(runsOf(p.id).length, 2);
@@ -382,11 +385,29 @@ test("run exit: usage charged to the parent, summary kept as last-summary.md; ov
   // the next overrun is a new failure; a run that hit the limit itself has told the owner, the parent's row still comes
   const r2 = runsOf(p.id).find((x) => x.id !== r.id);
   assert.ok(r2);
-  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":2000}', status = 'waiting' WHERE id = ?`).run(r2.id);
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":2000,"usd":2000}', status = 'waiting' WHERE id = ?`).run(r2.id);
   runs.onExit(tasks.get(r2.id), [{ seq: 1, type: "budget_exceeded", text: "budget exceeded", ts: "" }]);
   assert.equal(rows().length, 2);
   assert.equal(told.length, 1);
   tasks.hooks.failed = () => {};
+});
+
+test("a Worker model with no price: no spending limit, only hours", () => {
+  const prices = ctx.config.prices;
+  const p = parent({ usd: 100, hours: 10 });
+  ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":999,"usd":999}' WHERE id = ?`).run(p.id);
+  assert.equal(runs.overBudget(tasks.get(p.id)), true, "priced, it is over");
+  ctx.config.prices = {};
+  try {
+    assert.equal(runs.overBudget(tasks.get(p.id)), false);
+    const tj = tasks.taskJson(ctx.config, tasks.get(p.id));
+    assert.deepEqual(tj.budget, { hours: 10 });
+    assert.equal(tj.price, undefined);
+    ctx.db.prepare("UPDATE tasks SET hours = 10 WHERE id = ?").run(p.id);
+    assert.equal(runs.overBudget(tasks.get(p.id)), true, "the hours still stop it");
+  } finally {
+    ctx.config.prices = prices;
+  }
 });
 
 test("an empty result: the run is closed at once and leaves no logs entry; one that never called the model is deleted", async () => {

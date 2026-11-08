@@ -14,6 +14,7 @@ const log = logger("hostile");
 export const MAX_SUMMARY = 64 * 1024;
 /** `out/aux-tokens`: tokens of the tool-less calls (summary, handoff), which are not in any session */
 export const AUX_TOKENS = "aux-tokens";
+export const AUX_USD = "aux-usd";
 /** one `out/sessions/*.jsonl` file */
 export const MAX_SESSION = 64 * 1024 * 1024;
 /** all of a task's `out/sessions/*.jsonl` read in one pass (scan, renderSession) */

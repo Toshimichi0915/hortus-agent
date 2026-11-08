@@ -215,6 +215,28 @@ test("handoff: the owner's drained messages go on verbatim, a stranger's do not"
   assert.ok(!first.includes("[inbox 2]"), first);
 });
 
+test("a dollar budget: each token type at the model's rate; the stop says what it spent", async () => {
+  const dir = setup({
+    budget: { usd: 10, hours: 10 },
+    price: { input: 1e6, cached: 1e5, output: 1e6 },
+  });
+  // 5 fresh + 10 read at a tenth + 2 output: $8 a turn, over $10 at the second
+  const turn = { calls: [bash("echo a")], usage: { input: 15, output: 2, cached: 10 } };
+  script(dir, Array(4).fill(turn));
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(withTools(dir).length, 2);
+  assert.match(outbox(dir)[0]?.text ?? "", /^budget exceeded: \$16\.00\/\$10, 0\.\d\d\/10 hours$/);
+});
+
+test("no dollars and no tokens in the budget, as for a model with no price: only the hours stop it", async () => {
+  const dir = setup({ budget: { hours: 10 } });
+  script(dir, [{ calls: [bash("echo a")], usage: { input: 1e9, output: 1e9 } }, { calls: [done("ok")] }]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(withTools(dir).length, 2, "not stopped");
+});
+
 test("token budget: cache reads count at a tenth", async () => {
   const dir = setup({ budget: { tokens: 100, hours: 10 } });
   // 50 input of which 40 cached, 10 output: 10 + 4 + 10 = 24 a turn, over 100 at the fifth
@@ -374,7 +396,9 @@ test("scan: planted null lines and bogus usage neither throw nor bend the token 
   mkdirSync(dir, { recursive: true });
   const lines = ["null", "7", '"x"', asst({ input: -1e12, output: "5" }), asst({ input: 10, output: 2 })];
   writeFileSync(join(dir, "1_a.jsonl"), `${lines.join("\n")}\n`);
-  assert.deepEqual(scan(dir), { tokens: 12, cursor: 0 });
+  assert.deepEqual(scan(dir), { tokens: 12, usd: 0, cursor: 0 });
+  const price = { input: 1e6, cached: 1e6, output: 1e6 };
+  assert.ok(Number.isFinite(scan(dir, price).usd) && scan(dir, price).usd >= 0, "dollars bend no more than tokens");
 });
 
 test("a tool-less reply: its text, else what a tool call meant to write, else an error", () => {

@@ -236,7 +236,7 @@ test("projects: SIGKILL between a task's clone and its branch → the restart's 
   const t = new Date().toISOString();
   run(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, project, budget, usage, runtime, event_keys, created, updated,
-       hours) VALUES ('pc', 'unattended', 't', 'b', 'queued', ?, 'g', '{"tokens":1000000,"hours":1}', '{"tokens":0}',
+       hours) VALUES ('pc', 'unattended', 't', 'b', 'queued', ?, 'g', '{"usd":1000,"hours":1}', '{"tokens":0}',
        'host', '[]', ?, ?, 0)`,
     JSON.stringify({ credentials: [], repos: [], project: "g" }),
     t,
@@ -281,7 +281,7 @@ test("schedules: SIGKILL right after a firing started its run → restart fires 
   const t = new Date().toISOString();
   run(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated, hours)
-     VALUES ('ts', 'unattended', 'timer', 'b', 'waiting', '{"credentials":[],"repos":[]}', '{"tokens":1000000,"hours":1}',
+     VALUES ('ts', 'unattended', 'timer', 'b', 'waiting', '{"credentials":[],"repos":[]}', '{"usd":1000,"hours":1}',
        '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
     t,
     t,
@@ -313,7 +313,7 @@ const task = (id: string, status = "waiting"): void => {
   const t = new Date().toISOString();
   run(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated, hours)
-     VALUES (?, 'unattended', 't', 'b', ?, '{"credentials":[],"repos":[],"dofs":[]}', '{"tokens":1000000,"hours":1}',
+     VALUES (?, 'unattended', 't', 'b', ?, '{"credentials":[],"repos":[],"dofs":[]}', '{"usd":1000,"hours":1}',
        '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
     id,
     status,

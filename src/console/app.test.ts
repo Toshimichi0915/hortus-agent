@@ -68,7 +68,7 @@ before(async () => {
   const now = new Date().toISOString();
   const task = db.prepare(
     `INSERT INTO tasks(id, kind, title, status, project, budget, usage, summary, brief, error, created, updated)
-     VALUES (?, ?, ?, ?, 'p', '{"tokens":2000000,"hours":4}', '{"tokens":1200000}', ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, 'p', '{"usd":1000,"hours":4}', '{"tokens":1200000}', ?, ?, ?, ?, ?)`,
   );
   task.run("t1", "chat", XSS, "waiting", XSS, XSS, null, now, now);
   task.run("t2", "unattended", XSS, "waiting", XSS, XSS, `boot timeout: ${XSS}\n${XSS}`, now, now);

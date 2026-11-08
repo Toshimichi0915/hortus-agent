@@ -33,6 +33,7 @@ import { define } from "../rpc.ts";
 import {
   GOES_ON,
   type InboxMsg,
+  priceOf,
   RpcError,
   type TaskJson,
   type TaskKind,
@@ -53,6 +54,7 @@ export interface TaskRow {
   budget: string | null;
   usage: string | null;
   metered: number;
+  metered_usd: number;
   project: string | null;
   runtime: string | null;
   parent: string | null;
@@ -78,7 +80,7 @@ export interface CreateInput {
   event_keys?: string[];
   parent?: string;
   cwd?: string;
-  budget?: { tokens: number; hours: number };
+  budget?: { usd: number; hours: number };
 }
 
 /** Runtimes: chat on the host, a project task by its project's `runtime`, the Planner by
@@ -127,6 +129,9 @@ export const isClosed = (s: string): boolean => s === "done" || s === "failed";
 /** Tokens its schedules' runs charged to this task (usage.runs, 3c). */
 export const runsOf = (t: Pick<TaskRow, "usage">): number => parse<{ runs?: number }>(t.usage, {}).runs ?? 0;
 
+/** The same in dollars. */
+export const runsUsd = (t: Pick<TaskRow, "usage">): number => parse<{ runs_usd?: number }>(t.usage, {}).runs_usd ?? 0;
+
 export function get(id: string): TaskRow {
   const r = ctx().db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
   if (!r) throw new RpcError("not_found", `no task ${id}`);
@@ -159,7 +164,7 @@ export function create(i: CreateInput): TaskRow {
     ...(i.scope?.dofs ? { dofs: i.scope.dofs } : {}),
   };
   const origins = projectOrigins(c.config, i.kind, i.project, i.parent ? get(i.parent).kind : undefined);
-  const { tokens, hours } = i.budget ?? c.config.worker.budget;
+  const { usd, hours } = i.budget ?? c.config.worker.budget;
   const keys = [...(i.event_keys ?? []), ...(i.kind === "chat" ? [`chat:${id}`] : [])];
   c.db
     .prepare(
@@ -173,7 +178,7 @@ export function create(i: CreateInput): TaskRow {
       i.brief,
       json(scope),
       origins ? json(origins) : null,
-      json({ tokens, hours }),
+      json({ usd, hours }),
       json({ tokens: 0 }),
       i.project ?? null,
       i.runtime ?? defaultRuntime(c.config, i),
@@ -312,7 +317,7 @@ export async function finishClose(id: string): Promise<void> {
 /** ids being closed: the dispatcher does not start them */
 export const closing = new Set<string>();
 
-export function budget(id: string, b: { tokens?: number; hours?: number }): void {
+export function budget(id: string, b: { usd?: number; hours?: number }): void {
   const t = get(id);
   const cur = parse(t.budget, ctx().config.worker.budget);
   // the raise answers a budget_exceeded: the next overrun is a new failure, and a note may start it again
@@ -320,7 +325,7 @@ export function budget(id: string, b: { tokens?: number; hours?: number }): void
     .db.prepare(
       "UPDATE tasks SET budget = ?, updated = ?, error = CASE WHEN error LIKE 'budget_exceeded%' THEN NULL ELSE error END WHERE id = ?",
     )
-    .run(json({ tokens: b.tokens ?? cur.tokens, hours: b.hours ?? cur.hours }), now(), id);
+    .run(json({ usd: b.usd ?? cur.usd, hours: b.hours ?? cur.hours }), now(), id);
   bus.emit("tasks", { id });
 }
 
@@ -370,6 +375,8 @@ function mirrored(c: Config): string[] {
 export function taskJson(c: Config, row: TaskRow): TaskJson {
   const { provider, model, effort, context_window } = c.worker;
   if (!provider || !model) throw new Error("worker.provider and worker.model must be set (Settings)");
+  const price = priceOf(c.prices, provider, model);
+  const limit = parse<{ usd?: number; tokens?: number; hours: number }>(row.budget, c.worker.budget);
   const scope = parse<TaskScope>(row.scope, { credentials: [], repos: [] });
   const project = scope.project ?? row.project ?? undefined;
   const out = paths.out(row.id);
@@ -400,8 +407,14 @@ export function taskJson(c: Config, row: TaskRow): TaskJson {
       dofs: readable(c, row.scope),
     },
     origins: mergeOrigins(c.origins, parse<string[] | null>(row.origins, null)),
-    // what its schedules' runs spent is this task's too (runs.ts › onExit): the session gets what is left
-    budget: ((b) => ({ ...b, tokens: Math.max(0, b.tokens - runsOf(row)) }))(parse(row.budget, c.worker.budget)),
+    // what its schedules' runs spent is this task's too (runs.ts › onExit): the session gets what is left. A model with
+    // no price has no spending limit, whatever the row says
+    budget: {
+      hours: limit.hours,
+      ...(limit.tokens !== undefined ? { tokens: Math.max(0, limit.tokens - runsOf(row)) } : {}),
+      ...(price && limit.usd !== undefined ? { usd: Math.max(0, limit.usd - runsUsd(row)) } : {}),
+    },
+    ...(price ? { price } : {}),
     hours_used: row.hours ?? 0,
     provider,
     model,
@@ -593,7 +606,7 @@ define("task.budget", {
   roles: [...owner],
   input: z.object({
     id: z.string(),
-    tokens: z.number().nonnegative().optional(),
+    usd: z.number().nonnegative().optional(),
     hours: z.number().nonnegative().optional(),
   }),
   run({ id, ...b }) {

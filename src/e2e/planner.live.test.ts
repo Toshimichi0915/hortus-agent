@@ -137,7 +137,8 @@ before(async () => {
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": fake.url } },
       planner: { provider: "ollama-cloud", model: MODEL, runtime: "host" },
-      worker: { provider: "ollama-cloud", model: MODEL, budget: { tokens: 3e6, hours: 1 } },
+      worker: { provider: "ollama-cloud", model: MODEL, budget: { usd: 1000, hours: 1 } },
+      prices: { "ollama-cloud": { [MODEL]: { input: 1, cached: 0.1, output: 1 } } },
       projects: { foo: { path: project } },
       policy: { "*": "human", deny: deny.map((d) => join(realHome, d)) },
     }),
@@ -296,7 +297,7 @@ test("a Worker's own curl to its model is counted, streamed or not, and past the
   assert.equal(sessions, r.metered, "the proxy saw every call, so its count is the task's, not a sum");
 
   db((d) =>
-    d.prepare("UPDATE tasks SET budget = ?, metered = ? WHERE id = ?").run('{"tokens":1,"hours":1}', 200_000, id),
+    d.prepare("UPDATE tasks SET budget = ?, metered_usd = ? WHERE id = ?").run('{"usd":1,"hours":1}', 1000, id),
   );
   await api("task.send", { id, text: "Say hi again." });
   await until(

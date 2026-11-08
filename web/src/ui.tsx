@@ -1394,6 +1394,12 @@ export function fmtTokens(n: number): string {
   return String(Math.round(n));
 }
 
+/** Dollars: `$20` for a whole limit, cents for what was spent, and what rounds to nothing does not read as free. */
+export function fmtUsd(n: number): string {
+  if (n > 0 && n < 0.01) return "<$0.01";
+  return Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
+}
+
 export const fmtNum = (n: number): string => n.toLocaleString();
 
 // ---------------------------------------------------------------------------------------------------------------------

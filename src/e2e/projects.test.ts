@@ -183,7 +183,7 @@ test("a host Worker on a non-git project delivers hortus/<id>; an owner edit →
     id,
     brief,
     JSON.stringify({ credentials: [], repos: [], project: "site" }),
-    JSON.stringify({ tokens: 1e6, hours: 1 }),
+    JSON.stringify({ usd: 1000, hours: 1 }),
     t,
     t,
   );
@@ -250,7 +250,7 @@ test("a 50 MB pack (chunked: over git's http.postBuffer) goes through the proxy 
     id,
     brief,
     JSON.stringify({ credentials: [], repos: [], project: "site" }),
-    JSON.stringify({ tokens: 1e6, hours: 1 }),
+    JSON.stringify({ usd: 1000, hours: 1 }),
     t,
     t,
   );

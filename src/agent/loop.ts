@@ -5,9 +5,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createAgent, listSessions, type Message, openSession, type Plugin, type Session } from "@hortus/core";
-import { AUX_TOKENS, MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, readCapped, readDir } from "../hostile.ts";
+import { AUX_TOKENS, AUX_USD, MAX_ENTRIES, MAX_SESSION, MAX_SESSIONS, readCapped, readDir } from "../hostile.ts";
 import { logger } from "../log.ts";
-import { budgetTokens, type TaskJson } from "../types.ts";
+import { budgetTokens, type ModelPrice, type TaskJson, usageCost } from "../types.ts";
 import { drain, marker, ownerMessages, pending, quote } from "./inbox.ts";
 import { writeOutbox } from "./outbox.ts";
 import { formatScript, runScript } from "./script.ts";
@@ -19,9 +19,13 @@ export type KindPlugin = (onDone: (summary: string) => void) => Plugin;
 
 type Usage = NonNullable<Extract<Message, { role: "assistant" }>["usage"]>;
 
-/** Tokens over every session file (handoffs included) and the highest `[inbox N]` marker in them. */
-export function scan(dir: string): { tokens: number; cursor: number } {
+/**
+ * Tokens over every session file (handoffs included), their dollars at `price` (0 without one) and the highest `[inbox N]`
+ * marker in them.
+ */
+export function scan(dir: string, price?: ModelPrice): { tokens: number; usd: number; cursor: number } {
   let tokens = 0;
+  let usd = 0;
   let cursor = 0;
   // hortusd runs this over a Worker's directory too: no links, FIFOs, unbounded files or file counts
   let budget = MAX_SESSIONS;
@@ -41,8 +45,11 @@ export function scan(dir: string): { tokens: number; cursor: number } {
         continue; // empty, or cut short by a crash
       }
       const m = e?.type === "message" ? e.message : undefined;
-      if (m?.role === "assistant")
-        tokens += budgetTokens({ input: n(m.usage?.input), output: n(m.usage?.output), cached: n(m.usage?.cached) });
+      if (m?.role === "assistant") {
+        const u = { input: n(m.usage?.input), output: n(m.usage?.output), cached: n(m.usage?.cached) };
+        tokens += budgetTokens(u);
+        if (price) usd += usageCost(u, price);
+      }
       if (m?.role === "user" && !first && typeof m.content === "string")
         cursor = Math.max(cursor, marker(m.content) ?? 0);
       if (m?.role === "user") first = false;
@@ -58,7 +65,8 @@ export function scan(dir: string): { tokens: number; cursor: number } {
     },
   );
   tokens += n(Number(readCapped(join(dirname(dir), AUX_TOKENS), 32)?.text));
-  return { tokens, cursor };
+  if (price) usd += n(Number(readCapped(join(dirname(dir), AUX_USD), 32)?.text));
+  return { tokens, usd, cursor };
 }
 
 /**
@@ -105,7 +113,7 @@ const HANDOFF_RESERVE = 64_000;
 export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugin): Promise<number> {
   const sessionsDir = join(dir, "out", "sessions");
   const started = Date.now();
-  let { tokens, cursor } = scan(sessionsDir);
+  let { tokens, usd, cursor } = scan(sessionsDir, task.price);
   let session = await resume(sessionsDir);
   let lastUsage: Usage | undefined;
   for (const m of session.getState().messages) if (m.role === "assistant") lastUsage = m.usage;
@@ -118,7 +126,12 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   const hasInbox = () => pending(dir, cursor).length > 0;
   const hours = () => task.hours_used + (Date.now() - started) / 3_600_000;
   // a chat's owner is at the keyboard (its STOP button): no budget
-  const overBudget = () => task.kind !== "chat" && (tokens >= task.budget.tokens || hours() >= task.budget.hours);
+  const { usd: maxUsd, tokens: maxTokens } = task.budget;
+  const overBudget = () =>
+    task.kind !== "chat" &&
+    ((maxUsd !== undefined && usd >= maxUsd) ||
+      (maxTokens !== undefined && tokens >= maxTokens) ||
+      hours() >= task.budget.hours);
   let window = task.context_window;
   const contextFull = () =>
     !!lastUsage && lastUsage.input + lastUsage.output > Math.max(0.7 * window, window - HANDOFF_RESERVE);
@@ -135,6 +148,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       message: async (m) => {
         if (m.role === "assistant") {
           if (m.usage) tokens += budgetTokens(m.usage);
+          if (m.usage && task.price) usd += usageCost(m.usage, task.price);
           lastUsage = m.usage;
           errors = 0;
         }
@@ -266,7 +280,13 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       writeOutbox(
         dir,
         "budget_exceeded",
-        `budget exceeded: ${tokens}/${task.budget.tokens} tokens, ${hours().toFixed(2)}/${task.budget.hours} hours`,
+        `budget exceeded: ${[
+          maxUsd !== undefined && `$${usd.toFixed(2)}/$${maxUsd}`,
+          maxTokens !== undefined && `${tokens}/${maxTokens} tokens`,
+          `${hours().toFixed(2)}/${task.budget.hours} hours`,
+        ]
+          .filter(Boolean)
+          .join(", ")}`,
       );
     // a Planner batch has no summary: its verdicts were RPCs and its final text is discarded
     if (end === "stop" || emptyDone || task.kind === "planner") return 0;

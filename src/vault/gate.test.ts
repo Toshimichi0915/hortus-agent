@@ -55,10 +55,22 @@ const llmSeen: {
   auth?: string;
   body: { model: string; temperature: number; response_format: unknown; messages: { role: string; content: string }[] };
 }[] = [];
+let modelsAnswer: { status: number; body: string } = {
+  status: 200,
+  body: JSON.stringify({
+    data: [{ id: "zeta" }, { id: "alpha" }, { id: "alpha" }, { id: 5 }, null, { id: "x".repeat(201) }, { id: "" }],
+  }),
+};
+const modelsSeen: { auth?: string | undefined }[] = [];
 const llm = http.createServer((req, res) => {
   const c: Buffer[] = [];
   req.on("data", (x: Buffer) => c.push(x));
   req.on("end", () => {
+    if (req.url?.endsWith("/models")) {
+      modelsSeen.push({ auth: req.headers.authorization });
+      res.writeHead(modelsAnswer.status, { "content-type": "application/json" });
+      return res.end(modelsAnswer.body);
+    }
     llmSeen.push({ auth: req.headers.authorization, body: JSON.parse(Buffer.concat(c).toString()) });
     if (mode === "hang") return;
     if (mode === "500") {
@@ -851,4 +863,29 @@ test("a run is its parent's: a tainted parent's run is the owner's to decide, wh
   const same = { category: "origin:site.test", hash: "grant:origin:site.test", consequential: false, summary: {} };
   assert.equal(gate.check({ ...run, ...same }), "pass");
   assert.notEqual(gate.check({ ...run, caller: { role: "worker", task: "S23" }, ...same }), "pass");
+});
+
+test("provider.models: a provider's list through the proxy, its junk dropped, and a failure said, not thrown", async () => {
+  const models = (provider: string) =>
+    call("provider.models", { provider }, { role: "owner" }) as Promise<{ models: string[]; error?: string }>;
+  const n = modelsSeen.length;
+  assert.deepEqual(await models("llm"), { models: ["alpha", "zeta"] }, "sorted, one of each, strings of a sane length");
+  assert.equal(modelsSeen.length, n + 1);
+  assert.doesNotMatch(modelsSeen.at(-1)?.auth ?? "", /hortus-secret/, "the proxy put the key in");
+
+  const was = modelsAnswer;
+  try {
+    modelsAnswer = { status: 401, body: '{"error":"bad key sk-do-not-echo"}' };
+    const denied = await models("llm");
+    assert.deepEqual(denied.models, []);
+    assert.equal(denied.error, "HTTP 401", "the status, not the upstream's words");
+    modelsAnswer = { status: 200, body: "<html>not json</html>" };
+    assert.deepEqual((await models("llm")).models, []);
+    modelsAnswer = { status: 200, body: '{"data":"nope"}' };
+    assert.match((await models("llm")).error ?? "", /no list of models/);
+  } finally {
+    modelsAnswer = was;
+  }
+  assert.match((await models("no-such-credential")).error ?? "", /not a credential/);
+  await assert.rejects(call("provider.models", { provider: "llm" }, { role: "worker" }), /forbidden|role|not allowed/i);
 });

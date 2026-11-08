@@ -59,8 +59,9 @@ export const FIELDS = [
   "planner.batch_max",
   "planner.daily_tokens",
   "worker.context_window",
-  "worker.budget.tokens",
+  "worker.budget.usd",
   "worker.budget.hours",
+  "prices.*.*",
   "worker.plugins",
   "vm.cpus",
   "vm.mem_mb",
@@ -94,7 +95,11 @@ export function validateConfig(c: Config): Record<string, string> {
   int("planner.batch_max", c.planner.batch_max, 1);
   int("planner.daily_tokens", c.planner.daily_tokens, 0);
   int("worker.context_window", c.worker.context_window, 1);
-  if (!(c.worker.budget.tokens >= 0)) e["worker.budget.tokens"] = "0 or more";
+  if (!(c.worker.budget.usd >= 0)) e["worker.budget.usd"] = "0 or more";
+  for (const [provider, listed] of Object.entries(c.prices))
+    for (const [m, p] of Object.entries(listed))
+      if (!(p.input > 0 && p.output > 0 && p.cached >= 0 && (p.cache_write ?? 0) >= 0))
+        e[`prices.${provider}.${m}`] = "input and output above 0, the cache rates 0 or more";
   if (!(c.worker.budget.hours >= 0)) e["worker.budget.hours"] = "0 or more";
   for (const p of c.worker.plugins) if (checkPath(p)) e["worker.plugins"] = `${p}: ${checkPath(p)}`;
   int("vm.cpus", c.vm.cpus, 1);

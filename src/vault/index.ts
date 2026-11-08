@@ -8,6 +8,7 @@ import { call, define } from "../rpc.ts";
 import { RpcError, type VaultEntry } from "../types.ts";
 import * as ca from "./ca.ts";
 import * as gate from "./gate.ts";
+import { listModels } from "./providers.ts";
 import { approveTransform } from "./submit.ts";
 import * as transforms from "./transforms.ts";
 import { bind, ctx, minted, NAME, read, write } from "./vault.ts";
@@ -145,6 +146,19 @@ define("credential.list", {
       last_use: e.last_use ?? null,
       enabled: enabled.has(`credential:${name}`),
     }));
+  },
+});
+
+// a failure is an answer: the form still offers the models hortus knows, and says why the list is short
+define("provider.models", {
+  roles: ["owner"],
+  input: z.object({ provider: z.string().min(1) }),
+  run: async ({ provider }) => {
+    try {
+      return { models: await listModels(provider) };
+    } catch (e) {
+      return { models: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) };
+    }
   },
 });
 

@@ -18,6 +18,7 @@ import {
   Dialog,
   Empty,
   fmtTokens,
+  fmtUsd,
   Icon,
   type IconName,
   Link,
@@ -50,16 +51,20 @@ export const isOpen = (t: Pick<Task, "status">): boolean =>
 /** task.list's two lists (src/console/rows.ts › OPEN_SQL, CLOSED_SQL) */
 const PARTS = { open: isOpen, closed: (t: Task) => !isOpen(t) };
 
-/** The spend so far: usage is written when a session ends, the proxy's count (plus its runs') is live. */
-export const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0) + (t.usage?.runs ?? 0));
+/** Tokens so far: usage is written when a session ends, the proxy's count (plus its runs') is live. */
+const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0) + (t.usage?.runs ?? 0));
 
-/** A chat has no token limit (its owner is at the keyboard): 0, which a Meter shows as an empty bar. */
-export const tokenLimit = (t: Task): number => (t.kind === "chat" ? 0 : t.budget.tokens);
+/** The same in dollars. */
+export const spent = (t: Task): number => Math.max(t.usage?.usd ?? 0, (t.metered_usd ?? 0) + (t.usage?.runs_usd ?? 0));
 
-export const tokensLine = (t: Task): string =>
-  tokenLimit(t)
-    ? `${fmtTokens(used(t))} of ${fmtTokens(t.budget.tokens)} tokens`
-    : `${fmtTokens(used(t))} tokens, no limit`;
+/** 0 for no limit, which a Meter shows as an empty bar: a chat (its owner is at the keyboard), a model with no price. */
+export const spendLimit = (t: Task): number => (t.kind === "chat" || !t.priced ? 0 : (t.budget.usd ?? 0));
+
+/** Dollars where its model has a price; without one, tokens, as nothing says what they cost. */
+export const spendLine = (t: Task): string => {
+  if (spendLimit(t)) return `${fmtUsd(spent(t))} of ${fmtUsd(spendLimit(t))}`;
+  return t.priced ? `${fmtUsd(spent(t))}, no limit` : `${fmtTokens(used(t))} tokens, no spending limit`;
+};
 
 export const taskHref = (t: Pick<Task, "id" | "kind">): string =>
   t.kind === "chat" ? `/chat/${t.id}` : `/tasks/${t.id}`;
@@ -104,7 +109,7 @@ export function TaskProblem({ task: t, onBudget }: { task: Task; onBudget: () =>
           </Button>
         }
       >
-        It used {tokenLimit(t) ? tokensLine(t) : `${+t.hours.toFixed(1)} of ${t.budget.hours} h`}. Raise the budget and
+        It used {spendLimit(t) ? spendLine(t) : `${+t.hours.toFixed(1)} of ${t.budget.hours} h`}. Raise the budget and
         it goes on where it stopped.
       </Callout>
     );
@@ -123,15 +128,15 @@ export function TaskProblem({ task: t, onBudget }: { task: Task; onBudget: () =>
 }
 
 export function BudgetDialog({ task, open, onClose }: { task: Task; open: boolean; onClose: () => void }) {
-  const [tokens, setTokens] = useState(task.budget.tokens);
+  const [usd, setUsd] = useState(task.budget.usd ?? 0);
   const [hours, setHours] = useState(task.budget.hours);
   useEffect(() => {
     if (open) {
-      setTokens(task.budget.tokens);
+      setUsd(task.budget.usd ?? 0);
       setHours(task.budget.hours);
     }
-  }, [open, task.budget.tokens, task.budget.hours]);
-  const [save, busy] = useAction(() => call("task.budget", { id: task.id, tokens, hours }));
+  }, [open, task.budget.usd, task.budget.hours]);
+  const [save, busy] = useAction(() => call("task.budget", { id: task.id, usd, hours }));
   return (
     <Dialog
       open={open}
@@ -148,17 +153,17 @@ export function BudgetDialog({ task, open, onClose }: { task: Task; open: boolea
       }
     >
       <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
-        <Meter value={used(task)} max={tokenLimit(task)} label="Spent so far" detail={tokensLine(task)} />
-        {tokenLimit(task) > 0 && (
+        <Meter value={spent(task)} max={spendLimit(task)} label="Spent so far" detail={spendLine(task)} />
+        {spendLimit(task) > 0 && (
           <NumberField
-            label="Tokens"
-            hint="Every model call the task makes counts, its scheduled runs' too."
-            value={tokens}
-            onChange={setTokens}
+            label="Spending"
+            hint="Every model call the task makes counts at its model's rates, its scheduled runs' too."
+            value={usd}
+            onChange={setUsd}
             min={0}
-            step={100_000}
-            unit="tokens"
-            presets={[1e6, 2e6, 5e6, 10e6].map((v) => ({ label: fmtTokens(v), value: v }))}
+            step={5}
+            unit="USD"
+            presets={[5, 20, 50, 100].map((v) => ({ label: fmtUsd(v), value: v }))}
           />
         )}
         <NumberField
@@ -299,7 +304,7 @@ export function Tasks() {
 
 function TaskRow({ task: t }: { task: Task }) {
   const k = KIND[t.kind] ?? { label: t.kind, icon: "tasks" };
-  const pct = tokenLimit(t) ? Math.min(100, (used(t) / tokenLimit(t)) * 100) : 0;
+  const pct = spendLimit(t) ? Math.min(100, (spent(t) / spendLimit(t)) * 100) : 0;
   return (
     <li>
       <Link
@@ -330,7 +335,7 @@ function TaskRow({ task: t }: { task: Task }) {
             <span className="truncate text-xs text-destructive">{errorLine(t.error)}</span>
           )}
         </span>
-        <span className="flex flex-col gap-1.5 text-xs max-sm:hidden" title={tokensLine(t)}>
+        <span className="flex flex-col gap-1.5 text-xs max-sm:hidden" title={spendLine(t)}>
           <span className="h-1 overflow-hidden rounded-full bg-muted [&>span]:block [&>span]:h-full [&>span]:rounded-full [&>span]:bg-brand">
             <span
               style={{ width: `${pct}%` }}
@@ -338,8 +343,8 @@ function TaskRow({ task: t }: { task: Task }) {
             />
           </span>
           <span className="text-muted-foreground">
-            {fmtTokens(used(t))}
-            {tokenLimit(t) > 0 && ` / ${fmtTokens(t.budget.tokens)}`}
+            {t.priced ? fmtUsd(spent(t)) : fmtTokens(used(t))}
+            {spendLimit(t) > 0 && ` / ${fmtUsd(spendLimit(t))}`}
           </span>
         </span>
         <span className="justify-self-end">
@@ -666,12 +671,12 @@ export function TaskPage({ id }: { id: string }) {
             }
           >
             <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
-              <Meter
-                value={used(t)}
-                max={t.budget.tokens}
-                label="Tokens"
-                detail={`${fmtTokens(used(t))} of ${fmtTokens(t.budget.tokens)}`}
-              />
+              {!t.priced && isOpen(t) && (
+                <Callout tone="warning" title="No spending limit">
+                  Its model has no price, so only the hours limit stops this task. Add a price in Settings › Workers.
+                </Callout>
+              )}
+              <Meter value={spent(t)} max={spendLimit(t)} label="Spending" detail={spendLine(t)} />
               <Meter
                 value={t.hours}
                 max={t.budget.hours}

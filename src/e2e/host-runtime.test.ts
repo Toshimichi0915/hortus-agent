@@ -172,6 +172,7 @@ before(async () => {
       policy: { "*": "human", cache: [fake] },
       owner: { tz: "UTC" },
       worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
+      prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } }, // a token is a dollar
       projects: { foo: { path: join(fake, "foolink") } },
       proxy: { https: await freePort(), http: await freePort(), dns: 0 },
     }),
@@ -331,7 +332,7 @@ const sessions = (id: string): number =>
 
 test("over budget with an undrained message: waiting, no restart loop", { skip }, async () => {
   const id = await spender();
-  await api("task.budget", { id, tokens: 1 });
+  await api("task.budget", { id, usd: 1 });
   await api("task.send", { id, text: "one more" });
   await until(async () => /^budget_exceeded/.test((await card(id)).task.error ?? ""), 15_000, "budget");
   await waitStatus(id, "waiting");
@@ -341,17 +342,17 @@ test("over budget with an undrained message: waiting, no restart loop", { skip }
   assert.equal(sessions(id), 2, "one start per message, no loop");
   // the raise is what the Worker waited for: it starts it, once
   assert.match(c.task.error ?? "", /^budget_exceeded: budget exceeded/);
-  await api("task.budget", { id, tokens: 1e6 });
+  await api("task.budget", { id, usd: 1e6 });
   await until(() => sessions(id) === 3, 15_000, "go on");
 });
 
 test("a raise while the session runs on the old budget: the stop at the old limit goes on", { skip }, async () => {
   const id = await spender();
   // one more model call passes the limit; the raise lands during its tool
-  await api("task.budget", { id, tokens: 16 });
+  await api("task.budget", { id, usd: 16 });
   await api("task.send", { id, text: "!bash sleep 3" });
   await until(() => reqs(id).length >= 2, 15_000, "the call");
-  await api("task.budget", { id, tokens: 1e6 });
+  await api("task.budget", { id, usd: 1e6 });
   await until(() => sessions(id) === 3, 20_000, "it goes on");
   await waitStatus(id, "waiting");
   assert.equal((await card(id)).task.error, null);
@@ -361,18 +362,18 @@ test("the proxy's count of a task's model calls: past it the task is over budget
   skip,
 }, async () => {
   const id = await spender();
-  await api("task.budget", { id, tokens: 10 });
+  await api("task.budget", { id, usd: 10 });
   const db = openDb(paths.db());
-  db.prepare("UPDATE tasks SET metered = 5000000 WHERE id = ?").run(id);
+  db.prepare("UPDATE tasks SET metered_usd = 5000000 WHERE id = ?").run(id);
   db.close();
-  await api("task.budget", { id, tokens: 1e9 }); // the Worker's own count stays under: only the proxy's is over
+  await api("task.budget", { id, usd: 1e9 }); // the Worker's own count stays under: only the proxy's is over
   await api("task.send", { id, text: "one more" });
   await until(
     async () => JSON.stringify((await card(id)).task.usage).includes("5000000"),
     15_000,
     "usage is the larger count",
   );
-  await api("task.budget", { id, tokens: 10 });
+  await api("task.budget", { id, usd: 10 });
   await api("task.send", { id, text: "and one more" });
   await until(
     async () => /^budget_exceeded: .*through the proxy/.test((await card(id)).task.error ?? ""),
@@ -500,7 +501,7 @@ function enqueue(brief: string): string {
   db.prepare(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, runtime, event_keys, created, updated, hours)
      VALUES (?, 'unattended', 't', ?, 'queued', ?, ?, '{"tokens":0}', 'host', '[]', ?, ?, 0)`,
-  ).run(id, brief, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ tokens: 1e6, hours: 1 }), t, t);
+  ).run(id, brief, JSON.stringify({ credentials: [], repos: [] }), JSON.stringify({ usd: 1000, hours: 1 }), t, t);
   db.close();
   return id;
 }

@@ -208,7 +208,7 @@ test("a host session past its hours is killed: a tool that never returns reaches
     title: "t",
     brief: "b",
     scope: { credentials: [] },
-    budget: { tokens: 1000, hours: 0.0002 },
+    budget: { usd: 1000, hours: 0.0002 },
   });
   await until(() => tasks.get(id).status === "waiting", 10_000);
   assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
@@ -249,7 +249,7 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
     (ctx.db.prepare("SELECT seq, body FROM outbox WHERE task_id = ? ORDER BY seq").all(id) as { body: string }[]).map(
       (r) => JSON.parse(r.body) as { seq: number; type: string; text: string },
     );
-  const run = async (guest: string, budget = { tokens: 1000, hours: 1 }) => {
+  const run = async (guest: string, budget = { usd: 1000, hours: 1 }) => {
     fakeVm(paths.home(), `hortus-fail-${process.pid}`, guest);
     const { id } = tasks.create({ kind: "unattended", title: "t", brief: "b", scope: { credentials: [] }, budget });
     await until(() => tasks.get(id).status === "waiting", 10_000, "the session's end");
@@ -281,7 +281,7 @@ test("VM failures: a boot timeout, the hours deadline, a Worker dead in the gues
     tasks.hooks.failed = failed;
 
     told.length = 0;
-    id = await run(`${OUT}; exec sleep 600`, { tokens: 1000, hours: 0.0005 });
+    id = await run(`${OUT}; exec sleep 600`, { usd: 1000, hours: 0.0005 });
     assert.match(tasks.get(id).error ?? "", /^budget_exceeded: the session was stopped/);
     assert.deepEqual(told, [`task ${id} is over budget`]);
     assert.deepEqual(

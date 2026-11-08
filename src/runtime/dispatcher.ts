@@ -18,8 +18,8 @@ import { publishLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import { prepareClone, startSync } from "../projects/origin.ts";
 import { links, listen, listenOpts } from "../proxy/index.ts";
-import { overdrawn } from "../proxy/pipeline.ts";
-import type { OutboxMsg, StdoutLine, TaskJson, TaskKind } from "../types.ts";
+import { overdrawn, overdrawnUsd } from "../proxy/pipeline.ts";
+import { type OutboxMsg, priceOf, type StdoutLine, type TaskJson, type TaskKind } from "../types.ts";
 import { agentCmd, type Child, type Exit, type Loopback, spawnSandboxed } from "./host.ts";
 import type { Kind } from "./landlock.ts";
 import { recover } from "./recovery.ts";
@@ -336,7 +336,11 @@ async function finish(
   const d = db();
   const out = paths.out(id);
   const hours = row.hours + (Date.now() - startedAt) / 3.6e6;
-  const { tokens, cursor } = scan(join(out, "sessions"));
+  const config = ctx?.config as Config;
+  const { tokens, usd, cursor } = scan(
+    join(out, "sessions"),
+    priceOf(config.prices, config.worker.provider, config.worker.model),
+  );
   const seen = (d.prepare("SELECT COALESCE(MAX(seq), 0) AS n FROM outbox WHERE task_id = ?").get(id) as { n: number })
     .n;
   const msgs = readOutbox(id, seen);
@@ -360,21 +364,23 @@ async function finish(
   // (tasks.ts › restarts)
   // the proxy's count ended its model calls: whatever the Worker's own count says, that is why it stopped
   const b = tasks.get(id);
-  const limit = JSON.parse(b.budget ?? "{}") as { tokens?: number; hours?: number };
+  const limit = JSON.parse(b.budget ?? "{}") as { usd?: number; tokens?: number; hours?: number };
   const metered = b.metered + tasks.runsOf(b);
-  const overdrawnBy =
-    row.kind !== "chat" && limit.tokens !== undefined && metered >= overdrawn(limit.tokens, ctx?.config as Config);
+  const spentUsd = b.metered_usd + tasks.runsUsd(b);
+  const usdLine = limit.usd === undefined ? undefined : overdrawnUsd(limit.usd, config);
+  const overTokens = limit.tokens !== undefined && metered >= overdrawn(limit.tokens, config);
+  const overdrawnBy = row.kind !== "chat" && (overTokens || (usdLine !== undefined && spentUsd >= usdLine));
   // the session ran on its start's budget (task.json): a raise meanwhile found it running, so task.budget sent nothing,
   // and the stop at the old limit sat waiting with `budget_exceeded` on the card the owner had just raised
-  const was = JSON.parse(row.budget ?? "{}") as { tokens?: number; hours?: number };
-  const raised = (limit.tokens ?? 0) > (was.tokens ?? 0) || (limit.hours ?? 0) > (was.hours ?? 0);
+  const was = JSON.parse(row.budget ?? "{}") as { usd?: number; hours?: number };
+  const raised = (limit.usd ?? 0) > (was.usd ?? 0) || (limit.hours ?? 0) > (was.hours ?? 0);
   let error =
     stopping || tasks.closing.has(id) || existsSync(join(paths.ctl(id), "STOP"))
       ? null
       : overBudget
         ? `budget_exceeded: the session was stopped after ${hours.toFixed(2)} h (budget hours)`
         : overdrawnBy
-          ? `budget_exceeded: budget exceeded: ${metered}/${limit.tokens} tokens through the proxy`
+          ? `budget_exceeded: budget exceeded: ${overTokens ? `${metered}/${limit.tokens} tokens` : `$${spentUsd.toFixed(2)}/$${limit.usd}`} through the proxy`
           : failed
             ? (lastError ?? (tail(join(out, "console.log")) || `exit ${exit.code ?? exit.signal}`)).slice(-2000)
             : spent !== undefined
@@ -390,10 +396,17 @@ async function finish(
     .get(id, fresh.started ?? "") as { n: number };
   const current = fresh.status;
   // `runs`: tokens its schedule runs charged to this task (3c), kept on top of its own sessions' count
-  const runs = (JSON.parse(fresh.usage ?? "{}") as { runs?: number }).runs ?? 0;
+  const runs = tasks.runsOf(fresh);
+  const runsUsd = tasks.runsUsd(fresh);
   // the proxy saw every model call and the session only its own, so never the two added
   const own = Math.max(tokens, fresh.metered);
-  const usage = JSON.stringify(runs ? { tokens: own + runs, runs } : { tokens: own });
+  const ownUsd = Math.max(usd, fresh.metered_usd);
+  const usage = JSON.stringify({
+    tokens: own + runs,
+    ...(runs ? { runs } : {}),
+    ...(ownUsd + runsUsd > 0 ? { usd: ownUsd + runsUsd } : {}),
+    ...(runsUsd ? { runs_usd: runsUsd } : {}),
+  });
   const extra = { hours, usage, summary: summary ?? row.summary, error };
   if (stopping || current !== "running") {
     // shutdown (recovery decides at the next start) or closed meanwhile: only the accounting

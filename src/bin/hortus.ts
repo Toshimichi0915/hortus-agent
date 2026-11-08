@@ -28,7 +28,9 @@ function budget(t: Row): string {
   const used = Math.max(Number(u.tokens) || 0, (Number(t.metered) || 0) + (Number(u.runs) || 0));
   const h = Math.round(Number(t.hours ?? 0) * 10) / 10;
   if (t.kind === "chat") return `${tokens(used)} tok, ${h} h`; // a chat has no budget
-  return `${tokens(used)}/${tokens(Number(b.tokens) || 0)} tok, ${h}/${s(b.hours) || 0} h`;
+  if (!t.priced) return `${tokens(used)} tok (no price: no spending limit), ${h}/${s(b.hours) || 0} h`;
+  const usd = Math.max(Number(u.usd) || 0, (Number(t.metered_usd) || 0) + (Number(u.runs_usd) || 0));
+  return `$${usd.toFixed(2)}/$${Number(b.usd) || 0}, ${h}/${s(b.hours) || 0} h`;
 }
 
 /** A stream event or a replies row (`{seq, body}`) as one printed line; null for lines the REPL does not show. */

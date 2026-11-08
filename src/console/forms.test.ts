@@ -4,11 +4,11 @@ import { z } from "zod";
 import { Config } from "../config.ts";
 import { fieldErrors, pageAt, pageWindow, SLACK } from "./forms.ts";
 
-const FIELDS = ["worker.plugins", "worker.budget.tokens", "console.tls", "dofs.*", "origins"];
+const FIELDS = ["worker.plugins", "worker.budget.usd", "console.tls", "dofs.*", "origins"];
 
 test("fieldErrors: settings.set's real issues land on the field they fall under", () => {
   const r = Config.safeParse({
-    worker: { plugins: ["/ok", 5], budget: { tokens: "100" } },
+    worker: { plugins: ["/ok", 5], budget: { usd: "100" } },
     console: { listen: ":7443", tls: { cert: "/c" } },
     dofs: { slack: { type: 1 } },
     planner: { effort: "loud" },
@@ -19,10 +19,10 @@ test("fieldErrors: settings.set's real issues land on the field they fall under"
     "console.tls",
     "dofs.slack",
     "planner.effort", // no field: its own path, for Advanced
-    "worker.budget.tokens",
+    "worker.budget.usd",
     "worker.plugins",
   ]);
-  assert.match(e["worker.budget.tokens"] ?? "", /number/);
+  assert.match(e["worker.budget.usd"] ?? "", /number/);
 });
 
 test("fieldErrors: the first issue on a field wins; junk gives nothing", () => {

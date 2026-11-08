@@ -279,7 +279,7 @@ test("500 tasks: task.list under 200 ms, with what the budget line reads", async
   const XSS = "<script>alert(1)</script>";
   const ins = ctx.db.prepare(
     `INSERT INTO tasks(id, kind, title, status, budget, usage, hours, project, created, updated, closed, summary)
-     VALUES (?, 'chat', ?, ?, '{"tokens":2000000,"hours":4}', '{"tokens":1200000}', 0.5, 'p', ?, ?, ?, ?)`,
+     VALUES (?, 'chat', ?, ?, '{"usd":1000,"hours":4}', '{"tokens":1200000}', 0.5, 'p', ?, ?, ?, ?)`,
   );
   for (let i = 0; i < 500; i++) {
     const st = i % 5 === 0 ? "done" : "waiting";
@@ -363,10 +363,15 @@ test("settings.set: invalid → names the key, nothing written; valid → saved 
 });
 
 test("task.list and task.get read the DB", async () => {
-  const list = (await call("task.list", undefined, { role: "owner" })) as { id: string; budget: { tokens: number } }[];
+  const list = (await call("task.list", undefined, { role: "owner" })) as {
+    id: string;
+    budget: { usd: number };
+    priced: boolean;
+  }[];
   assert.equal(list.length, 50 + 50); // the newest 50 of each list
   assert.equal(((await call("task.list", { limit: 500 }, { role: "owner" })) as unknown[]).length, 400 + 100);
-  assert.equal(list[0]?.budget.tokens, 2e6);
+  assert.equal(list[0]?.budget.usd, 1000);
+  assert.equal(list[0]?.priced, false, "no price in this config");
   const card = (await call("task.get", { id: "t1" }, { role: "owner" })) as {
     replies: { body: { type: string } }[];
     approvals: { summary: { host: string } }[];

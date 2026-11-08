@@ -14,7 +14,16 @@ import zlib from "node:zlib";
 import type { Config } from "../config.ts";
 import { family, taint } from "../db.ts";
 import { logger } from "../log.ts";
-import { budgetTokens, type Manifest, type Req, type ResponseResult, type Template } from "../types.ts";
+import {
+  budgetTokens,
+  highestPrice,
+  type Manifest,
+  priceOf,
+  type Req,
+  type ResponseResult,
+  type Template,
+  usageCost,
+} from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import {
   HANDLE,
@@ -91,30 +100,37 @@ export interface Target {
 export interface TaskRow {
   scope: { credentials?: string[]; repos?: string[] } | null;
   origins: "*" | string[] | null;
-  /** null for a chat: no token limit */
-  budget: { tokens: number } | null;
+  /** null for a chat: no limit. `tokens`: a Planner batch's */
+  budget: { usd?: number; tokens?: number } | null;
   /** tokens counted on its model calls here, and its schedules' runs' (their own limit is what was left at their start) */
   metered: number;
+  /** the same in dollars */
+  spent: number;
 }
 
 export function taskRow(id: string): TaskRow | undefined {
-  const r = ctx().db.prepare("SELECT kind, scope, origins, budget, metered, usage FROM tasks WHERE id = ?").get(id) as
+  const r = ctx()
+    .db.prepare("SELECT kind, scope, origins, budget, metered, metered_usd, usage FROM tasks WHERE id = ?")
+    .get(id) as
     | {
         kind: string;
         scope: string | null;
         origins: string | null;
         budget: string | null;
         metered: number;
+        metered_usd: number;
         usage: string | null;
       }
     | undefined;
   if (!r) return undefined;
+  const usage = (r.usage ? JSON.parse(r.usage) : {}) as { runs?: number; runs_usd?: number };
   return {
     scope: r.scope ? JSON.parse(r.scope) : null,
     origins: r.origins ? JSON.parse(r.origins) : null,
-    // a chat has no token limit (its owner is at the keyboard)
-    budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { tokens: number }) : null,
-    metered: r.metered + ((r.usage ? (JSON.parse(r.usage) as { runs?: number }) : {}).runs ?? 0),
+    // a chat has no limit (its owner is at the keyboard)
+    budget: r.budget && r.kind !== "chat" ? (JSON.parse(r.budget) as { usd?: number; tokens?: number }) : null,
+    metered: r.metered + (usage.runs ?? 0),
+    spent: r.metered_usd + (usage.runs_usd ?? 0),
   };
 }
 
@@ -566,7 +582,7 @@ export interface Prepared {
   scrub: Scrubber;
   /** the session's own model call: its body is conversation, sent as is (handles in it are text, not handles) */
   llmCall?: boolean;
-  /** a task's model call: its usage counts against `budget.tokens` */
+  /** a task's model call: its usage counts against its budget */
   metered?: boolean;
   /** handle text → value, for handles minted asynchronously after the gate (installation tokens) */
   tokens?: Map<string, string>;
@@ -836,8 +852,14 @@ export async function prepare(client: Client, req: IncomingRequest): Promise<Pre
   // files are the Worker's. Past the budget and one context (the agent's own stop and its summary call come first) they end
   const model = found.length > 0 && found.every((f) => f.h.name === llm);
   const metered = model && !!client.task && (client.role === "worker" || client.role === "planner");
-  if (metered && task?.budget && task.metered >= overdrawn(task.budget.tokens, cfg))
-    return refuse(403, `budget exceeded: ${task.metered}/${task.budget.tokens} tokens through the proxy`, { host });
+  if (metered && task?.budget) {
+    const { tokens, usd } = task.budget;
+    if (tokens !== undefined && task.metered >= overdrawn(tokens, cfg))
+      return refuse(403, `budget exceeded: ${task.metered}/${tokens} tokens through the proxy`, { host });
+    const line = usd === undefined ? undefined : overdrawnUsd(usd, cfg);
+    if (line !== undefined && task.spent >= line)
+      return refuse(403, `budget exceeded: $${task.spent.toFixed(2)}/$${usd} through the proxy`, { host });
+  }
 
   // 9. gate (only requests that carry a credential); a model call only where its manifest names it: a big conversation
   // is a streamed body, and no act
@@ -1112,16 +1134,38 @@ async function slot(c: Client): Promise<() => void> {
   };
 }
 
-/** Where the proxy refuses a task's model calls: `budget.tokens` plus one context, for the summary after the agent's stop. */
+/** Where the proxy refuses a Planner batch's model calls: its `tokens` plus one context, for what follows the agent's stop. */
 export const overdrawn = (tokens: number, c: Pick<Config, "worker">): number => tokens + c.worker.context_window;
+
+/**
+ * The same for a task's `budget.usd`: plus one context at its model's input rate. Undefined for a model with no price,
+ * which has no spending limit.
+ */
+export function overdrawnUsd(usd: number, c: Pick<Config, "worker" | "prices">): number | undefined {
+  const p = priceOf(c.prices, c.worker.provider, c.worker.model);
+  return p && usd + (c.worker.context_window * p.input) / 1e6;
+}
+
+interface MeteredUsage {
+  input: number;
+  output: number;
+  cached: number;
+  written: number;
+  model?: string | undefined;
+}
 
 /**
  * Input and output tokens of a model response or an SSE event, as core reckons them (`usage` of the openai and anthropic
  * providers), so a call the agent also logs counts the same. ponytail: the two shipped shapes, in the proxy rather than
  * in `transforms/` because a stream skips `response()`; a custom provider's other shape is not counted.
  */
-function usageOf(v: unknown): { input: number; output: number; cached: number } | undefined {
-  const o = v as { usage?: unknown; message?: { usage?: unknown }; response?: { usage?: unknown } } | null;
+function usageOf(v: unknown): MeteredUsage | undefined {
+  const o = v as {
+    usage?: unknown;
+    model?: unknown;
+    message?: { usage?: unknown; model?: unknown };
+    response?: { usage?: unknown; model?: unknown };
+  } | null;
   const u = (o?.usage ?? o?.message?.usage ?? o?.response?.usage) as Record<string, unknown> | null | undefined;
   if (!u || typeof u !== "object") return undefined;
   const n = (k: string, x: Record<string, unknown> = u) =>
@@ -1132,14 +1176,27 @@ function usageOf(v: unknown): { input: number; output: number; cached: number } 
     input: n("prompt_tokens") || n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
     output: n("completion_tokens") || n("output_tokens"),
     cached: n("cache_read_input_tokens") || (details && typeof details === "object" ? n("cached_tokens", details) : 0),
+    written: n("cache_creation_input_tokens"),
+    model: [o?.model, o?.message?.model, o?.response?.model].find((m): m is string => typeof m === "string"),
   };
 }
 
-function charge(p: Prepared, tokens: number): void {
-  if (tokens > 0)
-    ctx()
-      .db.prepare("UPDATE tasks SET metered = metered + ? WHERE id = ?")
-      .run(tokens, p.client.task as string);
+/**
+ * Counts a model call: `u` as the response reported it, or `tokens` from its bytes when it reported nothing. Dollars only
+ * for a Worker whose own model has a price (without one it has no spending limit). A call to a model with no price, as
+ * a Worker's `curl` can make, or one whose model cannot be read, costs its provider's highest listed rates, or naming it
+ * would be a way round the budget.
+ */
+function charge(p: Prepared, tokens: number, u?: MeteredUsage): void {
+  if (tokens <= 0) return;
+  const { prices, worker } = ctx().config;
+  const counted = p.client.role === "worker" && priceOf(prices, worker.provider, worker.model);
+  const rate = () =>
+    priceOf(prices, worker.provider, u?.model) ?? highestPrice(prices[worker.provider as string] ?? {});
+  const usd = counted ? usageCost(u ?? { input: tokens, output: 0 }, rate()) : 0;
+  ctx()
+    .db.prepare("UPDATE tasks SET metered = metered + ?, metered_usd = metered_usd + ? WHERE id = ?")
+    .run(tokens, usd, p.client.task as string);
 }
 
 /** A stream's usage, read as it passes. A stream reports none unless asked (`stream_options`, which a `curl` leaves out):
@@ -1151,6 +1208,8 @@ function meterStream(p: Prepared, r: Readable): void {
   let input = 0;
   let output = 0;
   let cached = 0;
+  let written = 0;
+  let model: string | undefined;
   let seen = false;
   // at least a token each: Anthropic's last `output_tokens` comes at the end, so a client that hangs up before it had the
   // text and `message_start`'s 1
@@ -1165,6 +1224,8 @@ function meterStream(p: Prepared, r: Readable): void {
       input = Math.max(input, u.input); // Anthropic's arrive in two events, each cumulative
       output = Math.max(output, u.output);
       cached = Math.max(cached, u.cached);
+      written = Math.max(written, u.written);
+      model = u.model ?? model;
     } catch {} // not JSON: nothing to count
   };
   r.on("data", (b: Buffer) => {
@@ -1175,7 +1236,8 @@ function meterStream(p: Prepared, r: Readable): void {
   });
   r.once("close", () => {
     line(carry);
-    charge(p, seen ? budgetTokens({ input, cached, output: Math.max(output, deltas) }) : Math.ceil(bytes / 4));
+    const u = seen ? { input, cached, written, model, output: Math.max(output, deltas) } : undefined;
+    charge(p, u ? budgetTokens(u) : Math.ceil(bytes / 4), u);
   });
 }
 
@@ -1269,7 +1331,7 @@ export async function respond(p: Prepared, res: http.IncomingMessage): Promise<O
     // every quiet schedule run), but it fetches what a background call made (OpenAI's `background: true`, then `GET
     // /v1/responses/<id>`): its usage, or that pair was a way round the count
     const get = p.template.method === "GET";
-    charge(p, u ? budgetTokens(u) : get ? 0 : Math.ceil((asked + r.buf.length) / 4));
+    charge(p, u ? budgetTokens(u) : get ? 0 : Math.ceil((asked + r.buf.length) / 4), u);
   }
   if (text === undefined) {
     const body = scrub.bytes(r.buf);

@@ -11,7 +11,7 @@ import { taintOf } from "../db.ts";
 import { readDofFile } from "../mirror/file.ts";
 import { define } from "../rpc.ts";
 import { localConsole } from "../runtime/net.ts";
-import { RpcError } from "../types.ts";
+import { priceOf, RpcError } from "../types.ts";
 import * as gate from "../vault/gate.ts";
 import { type ApprovalRow, approvalOut, excerpt } from "../vault/gate.ts";
 import { diff } from "../vault/submit.ts";
@@ -52,6 +52,8 @@ function taskOut(t: TaskRow) {
     ...t,
     budget: parse(t.budget) ?? null,
     usage: parse(t.usage) ?? null,
+    // whether its dollars count: a model with no price has no spending limit
+    priced: !!priceOf(ctx().config.prices, ctx().config.worker.provider, ctx().config.worker.model),
     scope: parse(r.scope) ?? null,
     origins: parse(r.origins) ?? null,
     event_keys: parse(r.event_keys) ?? null,

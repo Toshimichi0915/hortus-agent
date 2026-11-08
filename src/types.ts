@@ -222,7 +222,11 @@ export interface TaskJson {
   brief: string;
   scope: TaskScope;
   origins: "*" | string[];
-  budget: { tokens: number; hours: number };
+  /** `usd` only when the model has a price (none: no spending limit); `tokens` is a Planner batch's share of
+   * `daily_tokens` */
+  budget: { usd?: number; tokens?: number; hours: number };
+  /** the rates of `model` from `prices`, for the Worker's own count */
+  price?: ModelPrice;
   /** hortusd's sum over earlier starts */
   hours_used: number;
   provider: string;
@@ -364,13 +368,74 @@ export type ApprovalSummary = Record<string, unknown>;
 export const CACHED_WEIGHT = 0.1;
 
 /**
- * Tokens a model call counts against `budget.tokens` and `daily_tokens`. `input` includes `cached`, as core and the
- * proxy both report it: counted whole, every call re-read the whole context and a long conversation spent the budget at
- * a rate quadratic in its length.
+ * Tokens a model call counts against `daily_tokens`, and what a task's card shows when its model has no price. `input`
+ * includes `cached`, as core and the proxy both report it: counted whole, every call re-read the whole context and a
+ * long conversation spent the limit at a rate quadratic in its length.
  */
 export function budgetTokens(u: { input: number; output: number; cached?: number }): number {
   const cached = Math.min(u.cached ?? 0, u.input);
   return u.input - cached + Math.ceil(cached * CACHED_WEIGHT) + u.output;
+}
+
+/** One model's rates in dollars per million tokens (`prices` in hortusd.json). */
+export interface ModelPrice {
+  input: number;
+  cached: number;
+  /** a cache write; unset: at `input` (OpenAI's cost no more than input) */
+  cache_write?: number;
+  output: number;
+}
+
+/**
+ * A model's rates at a provider (`prices` by credential name, as hosts charge differently for one model): its own, or
+ * those of the longest listed name it extends, as an API answers `gpt-6-2026-01-01` to a call for `gpt-6`.
+ */
+export function priceOf(
+  prices: Record<string, Record<string, ModelPrice>>,
+  provider: string | undefined,
+  model: string | undefined,
+): ModelPrice | undefined {
+  if (!provider || !model || !Object.hasOwn(prices, provider)) return undefined;
+  const listed = prices[provider] as Record<string, ModelPrice>;
+  if (Object.hasOwn(listed, model)) return listed[model];
+  const name = Object.keys(listed)
+    .filter((k) => model.startsWith(`${k}-`) || model.startsWith(`${k}:`))
+    .sort((a, b) => b.length - a.length)[0];
+  return name === undefined ? undefined : listed[name];
+}
+
+/**
+ * Each rate at its highest over one provider's models: what a call to a model with no price costs a task whose budget
+ * counts. Another provider's rates say nothing of this one's.
+ */
+export function highestPrice(listed: Record<string, ModelPrice>): ModelPrice {
+  const all = Object.values(listed);
+  const top = (f: (p: ModelPrice) => number) => Math.max(0, ...all.map(f));
+  return {
+    input: top((p) => p.input),
+    cached: top((p) => p.cached),
+    cache_write: top((p) => p.cache_write ?? p.input),
+    output: top((p) => p.output),
+  };
+}
+
+/**
+ * Dollars of one model call. `input` includes `cached` and `written`, as core and the proxy report it. ponytail: one rate
+ * per token type, so a provider's surcharge past a prompt size is not counted; tiers in `prices` if that bites.
+ */
+export function usageCost(
+  u: { input: number; output: number; cached?: number; written?: number },
+  p: ModelPrice,
+): number {
+  const cached = Math.min(u.cached ?? 0, u.input);
+  const written = Math.min(u.written ?? 0, u.input - cached);
+  return (
+    ((u.input - cached - written) * p.input +
+      cached * p.cached +
+      written * (p.cache_write ?? p.input) +
+      u.output * p.output) /
+    1e6
+  );
 }
 
 /** A budget stop the owner's raise alone starts again (task.budget writes "go on"); the task's card says so. */

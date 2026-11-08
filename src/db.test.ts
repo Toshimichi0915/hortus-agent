@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { statSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { openDb } from "./db.ts";
+import { migrate, openDb } from "./db.ts";
 import * as paths from "./paths.ts";
 import { tempDir } from "./test/until.ts";
 
@@ -84,5 +85,21 @@ test("the WAL file shrinks back to journal_size_limit after a big transaction is
   db.exec("PRAGMA wal_checkpoint(PASSIVE)");
   db.prepare("INSERT INTO big VALUES (?)").run(Buffer.alloc(16));
   assert.ok(wal() <= 8 * 1024 * 1024, `wal ${wal()}`);
+  db.close();
+});
+
+test("a task's token budget moves to dollars; a Planner batch keeps its share of daily_tokens", () => {
+  const db = new DatabaseSync(":memory:");
+  migrate(db, 1); // the schema as it was before the move: every migration but the last
+  const add = db.prepare("INSERT INTO tasks(id, kind, title, status, budget) VALUES (?, ?, 't', 'waiting', ?)");
+  add.run("w", "unattended", JSON.stringify({ tokens: 2e6, hours: 4 }));
+  add.run("p", "planner", JSON.stringify({ tokens: 500, hours: 0.5 }));
+  add.run("broken", "chat", "not json");
+  migrate(db);
+  const budget = (id: string) =>
+    (db.prepare("SELECT budget FROM tasks WHERE id = ?").get(id) as { budget: string }).budget;
+  assert.deepEqual(JSON.parse(budget("w")), { hours: 4, usd: 20 });
+  assert.deepEqual(JSON.parse(budget("p")), { tokens: 500, hours: 0.5 });
+  assert.equal(budget("broken"), "not json");
   db.close();
 });

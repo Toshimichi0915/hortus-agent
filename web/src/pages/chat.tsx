@@ -38,11 +38,11 @@ import {
   BudgetDialog,
   isOpen,
   SessionLogDialog,
+  spendLine,
+  spent,
   TaskProblem,
   TaskStatus,
   taskHref,
-  tokensLine,
-  used,
 } from "./tasks.tsx";
 
 /** Asks, then deletes the chat (its rows and its `logs` DOF entry); off its page if that is where the owner is. */
@@ -539,7 +539,7 @@ export function Conversation({ id }: { id: string }) {
               </dd>
             </dl>
             {/* a chat has no budget: what it spent, no limit */}
-            <Meter value={used(t)} max={0} label="Tokens" detail={tokensLine(t)} />
+            <Meter value={spent(t)} max={0} label="Spending" detail={spendLine(t)} />
             <Meter value={t.hours} max={0} label="Hours" detail={`${+t.hours.toFixed(1)} h, no limit`} />
             {d.data.schedules.length > 0 && (
               <div>

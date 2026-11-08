@@ -81,8 +81,9 @@ export const Config = z.looseObject({
       provider: z.string().optional(),
       model: z.string().optional(),
       effort: Effort.optional(),
+      /** `usd` counts only for a model in `prices`: with none, a task has no spending limit, only `hours` */
       budget: z
-        .looseObject({ tokens: z.number().nonnegative().default(2e6), hours: z.number().nonnegative().default(4) })
+        .object({ usd: z.number().nonnegative().default(20), hours: z.number().nonnegative().default(4) })
         .prefault({}),
       /** default scope.credentials; empty = every configured credential but those only hortusd uses (tasks.ts) */
       credentials: Strings.default([]),
@@ -90,6 +91,22 @@ export const Config = z.looseObject({
       plugins: Strings.default([]),
     })
     .prefault({}),
+  /** dollars per million tokens, by provider (its credential's name) and model: what a task's budget is counted in */
+  prices: z
+    .record(
+      z.string().min(1),
+      z.record(
+        z.string().min(1),
+        z.object({
+          input: z.number().positive(),
+          cached: z.number().nonnegative(),
+          output: z.number().positive(),
+          // last, as the form adds it (settings.tsx › Rate): Settings compares drafts as JSON, so another order is unsaved
+          cache_write: z.number().nonnegative().optional(),
+        }),
+      ),
+    )
+    .default({}),
   origins: z.union([z.literal("*"), Strings]).default("*"),
   vm: z
     .looseObject({

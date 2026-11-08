@@ -5,9 +5,9 @@
 
 import { dirname, join } from "node:path";
 import type { Agent, Message } from "@hortus/core";
-import { AUX_TOKENS, readCapped } from "../hostile.ts";
+import { AUX_TOKENS, AUX_USD, readCapped } from "../hostile.ts";
 import { writeAtomic } from "../mirror/repo.ts";
-import { budgetTokens, type TaskJson } from "../types.ts";
+import { budgetTokens, type TaskJson, usageCost } from "../types.ts";
 
 export const SUMMARY_PROMPT = `You write the record of an agent's task for its owner. From the conversation, write about 200 words of Markdown with exactly these sections:
 
@@ -60,10 +60,12 @@ async function complete(agent: Agent, task: TaskJson, system: string, messages: 
   );
   // not in the session (no tool calls, not context): its tokens go to a sidecar `scan` adds (out/aux-tokens)
   const used = reply.usage ? budgetTokens(reply.usage) : 0;
-  if (used) {
-    const f = join(dirname(task.paths.work), AUX_TOKENS);
-    writeAtomic(f, String((Number(readCapped(f, 32)?.text) || 0) + used));
-  }
+  const add = (name: string, n: number) => {
+    const f = join(dirname(task.paths.work), name);
+    writeAtomic(f, String((Number(readCapped(f, 32)?.text) || 0) + n));
+  };
+  if (used) add(AUX_TOKENS, used);
+  if (reply.usage && task.price) add(AUX_USD, usageCost(reply.usage, task.price));
   return replyText(reply);
 }
 

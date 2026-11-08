@@ -5,8 +5,43 @@ import { test } from "node:test";
 import { Config, load, policyFor, save } from "./config.ts";
 import * as paths from "./paths.ts";
 import { tempDir } from "./test/until.ts";
+import { highestPrice, priceOf, usageCost } from "./types.ts";
 
 process.env.HORTUS_HOME = tempDir("hortus-config-");
+
+test("prices: a model's rates, its dated name's, and what a call costs", () => {
+  const opus = { input: 4, cached: 0.2, cache_write: 5, output: 20 };
+  const gpt = { input: 2, cached: 0.1, output: 10 };
+  const six = { input: 10, cached: 1, output: 50 };
+  const listed = { opus, gpt, "gpt-6": six };
+  const hosted = { input: 1, cached: 0.1, output: 2 };
+  const prices = { a: listed, b: { opus: hosted } };
+  assert.equal(priceOf(prices, "a", "opus"), opus);
+  assert.equal(priceOf(prices, "b", "opus"), hosted, "one model, another host's rates");
+  assert.equal(priceOf(prices, "b", "gpt"), undefined, "a's rates say nothing of b");
+  assert.equal(priceOf(prices, "c", "opus"), undefined);
+  assert.equal(priceOf(prices, undefined, "opus"), undefined);
+  assert.equal(priceOf(prices, "a", "opus-2026-01-01"), opus);
+  assert.equal(priceOf(prices, "a", "gpt-6-2026-01-01"), six, "the longest name it extends");
+  assert.equal(priceOf(prices, "a", "opusx"), undefined, "a name is no bare prefix");
+  assert.equal(priceOf(prices, "a", undefined), undefined);
+  assert.equal(priceOf(prices, "a", "constructor"), undefined, "nothing of Object's");
+  assert.equal(priceOf(prices, "constructor", "name"), undefined, "nor as a provider");
+
+  // 1M each: 700k fresh + 200k read + 100k written, then output
+  const u = { input: 1e6, cached: 2e5, written: 1e5, output: 1e6 };
+  assert.ok(Math.abs(usageCost(u, opus) - (0.7 * 4 + 0.2 * 0.2 + 0.1 * 5 + 20)) < 1e-9);
+  assert.ok(Math.abs(usageCost(u, gpt) - (0.7 * 2 + 0.2 * 0.1 + 0.1 * 2 + 10)) < 1e-9, "a write at input by default");
+  // a Worker's own file or `curl` reports what it likes: more cached than input cannot pay it back
+  assert.equal(usageCost({ input: 10, cached: 1e9, written: 1e9, output: 0 }, { ...gpt, cached: 0 }), 0);
+
+  assert.deepEqual(highestPrice(listed), { input: 10, cached: 1, cache_write: 10, output: 50 });
+  assert.deepEqual(highestPrice({}), { input: 0, cached: 0, cache_write: 0, output: 0 });
+  assert.throws(() => Config.parse({ prices: { p: { m: { input: 0, cached: 0, output: 1 } } } }), /prices/);
+  // the form's key order: Settings compares drafts as JSON, and any other said "unsaved changes" right after a save
+  const m = Config.parse({ prices: { p: { m: { cache_write: 1, output: 1, cached: 1, input: 1 } } } }).prices.p?.m;
+  assert.deepEqual(Object.keys(m ?? {}), ["input", "cached", "output", "cache_write"]);
+});
 
 test("missing file → defaults", () => {
   const c = load(join(paths.home(), "absent.json"));
@@ -18,7 +53,8 @@ test("missing file → defaults", () => {
   assert.equal(c.planner.daily_tokens, 5e6);
   assert.equal(c.planner.effort, "low");
   assert.equal(c.planner.runtime, undefined);
-  assert.deepEqual(c.worker.budget, { tokens: 2e6, hours: 4 });
+  assert.deepEqual(c.worker.budget, { usd: 20, hours: 4 });
+  assert.deepEqual(c.prices, {});
   assert.deepEqual(c.worker.credentials, []);
   assert.equal(c.worker.context_window, 131072);
   assert.deepEqual(c.projects, {});

@@ -12,7 +12,7 @@ import { replaceFile } from "../hostile.ts";
 import { removeLog } from "../mirror/index.ts";
 import * as paths from "../paths.ts";
 import * as tasks from "../runtime/tasks.ts";
-import type { OutboxMsg } from "../types.ts";
+import { type OutboxMsg, priceOf } from "../types.ts";
 
 export interface ScheduleRow {
   id: number;
@@ -40,16 +40,22 @@ const log = () => ctx?.log("schedules") ?? { info() {}, error() {} };
 
 const parse = <T>(s: string | null | undefined, d: T): T => (s ? (JSON.parse(s) as T) : d);
 const tokensOf = (t: tasks.TaskRow) => parse<{ tokens?: number }>(t.usage, {}).tokens ?? 0;
+const usdOf = (t: tasks.TaskRow) => parse<{ usd?: number }>(t.usage, {}).usd ?? 0;
 
 /** "2026-11-04 09:00" in `tz` */
 export function local(at: Date, tz: string): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: tz, dateStyle: "short", timeStyle: "short" }).format(at);
 }
 
-/** Tokens or hours spent (runs included); the tick does not fire rows of such a task. A chat has no budget. */
+/**
+ * Dollars or hours spent (runs included); the tick does not fire rows of such a task. A chat has no budget, and a model
+ * with no price no spending limit.
+ */
 export function overBudget(t: tasks.TaskRow): boolean {
-  const b = parse(t.budget, { tokens: Number.POSITIVE_INFINITY, hours: Number.POSITIVE_INFINITY });
-  return t.kind !== "chat" && (tokensOf(t) >= b.tokens || (t.hours ?? 0) >= b.hours);
+  const b = parse<{ usd?: number; hours?: number }>(t.budget, {});
+  const priced = !!ctx && !!priceOf(ctx.config.prices, ctx.config.worker.provider, ctx.config.worker.model);
+  const overUsd = priced && b.usd !== undefined && usdOf(t) >= b.usd;
+  return t.kind !== "chat" && (overUsd || (t.hours ?? 0) >= (b.hours ?? Number.POSITIVE_INFINITY));
 }
 
 /** What a firing tells the Worker, so it can ask for more in time. */
@@ -65,7 +71,7 @@ export function scheduleOf(run: tasks.TaskRow): number | undefined {
 /** A recurring row's run gets `schedules/<id>/`; a one-shot row's run (the row is gone) works in its `work/`. */
 export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
   const p = tasks.get(row.task_id);
-  const b = parse(p.budget, ctx?.config.worker.budget ?? { tokens: 0, hours: 0 });
+  const b = parse(p.budget, ctx?.config.worker.budget ?? { usd: 0, hours: 0 });
   if (row.every_sec || row.cron) mkdirSync(paths.schedule(row.id), { recursive: true });
   const run = tasks.create({
     kind: "run",
@@ -81,8 +87,8 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     // a run is unattended, so a chat's (which has no budget) is held to the chat's whole budget on its own
     budget:
       p.kind === "chat"
-        ? { tokens: b.tokens, hours: b.hours }
-        : { tokens: Math.max(0, b.tokens - tokensOf(p)), hours: Math.max(0, b.hours - (p.hours ?? 0)) },
+        ? { usd: b.usd, hours: b.hours }
+        : { usd: Math.max(0, b.usd - usdOf(p)), hours: Math.max(0, b.hours - (p.hours ?? 0)) },
   });
   // read by taskJson at the run's start (the dispatcher starts it on a later tick, never synchronously)
   if (row.script) writeFileSync(join(paths.ctl(run.id), "script.sh"), row.script);
@@ -95,16 +101,27 @@ export function onExit(run: tasks.TaskRow, msgs: OutboxMsg[]): void {
   const d = db();
   const parent = tasks.get(run.parent);
   // the sum over every run of the parent, so a resumed run is never charged twice
-  const { n } = d
-    .prepare("SELECT COALESCE(SUM(json_extract(usage, '$.tokens')), 0) AS n FROM tasks WHERE parent = ?")
-    .get(parent.id) as { n: number };
-  const u = parse<{ tokens?: number; runs?: number }>(parent.usage, {});
+  const { n, m } = d
+    .prepare(
+      "SELECT COALESCE(SUM(json_extract(usage, '$.tokens')), 0) AS n, COALESCE(SUM(json_extract(usage, '$.usd')), 0) AS m FROM tasks WHERE parent = ?",
+    )
+    .get(parent.id) as { n: number; m: number };
+  const u = parse<{ tokens?: number; runs?: number; usd?: number; runs_usd?: number }>(parent.usage, {});
   const own = (u.tokens ?? 0) - (u.runs ?? 0);
-  d.prepare("UPDATE tasks SET usage = ? WHERE id = ?").run(JSON.stringify({ tokens: own + n, runs: n }), parent.id);
+  const ownUsd = (u.usd ?? 0) - (u.runs_usd ?? 0);
+  d.prepare("UPDATE tasks SET usage = ? WHERE id = ?").run(
+    JSON.stringify({
+      tokens: own + n,
+      runs: n,
+      ...(ownUsd + m > 0 ? { usd: ownUsd + m } : {}),
+      ...(m > 0 ? { runs_usd: m } : {}),
+    }),
+    parent.id,
+  );
   const charged = tasks.get(parent.id);
   if (overBudget(charged) && !charged.error?.startsWith("budget_exceeded") && !tasks.isClosed(charged.status)) {
-    const b = parse(charged.budget, { tokens: 0 });
-    const error = `budget_exceeded: runs of its schedules used ${tokensOf(charged)}/${b.tokens} tokens; its schedules stop firing`;
+    const b = parse(charged.budget, { usd: 0 });
+    const error = `budget_exceeded: runs of its schedules used $${usdOf(charged).toFixed(2)}/$${b.usd}; its schedules stop firing`;
     d.prepare("UPDATE tasks SET error = ? WHERE id = ?").run(error, parent.id);
     log().info("parent over budget: schedules stop firing", { task: parent.id, run: run.id });
     // the Planner gets it for the parent. A run that hit the same limit told the owner already

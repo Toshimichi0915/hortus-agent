@@ -374,7 +374,7 @@ async function worker(file: string): Promise<string> {
     id,
     `!bash echo hi > ${file} && git add -A && git -c user.name=w -c user.email=w@example.test commit -qm ${file} && git push -q -f origin HEAD 2>&1 && echo pushed`,
     JSON.stringify({ credentials: [], repos: [], project: "repo" }),
-    JSON.stringify({ tokens: 1e6, hours: 1 }),
+    JSON.stringify({ usd: 1000, hours: 1 }),
     t,
     t,
   );

@@ -79,6 +79,7 @@ const fake = http.createServer((req, res) => {
       const kind = req.url.slice(7);
       if (kind === "json") return json({ usage: { prompt_tokens: 100, completion_tokens: 20 } });
       if (kind === "none") return json({ error: "nothing counted" });
+      if (kind === "other") return json({ model: "other", usage: { prompt_tokens: 100, completion_tokens: 20 } });
       if (kind === "limited") {
         res.writeHead(429, { "content-type": "application/json" });
         return res.end('{"error":"rate limited"}');
@@ -90,6 +91,11 @@ const fake = http.createServer((req, res) => {
         );
       }
       res.writeHead(200, { "content-type": "text/event-stream" });
+      // 3 fresh + 1 read + 2 written, then 5 out: in the two events Anthropic sends them in, the model in the first
+      if (kind === "priced")
+        res.write(
+          'data: {"message":{"model":"m-2026-01-01","usage":{"input_tokens":3,"cache_read_input_tokens":10,"cache_creation_input_tokens":2,"output_tokens":1}}}\n\ndata: {"usage":{"output_tokens":5}}\n\n',
+        );
       if (kind === "openai")
         res.write(
           'data: {"choices":[]}\n\ndata: {"usage":{"prompt_tokens":70,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":60}}}\n\ndata: [DONE]\n\n',
@@ -1025,6 +1031,73 @@ test("a task's model calls are counted at the proxy, streamed or not, and end at
   }
 });
 
+test("a Worker's dollars: each token type at its model's rate, the budget's line, and no line for a model with no price", async () => {
+  const { prices } = ctx.config;
+  const { provider, model: workerModel } = ctx.config.worker;
+  ctx.config.worker.provider = "gh";
+  ctx.config.worker.model = "m";
+  const spent = () => (ctx.db.prepare("SELECT metered_usd AS n FROM tasks WHERE id = 'T'").get() as { n: number }).n;
+  const call = (kind: string) =>
+    send({
+      host: "api.gh.test",
+      method: "POST",
+      path: `/model/${kind}`,
+      headers: { authorization: "Bearer hortus-secret-gh" },
+      body: "{}",
+    });
+  const charged = async (kind: string) => {
+    const before = spent();
+    assert.equal((await call(kind)).status, 200);
+    await until(() => spent() !== before, 2000, kind);
+    await sleep(20);
+    return spent() - before;
+  };
+  const close = (a: number, b: number, why: string) => assert.ok(Math.abs(a - b) < 1e-9, `${why}: ${a}, not ${b}`);
+  const budget = ctx.db.prepare("SELECT budget FROM tasks WHERE id = 'T'").get() as { budget: string | null };
+  const before = spent();
+  try {
+    // a million tokens at these rates cost this many dollars
+    ctx.config.prices = {
+      gh: {
+        m: { input: 1e6, cached: 1e5, cache_write: 2e6, output: 1e7 },
+        other: { input: 1, cached: 1, output: 1 },
+      },
+      // one model at another host, and rates far above: neither is what this provider's calls cost
+      elsewhere: { other: { input: 9e9, cached: 9e9, output: 9e9 }, dear: { input: 9e9, cached: 9e9, output: 9e9 } },
+    };
+    close(await charged("priced"), 3 + 1 + 2 * 2 + 5 * 10 + 7 * 0, "a stream of model m");
+    close(await charged("other"), (100 + 20) / 1e6, "a response of a model with its own rates");
+    close(await charged("json"), 100 + 20 * 10, "no model named: the highest rates listed");
+    close(await charged("none"), Math.ceil((2 + 29) / 4), "no usage at all: its bytes as input, at the highest");
+
+    ctx.db
+      .prepare("UPDATE tasks SET budget = ?, kind = 'unattended', metered_usd = ? WHERE id = 'T'")
+      .run(JSON.stringify({ usd: 10, hours: 1 }), 10 + ctx.config.worker.context_window - 1);
+    assert.equal((await call("none")).status, 200, "the agent's summary call, past its own stop");
+    ctx.db.prepare("UPDATE tasks SET metered_usd = metered_usd + 1000 WHERE id = 'T'").run();
+    const over = await call("json");
+    assert.equal(over.status, 403);
+    assert.match(over.body, /budget exceeded: \$\d+\.\d\d\/\$10 through the proxy/);
+
+    // the owner took the price away: whatever the row says, nothing stops it but its hours, and nothing is counted
+    ctx.config.prices = {
+      gh: { other: { input: 1, cached: 1, output: 1 } },
+      elsewhere: { m: { input: 1, cached: 1, output: 1 } },
+    };
+    const held = spent();
+    assert.equal((await call("json")).status, 200, "no line for a model with no price");
+    await sleep(50);
+    assert.equal(spent(), held);
+  } finally {
+    ctx.db
+      .prepare("UPDATE tasks SET budget = ?, metered_usd = ?, kind = 'chat' WHERE id = 'T'")
+      .run(budget.budget, before);
+    ctx.config.prices = prices;
+    ctx.config.worker.provider = provider;
+    ctx.config.worker.model = workerModel;
+  }
+});
+
 test("a model credential's manifest `consequential` is gated: fine-tuning, deleting, the admin API are no thinking", async () => {
   const prev = ctx.config;
   const vault = readVault();
@@ -1139,7 +1212,7 @@ test("origins: a list never cuts a session off its own model; a stranger's host,
   writeVault({ ...vault, llm: { type: "token", value: "sk-x", transform: "openai", hosts: ["models.test"] } });
   ctx.config = Config.parse({ ...prev, worker: { provider: "llm", model: "m" }, origins: ["registry.npmjs.org"] });
   try {
-    const task = { scope: null, origins: null, budget: null, metered: 0 };
+    const task = { scope: null, origins: null, budget: null, metered: 0, spent: 0 };
     const worker = await egress({ role: "worker", task: "T" }, "models.test", true, task);
     assert.equal("status" in worker && worker.status === 403, false);
     const other = await egress({ role: "worker", task: "T" }, "example.com", true, task);

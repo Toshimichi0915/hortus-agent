@@ -240,7 +240,13 @@ before(async () => {
       dofs: { slack: { type: "slack", owner: "U1" } },
       dev: { upstreams: { "slack.com": slack.url } },
       planner: { provider: "fake", model: "m" },
-      worker: { provider: "fake", model: "m", plugins: [join(fake, "plugins", "fake")] },
+      worker: {
+        provider: "fake",
+        model: "m",
+        plugins: [join(fake, "plugins", "fake")],
+        budget: { usd: 2e6, hours: 4 },
+      },
+      prices: { fake: { m: { input: 1e6, cached: 1e5, output: 1e6 } } }, // a token is a dollar
       projects: { foo: { path: join(fake, "foo") } },
       proxy: { https: await freePort(), http: httpPort, dns: 0 },
     }),
@@ -648,7 +654,7 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
   assert.equal(taskRow(id)?.status, "done");
 
   await configure((c) => {
-    (c.worker as { budget: { tokens: number } }).budget.tokens = 1;
+    (c.worker as { budget: { usd: number } }).budget.usd = 1;
   });
   try {
     slack.post("C1", { user: "U1", text: "a budget task" });
@@ -657,7 +663,7 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
     b = await nextBatch(count++);
     assert.match(
       batchText(b),
-      new RegExp(`- \\[${over}\\] budget_exceeded:\\n<<<quoted\\nbudget exceeded: 15/1 tokens`),
+      new RegExp(`- \\[${over}\\] budget_exceeded:\\n<<<quoted\\nbudget exceeded: \\$15\\.00/\\$1`),
     );
     assert.equal(taskRow(over)?.status, "waiting");
 
@@ -672,7 +678,7 @@ test("results: done wakes a batch with ## Results → task_close; budget_exceede
     assert.doesNotMatch(batchText(b), new RegExp(`\\[${over}\\] result:`));
   } finally {
     await configure((c) => {
-      (c.worker as { budget: { tokens: number } }).budget.tokens = 2e6;
+      (c.worker as { budget: { usd: number } }).budget.usd = 2e6;
     });
   }
 });
@@ -1166,14 +1172,14 @@ test("failures reach the owner once: a coalesced DM and one Planner row each, no
 
   // a burst: Workers that die, one that runs out of tokens
   await configure((c) => {
-    (c.worker as { budget: { tokens: number } }).budget.tokens = 1;
+    (c.worker as { budget: { usd: number } }).budget.usd = 1;
   });
   const names = ["crash one", "crash two", "crash three", "crash four", "spend it"];
   for (const text of names) slack.post("C1", { user: "U1", text });
   const ids = await Promise.all(names.map(id));
   await until(() => ids.every((i) => taskRow(i)?.error), 20_000, "every failure on its card");
   await configure((c) => {
-    (c.worker as { budget: { tokens: number } }).budget.tokens = 2e6;
+    (c.worker as { budget: { usd: number } }).budget.usd = 2e6;
   });
   assert.deepEqual(failureDms().length - before, 1, `the burst's first DM: ${failureDms().slice(before)}`);
   assert.match(

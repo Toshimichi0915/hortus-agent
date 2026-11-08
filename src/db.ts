@@ -82,6 +82,11 @@ const migrations: string[] = [
   // the CI result a live event mirrored (gateway › missed), so a reconcile does not route it again
   `ALTER TABLE events ADD COLUMN heard TEXT;
   CREATE INDEX events_heard ON events(dof, heard) WHERE heard IS NOT NULL;`,
+  // a task's budget is in dollars: what the proxy counted, and open tasks move to the default (a token count converts to
+  // no price). A Planner batch keeps its share of daily_tokens
+  `ALTER TABLE tasks ADD COLUMN metered_usd REAL NOT NULL DEFAULT 0;
+  UPDATE tasks SET budget = json_set(json_remove(budget, '$.tokens'), '$.usd', 20)
+    WHERE json_valid(budget) AND kind <> 'planner';`,
 ];
 
 const TAINT_MAX = 5;
@@ -268,10 +273,10 @@ export function openDb(path: string): DatabaseSync {
 }
 
 /** One migration per transaction; the version is read under the write lock, so two openers never both apply one. */
-export function migrate(db: DatabaseSync): void {
+export function migrate(db: DatabaseSync, leaveOut = 0): void {
   const version = () => (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   for (;;) {
-    if (migrations[version()] === undefined) return; // up to date: an opener takes no write lock
+    if (version() >= migrations.length - leaveOut) return; // up to date: an opener takes no write lock
     db.exec("BEGIN IMMEDIATE");
     try {
       const v = version();

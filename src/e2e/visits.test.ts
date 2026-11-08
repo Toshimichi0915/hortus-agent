@@ -134,7 +134,7 @@ function task(id: string, project: string, brief: string): void {
   db.prepare(
     `INSERT INTO tasks(id, kind, title, brief, status, scope, budget, usage, project, runtime, event_keys, created, updated, hours)
      VALUES (?, 'unattended', ?, ?, 'queued', ?, ?, '{"tokens":0}', ?, 'host', '[]', ?, ?, 0)`,
-  ).run(id, id, brief, JSON.stringify(scope), JSON.stringify({ tokens: 1e6, hours: 1 }), project || null, t, t);
+  ).run(id, id, brief, JSON.stringify(scope), JSON.stringify({ usd: 1000, hours: 1 }), project || null, t, t);
   db.close();
 }
 

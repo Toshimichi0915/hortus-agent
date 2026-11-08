@@ -218,10 +218,13 @@ export interface Task {
   title: string;
   status: TaskStatus;
   project: string | null;
-  budget: { tokens: number; hours: number };
-  usage: { tokens: number; runs?: number } | null;
+  budget: { usd?: number; hours: number };
+  usage: { tokens: number; runs?: number; usd?: number; runs_usd?: number } | null;
   /** the proxy's count so far (usage is written when a session ends) */
   metered?: number;
+  metered_usd?: number;
+  /** its model has a price: without one a task has no spending limit, only its hours */
+  priced?: boolean;
   hours: number;
   summary: string | null;
   outcome: "done" | "failed" | null;

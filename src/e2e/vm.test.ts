@@ -184,7 +184,7 @@ function vmTask(script: unknown[], hours = 1, project?: string, id = `vmt${Date.
         id,
         id,
         JSON.stringify({ credentials: [], repos: [], ...(project && { project }) }),
-        JSON.stringify({ tokens: 1e6, hours }),
+        JSON.stringify({ usd: 1000, hours }),
         project ?? null,
         t,
         t,
