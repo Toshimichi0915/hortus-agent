@@ -1,9 +1,25 @@
 /** Rows to turns (turns.ts): a hostile row, and the finished turns kept while the last is rebuilt. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { progress, str, type TurnRow, toTurns, turnBuilder } from "./turns.ts";
+import { contextOf, progress, str, type TurnRow, toTurns, turnBuilder } from "./turns.ts";
 
 const row = (seq: number, body: unknown): TurnRow => ({ seq, body, created: null });
+
+test("context rows: the newest well-formed one counts, and none of them makes a turn", () => {
+  const rows = [
+    row(1, { type: "context", tokens: 10, window: 100 }),
+    row(2, { type: "owner", text: "hi" }),
+    row(3, { type: "context", tokens: 20, window: 100 }),
+    row(4, { type: "context", tokens: "20", window: 0 }),
+    row(5, null),
+  ];
+  assert.deepEqual(contextOf(rows), { tokens: 20, window: 100 });
+  assert.equal(contextOf([row(1, { type: "context", tokens: 1, window: 0 })]), undefined);
+  assert.deepEqual(
+    toTurns(rows.slice(0, 4)).map((t) => t.role),
+    ["user"],
+  );
+});
 
 test("whatever a row holds, every text in a turn is a string", () => {
   let deep: unknown = 1;

@@ -132,6 +132,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   let window = task.context_window;
   const contextFull = () =>
     !!lastUsage && lastUsage.input + lastUsage.output > Math.max(0.7 * window, window - HANDOFF_RESERVE);
+  const context = () => out({ type: "context", tokens: lastUsage ? lastUsage.input + lastUsage.output : 0, window });
   const append = async (msgs: Message[]) => {
     await session.append(msgs);
     for (const m of msgs) outMessage(m);
@@ -147,6 +148,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
           if (m.usage && task.price) usd += usageCost(m.usage, task.price);
           lastUsage = m.usage;
           errors = 0;
+          if (m.usage) context();
         }
         await append([m]); // per message, so a crash loses nothing
         // polled here directly (one readdir + stat per tool result), not only by the timer, so steering lands right
@@ -166,6 +168,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   });
   const { provider } = await agent.resolve({ provider: task.provider, model: task.model });
   window = (await provider.contextWindow?.(task.model).catch(() => undefined)) ?? task.context_window;
+  context();
 
   // STOP is the owner's button: abort a stream too (a running tool still finishes, its result is kept)
   const timer = setInterval(() => stopped() && abort.abort(), 1000);
@@ -251,6 +254,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
           session = await openSession(null, sessionsDir);
           lastUsage = undefined;
           out({ type: "status", text: "context full: continuing in a new session" });
+          context();
           // the owner's steering verbatim, not as the handoff remembered it: a correction left out of PROGRESS.md sent
           // the new session back to what the brief first said. ~20% of the window, at 4 chars a token
           const owner = ownerMessages(dir, cursor, window * 0.8);

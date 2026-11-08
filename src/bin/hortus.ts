@@ -62,6 +62,7 @@ function line(ev: unknown): string | null {
     case "thinking":
     case "tool_result":
     case "message":
+    case "context":
       return null;
     default:
       return l.text === undefined ? null : s(l.text);

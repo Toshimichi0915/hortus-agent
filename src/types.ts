@@ -291,7 +291,9 @@ export type StdoutLine =
   | { type: "tool_result"; id: string; output: string; isError?: boolean }
   | { type: "message"; role: "user" | "assistant" | "tool" }
   | { type: "status"; text: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /** How full the session's context is: the latest model call's tokens, of the model's window. */
+  | { type: "context"; tokens: number; window: number };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Vault and transforms

@@ -3,6 +3,8 @@
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { tokens as fmt } from "../../../src/console/text.ts";
+import { contextOf } from "../../../src/console/turns.ts";
 import {
   type Approval,
   type Config,
@@ -365,6 +367,28 @@ export function Home() {
 // ---------------------------------------------------------------------------------------------------------------------
 // A conversation
 
+/** How full the session's context is, colored as `Meter` is. */
+function ContextRing({ tokens, window }: { tokens: number; window: number }) {
+  const pct = Math.min(100, (tokens / window) * 100);
+  const text = `Context: ${fmt(tokens)} / ${fmt(window)} tokens (${Math.round(pct)}%)`;
+  return (
+    <svg viewBox="0 0 20 20" className="size-4.5 flex-none -rotate-90" role="img" aria-label={text}>
+      <title>{text}</title>
+      <circle cx="10" cy="10" r="8" fill="none" strokeWidth="3" className="stroke-muted" />
+      <circle
+        cx="10"
+        cy="10"
+        r="8"
+        fill="none"
+        strokeWidth="3"
+        pathLength={100}
+        strokeDasharray={`${pct} 100`}
+        className={pct >= 100 ? "stroke-destructive" : pct >= 80 ? "stroke-warning" : "stroke-brand"}
+      />
+    </svg>
+  );
+}
+
 export function Conversation({ id }: { id: string }) {
   const d = useCall<TaskDetail>("task.get", { id }, ["tasks", "approvals"]);
   const paused = useCall<{ paused: boolean }>("pause.get", {}, ["tasks"]);
@@ -408,6 +432,7 @@ export function Conversation({ id }: { id: string }) {
   const running = t?.status === "running" || t?.status === "queued";
   const lastIsOwner = rows.at(-1)?.body.type === "owner";
   const approvals = d.data?.approvals ?? [];
+  const context = contextOf(rows);
   return (
     <div className="flex min-h-0 flex-1">
       <div className="relative flex min-w-0 flex-1 flex-col">
@@ -416,6 +441,7 @@ export function Conversation({ id }: { id: string }) {
             <h1 className="truncate" title={t?.title}>
               {t?.title ?? ""}
             </h1>
+            {context && <ContextRing {...context} />}
             {t && (t.status !== "waiting" || t.pending || t.error) && <TaskStatus task={t} />}
             {down && (
               <span className="flex-none text-xs text-muted-foreground" role="status">

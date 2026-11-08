@@ -173,6 +173,11 @@ test("handoff: PROGRESS.md, a second session starting with the brief, two messag
   script(dir, [{ calls: [bash("echo a")], usage: { input: 700, output: 100 }, inbox: next }, { calls: [done("ok")] }]);
   const r = await run(dir);
   assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(
+    r.lines.flatMap((l) => (l.type === "context" ? [l.tokens] : [])).slice(0, 3),
+    [0, 800, 0],
+    "the context line: at the start, after a call, after the handoff",
+  );
   assert.equal(readFileSync(join(dir, "out", "work", "PROGRESS.md"), "utf8"), "notes from fake\n");
   const ho = requests(dir).find((q) => q.system === HANDOFF_PROMPT);
   assert.deepEqual(ho?.tools, []);

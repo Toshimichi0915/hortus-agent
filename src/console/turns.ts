@@ -46,6 +46,24 @@ export function str(v: unknown): string {
 
 const isOwner = (r: TurnRow) => (r.body as { type?: unknown } | null)?.type === "owner";
 
+/** The newest well-formed `context` row: how full the session's context is. */
+export function contextOf(rows: TurnRow[]): { tokens: number; window: number } | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const b = rows[i]?.body as { type?: unknown; tokens?: unknown; window?: unknown } | null;
+    if (b?.type !== "context") continue;
+    const { tokens, window } = b;
+    if (
+      typeof tokens === "number" &&
+      typeof window === "number" &&
+      tokens >= 0 &&
+      window > 0 &&
+      Number.isFinite(tokens + window)
+    )
+      return { tokens, window };
+  }
+  return undefined;
+}
+
 /** Text and thinking arrive as deltas, a row each: a run of them is one part; a `message` row ends a text part. */
 export function toTurns(rows: TurnRow[]): Turn[] {
   const turns: Turn[] = [];
@@ -55,6 +73,7 @@ export function toTurns(rows: TurnRow[]): Turn[] {
       string,
       unknown
     >;
+    if (b.type === "context") continue; // the header's ring (`contextOf`), not part of a turn
     if (b.type === "owner") {
       turns.push({
         role: "user",
