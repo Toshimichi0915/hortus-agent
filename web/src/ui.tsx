@@ -113,10 +113,18 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner as UiSpinner } from "@/components/ui/spinner";
 import { Switch as UiSwitch } from "@/components/ui/switch";
@@ -782,6 +790,69 @@ export interface Option<T extends string = string> {
   disabled?: boolean;
 }
 
+const PICK_TRIGGER =
+  "flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive";
+
+/** Radix keeps "" for "nothing picked", and our lists offer it as a choice ("No project", "Everywhere"). */
+const EMPTY = "__empty__";
+
+/** A short list to pick from, drawn as a combobox is: a native select's open list is the browser's own. */
+export function Picker<T extends string>({
+  value,
+  onChange,
+  options,
+  placeholder,
+  className,
+  id,
+  "aria-label": ariaLabel,
+  "aria-describedby": describedBy,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  /** a run of options with one `group` is headed by it */
+  options: { value: T; label: string; group?: string }[];
+  /** shown while `value` is "" and no option is "" */
+  placeholder?: string;
+  className?: string;
+  id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string | undefined;
+}) {
+  const offersEmpty = options.some((o) => o.value === "");
+  return (
+    <Select
+      value={value === "" && offersEmpty ? EMPTY : value}
+      onValueChange={(v) => onChange((v === EMPTY ? "" : v) as T)}
+    >
+      <SelectTrigger
+        id={id}
+        aria-label={ariaLabel}
+        aria-describedby={describedBy}
+        className={cn(PICK_TRIGGER, "w-fit data-[placeholder]:text-muted-foreground", className)}
+      >
+        <SelectValue placeholder={placeholder}>
+          {/* a value no option has, such as a removed messenger, still shows */}
+          <span className="truncate">{options.find((o) => o.value === value)?.label ?? value}</span>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent collisionPadding={8}>
+        {[...new Set(options.map((o) => o.group))].map((group) => (
+          <SelectGroup key={group ?? ""}>
+            {group && <SelectLabel>{group}</SelectLabel>}
+            {options
+              .filter((o) => o.group === group)
+              .map((o) => (
+                <SelectItem key={o.value} value={o.value || EMPTY}>
+                  {o.label}
+                </SelectItem>
+              ))}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 /**
  * A list to search, by substring: a native select only jumps by a name's first letters. With `typed`, what was typed can
  * be used as it is, for a list that is never sure to be whole.
@@ -831,13 +902,13 @@ export function ComboboxField({
             aria-invalid={!!p.error || undefined}
             aria-describedby={described(id, p)}
             disabled={disabled}
-            className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-input bg-transparent py-1 pr-2.5 pl-2.5 text-left text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive"
+            className={PICK_TRIGGER}
           >
             <span className={cn("truncate", !current && "text-muted-foreground")}>{current || placeholder}</span>
             <Icon name="chevronDown" size={16} className="shrink-0 text-muted-foreground" />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-(--radix-popover-trigger-width) min-w-64 p-0">
+        <PopoverContent align="start" collisionPadding={8} className="w-(--radix-popover-trigger-width) min-w-64 p-0">
           {/* our own filter: cmdk's fuzzy one matches scattered letters and reorders the list */}
           <Command shouldFilter={false}>
             <CommandInput placeholder="Search…" value={query} onValueChange={setQuery} />
@@ -870,19 +941,14 @@ export function SelectField<T extends string>({
   const id = useId();
   return (
     <Shell id={id} {...p}>
-      <NativeSelect
+      <Picker
         id={id}
         className="w-full"
         value={value}
         aria-describedby={described(id, p)}
-        onChange={(e) => onChange(e.target.value as T)}
-      >
-        {options.map((o) => (
-          <NativeSelectOption key={o.value} value={o.value}>
-            {o.label}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
+        onChange={onChange}
+        options={options}
+      />
     </Shell>
   );
 }

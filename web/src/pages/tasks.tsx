@@ -1,7 +1,6 @@
 /** Tasks: the list, one task's card, and the task widgets the chat shares (status, budget, session log). */
 
 import { useEffect, useState } from "react";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { errorLine } from "../../../src/console/text.ts";
 import { GOES_ON } from "../../../src/types.ts";
 import { call, type Msg, type Row, streamRows, type Task, type TaskDetail, useCall, usePaged } from "../api.ts";
@@ -26,6 +25,7 @@ import {
   NumberField,
   Page,
   Pager,
+  Picker,
   Pill,
   RelTime,
   ServiceTile,
@@ -256,12 +256,17 @@ export function Tasks() {
             { value: "all", label: "All" },
           ]}
         />
-        <NativeSelect aria-label="Kind" value={kind} onChange={(e) => setKind(e.target.value)}>
-          <NativeSelectOption value="all">All kinds</NativeSelectOption>
-          <NativeSelectOption value="chat">Chats</NativeSelectOption>
-          <NativeSelectOption value="unattended">From messages</NativeSelectOption>
-          <NativeSelectOption value="run">Scheduled runs</NativeSelectOption>
-        </NativeSelect>
+        <Picker
+          aria-label="Kind"
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: "all", label: "All kinds" },
+            { value: "chat", label: "Chats" },
+            { value: "unattended", label: "From messages" },
+            { value: "run", label: "Scheduled runs" },
+          ]}
+        />
         <label className="ml-auto flex h-8 max-w-80 min-w-44 flex-1 items-center gap-2 rounded-lg border border-input px-3 text-muted-foreground focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 max-sm:ml-0 max-sm:max-w-none [&_input]:min-w-0 [&_input]:flex-1 [&_input]:bg-transparent [&_input]:text-sm [&_input]:text-foreground [&_input]:outline-none">
           <Icon name="search" size={16} />
           <input

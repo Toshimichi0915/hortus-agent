@@ -6,7 +6,6 @@
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { mergePatch } from "../../../src/config-schema.ts";
 import { fieldErrors, sameJson } from "../../../src/console/forms.ts";
@@ -45,6 +44,7 @@ import {
   Meter,
   NumberField,
   navigate,
+  Picker,
   RelTime,
   SERVICES,
   SectionHead,
@@ -315,21 +315,21 @@ export function Settings({ section }: { section: string }) {
             </div>
           ))}
         </nav>
-        <label className="block md:hidden [&_[data-slot=native-select-wrapper]]:w-full">
-          <span className="sr-only">Section</span>
-          <NativeSelect value={section} onChange={(e) => navigate(`/settings/${e.target.value}`)}>
-            {SECTIONS.map((g) => (
-              <NativeSelectOptGroup key={g.group} label={g.group}>
-                {g.items.map((it) => (
-                  <NativeSelectOption key={it.id} value={it.id}>
-                    {it.label}
-                    {diff.has(it.id) ? " •" : ""}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelectOptGroup>
-            ))}
-          </NativeSelect>
-        </label>
+        <div className="block md:hidden">
+          <Picker
+            aria-label="Section"
+            className="w-full"
+            value={section}
+            onChange={(v) => navigate(`/settings/${v}`)}
+            options={SECTIONS.flatMap((g) =>
+              g.items.map((it) => ({
+                value: it.id as string,
+                label: `${it.label}${diff.has(it.id) ? " •" : ""}`,
+                group: g.group,
+              })),
+            )}
+          />
+        </div>
         <div className="flex min-w-0 flex-col gap-4 *:data-[slot=button]:self-start">
           {proposal && (
             <Callout tone="info" title={`Proposal #${proposal.id} from ${proposal.task_title ?? "a task"}`}>
@@ -1171,10 +1171,10 @@ function Approvals({ d }: { d: Draft }) {
               return (
                 <li
                   key={x.name}
-                  className="flex items-center gap-3 px-1 py-3 first:pt-1 last:pb-1 [&>svg]:text-muted-foreground"
+                  className="flex flex-wrap items-center gap-3 px-1 py-3 first:pt-1 last:pb-1 [&>svg]:text-muted-foreground"
                 >
                   <Icon name="key" />
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 basis-48">
                     <p className="flex flex-wrap items-center gap-2 font-medium [&_code]:rounded-md [&_code]:border [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-px [&_code]:text-xs">
                       <code>{x.name}</code>
                     </p>
@@ -1187,21 +1187,23 @@ function Approvals({ d }: { d: Draft }) {
                       {!v && " (the default)"}
                     </p>
                   </div>
-                  <NativeSelect
+                  <Picker
+                    className="ml-auto"
                     aria-label={`Who decides for ${x.name}`}
-                    value={v ?? ""}
-                    onChange={(e) =>
+                    value={(v ?? "") as string}
+                    onChange={(picked) =>
                       d.set((y) => {
                         const p = y.policy as Record<string, unknown>;
-                        if (e.target.value) p[key] = e.target.value;
+                        if (picked) p[key] = picked;
                         else delete p[key];
                       })
                     }
-                  >
-                    <NativeSelectOption value="">Default ({def === "human" ? "ask me" : "judge"})</NativeSelectOption>
-                    <NativeSelectOption value="human">Ask me</NativeSelectOption>
-                    <NativeSelectOption value="auto">Judge</NativeSelectOption>
-                  </NativeSelect>
+                    options={[
+                      { value: "", label: `Default (${def === "human" ? "ask me" : "judge"})` },
+                      { value: "human", label: "Ask me" },
+                      { value: "auto", label: "Judge" },
+                    ]}
+                  />
                 </li>
               );
             })}
@@ -1261,18 +1263,16 @@ function Approvals({ d }: { d: Draft }) {
               </div>
             ))}
           {unnoted.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-muted-foreground">
+            <div className="inline-flex items-center gap-2 text-muted-foreground">
               <Icon name="plus" size={16} />
-              <span className="sr-only">Add a note for a credential</span>
-              <NativeSelect value="" onChange={(e) => e.target.value && setNote(`credential:${e.target.value}`, " ")}>
-                <NativeSelectOption value="">Add a note for one credential…</NativeSelectOption>
-                {unnoted.map((x) => (
-                  <NativeSelectOption key={x.name} value={x.name}>
-                    {x.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
+              <Picker
+                aria-label="Add a note for a credential"
+                value=""
+                placeholder="Add a note for one credential…"
+                onChange={(name) => setNote(`credential:${name}`, " ")}
+                options={unnoted.map((x) => ({ value: x.name, label: x.name }))}
+              />
+            </div>
           )}
         </div>
       </Card>

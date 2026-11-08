@@ -2,7 +2,6 @@
 
 import { type ReactNode, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { type Config, type DofFile, type SearchHit, useCall } from "../api.ts";
 import { Markdown } from "../markdown.tsx";
 import {
@@ -13,6 +12,7 @@ import {
   Link,
   navigate,
   Page,
+  Picker,
   RelTime,
   ServiceTile,
   Spinner,
@@ -97,19 +97,21 @@ export function Search() {
           </button>
           {more && (
             <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] items-end gap-3 rounded-xl border bg-card p-3.5">
-              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80 [&_[data-slot=native-select-wrapper]]:w-full">
+              <div className="flex flex-col gap-1.5 text-[13px] text-foreground/80">
                 <span>Where</span>
-                <NativeSelect value={f.in} onChange={(e) => setF({ ...f, in: e.target.value })}>
-                  <NativeSelectOption value="">Everywhere</NativeSelectOption>
-                  {dofs.map(([name]) => (
-                    <NativeSelectOption key={name} value={name}>
-                      {name}
-                    </NativeSelectOption>
-                  ))}
-                  <NativeSelectOption value="logs">Task logs</NativeSelectOption>
-                </NativeSelect>
-              </label>
-              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80 [&_[data-slot=native-select-wrapper]]:w-full">
+                <Picker
+                  aria-label="Where"
+                  className="w-full"
+                  value={f.in}
+                  onChange={(v) => setF({ ...f, in: v })}
+                  options={[
+                    { value: "", label: "Everywhere" },
+                    ...dofs.map(([name]) => ({ value: name, label: name })),
+                    { value: "logs", label: "Task logs" },
+                  ]}
+                />
+              </div>
+              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80">
                 <span>From (user id)</span>
                 <Input
                   className="font-mono"
@@ -118,11 +120,11 @@ export function Search() {
                   onChange={(e) => setF({ ...f, author: e.target.value })}
                 />
               </label>
-              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80 [&_[data-slot=native-select-wrapper]]:w-full">
+              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80">
                 <span>Since</span>
                 <Input type="date" value={f.since} onChange={(e) => setF({ ...f, since: e.target.value })} />
               </label>
-              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80 [&_[data-slot=native-select-wrapper]]:w-full">
+              <label className="flex flex-col gap-1.5 text-[13px] text-foreground/80">
                 <span>Until</span>
                 <Input type="date" value={f.until} onChange={(e) => setF({ ...f, until: e.target.value })} />
               </label>

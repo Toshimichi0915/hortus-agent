@@ -139,8 +139,11 @@ function Composer({
           }
         }}
       />
-      <div className="mt-1.5 flex items-center gap-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{tools}</div>
+      <div className="mt-1.5 flex items-end gap-2.5">
+        {/* a container: the sidebar takes width too, so the screen's width says little about this row's */}
+        <div className="@container min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">{tools}</div>
+        </div>
         {running && value.trim() && (
           <span className="text-xs text-muted-foreground">It reads this after its current step</span>
         )}
@@ -167,6 +170,9 @@ function Composer({
     </form>
   );
 }
+
+/** A picker in the composer's row: it shares a narrow row, and has its own width once all three fit on one (620px). */
+const TOOL = "min-w-0 flex-1 gap-0 @[620px]:w-48 @[620px]:flex-none";
 
 interface ModelPick {
   provider: string;
@@ -201,7 +207,7 @@ function ModelPicker({
     <>
       <ComboboxField
         label={<span className="sr-only">Provider</span>}
-        className="w-40 gap-0 sm:w-48"
+        className={TOOL}
         value={provider ?? ""}
         onChange={(p) => p !== provider && onChange({ provider: p, model: "" })}
         options={offered.map((x) => ({ value: x.name, label: credentialLabel(x) }))}
@@ -210,7 +216,7 @@ function ModelPicker({
       />
       <ComboboxField
         label={<span className="sr-only">Model</span>}
-        className="w-full gap-0 sm:w-48"
+        className={TOOL}
         value={model ?? ""}
         onChange={(m) => provider && onChange({ provider, model: m })}
         options={asOptions([...((list.current && list.data?.models) || []), ...(claude ? CLAUDE : [])])}
@@ -347,11 +353,14 @@ export function Home() {
           placeholder="Ask hortus to do something…"
           tools={
             <>
-              <div className="flex items-center gap-1.5 text-muted-foreground" title="The project the chat works in">
+              <div
+                className="flex w-full items-center gap-1.5 text-muted-foreground @[620px]:w-auto"
+                title="The project the chat works in"
+              >
                 <Icon name="folder" size={16} />
                 <ComboboxField
                   label={<span className="sr-only">Project</span>}
-                  className="w-40 gap-0 text-foreground sm:w-48"
+                  className={`${TOOL} text-foreground`}
                   value={cwd}
                   onChange={setCwd}
                   options={[
