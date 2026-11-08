@@ -486,7 +486,7 @@ export function TaskPage({ id }: { id: string }) {
         </div>
       </Page>
     );
-  const { task: t, approvals, inbox, outbox, schedules, origin, tainted } = d.data;
+  const { task: t, approvals, inbox, outbox, schedules, origin } = d.data;
   const k = KIND[t.kind] ?? { label: t.kind, icon: "tasks" };
   const askClose = async (outcome: "done" | "failed") => {
     if (
@@ -654,11 +654,6 @@ export function TaskPage({ id }: { id: string }) {
                 </div>
               </div>
             </Card>
-          )}
-          {tainted.length > 0 && (
-            <Callout tone="warning" title="It read untrusted text">
-              {tainted.join("; ")}. You decide its requests, never the judge.
-            </Callout>
           )}
           <Card
             title="Budget"

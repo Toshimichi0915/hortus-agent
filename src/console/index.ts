@@ -100,7 +100,7 @@ define("task.get", {
       task: { ...taskOut(t), pending },
       summary: t.summary,
       replies: lastReplies(c, id).map((r) => ({ ...r, body: line(r.body) })),
-      // what the Approvals page gets: a card reads `payload` and `grantable` (a tainted request says so there)
+      // what the Approvals page gets: a card reads `payload` and `grantable`
       approvals: rows<ApprovalRow>(`${PENDING_FOR} ORDER BY id LIMIT ${PAGE}`).map((a) => excerpt(approvalOut(db, a))),
       inbox: box("inbox"),
       outbox: box("outbox"),

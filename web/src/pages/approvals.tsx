@@ -439,21 +439,15 @@ function Body({
   return <RequestView s={s} />;
 }
 
-/** Why it asks: each on its own line, so a tainted consequential request says both (the old page's order). */
+/** Why it asks: each on its own line. */
 function Why({ a }: { a: Approval }) {
   const p = a.payload ?? {};
-  const tainted = !!p.untrusted?.length;
   const line =
     "flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-[13px] text-foreground/80 [&>svg]:mt-0.5 [&>svg]:text-muted-foreground";
   return (
     <>
-      {tainted && (
-        <Callout tone="warning" title="This task read untrusted text">
-          {p.untrusted?.join("; ")}. Make sure this is what <em>you</em> want, not what they asked for.
-        </Callout>
-      )}
-      {/* a tainted entry's judge reason is its taint, said above */}
-      {p.judge && !tainted && (
+      {/* a tainted entry's judge reason is only its taint, so it is not shown */}
+      {p.judge && !p.untrusted?.length && (
         <p className={line}>
           <Icon name="scale" size={15} /> <span>The judge passed this to you: {p.judge.slice(0, 200)}</span>
         </p>
