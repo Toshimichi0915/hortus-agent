@@ -57,12 +57,13 @@ const used = (t: Task): number => Math.max(t.usage?.tokens ?? 0, (t.metered ?? 0
 /** The same in dollars. */
 export const spent = (t: Task): number => Math.max(t.usage?.usd ?? 0, (t.metered_usd ?? 0) + (t.usage?.runs_usd ?? 0));
 
-/** 0 for no limit, which a Meter shows as an empty bar: a chat (its owner is at the keyboard), a model with no price. */
-export const spendLimit = (t: Task): number => (t.kind === "chat" || !t.priced ? 0 : (t.budget.usd ?? 0));
+/** Undefined for no limit: a chat (its owner is at the keyboard), a model with no price. $0 is a limit, it stops the task. */
+export const spendLimit = (t: Task): number | undefined => (t.kind === "chat" || !t.priced ? undefined : t.budget.usd);
 
 /** Dollars where its model has a price; without one, tokens, as nothing says what they cost. */
 export const spendLine = (t: Task): string => {
-  if (spendLimit(t)) return `${fmtUsd(spent(t))} of ${fmtUsd(spendLimit(t))}`;
+  const limit = spendLimit(t);
+  if (limit !== undefined) return `${fmtUsd(spent(t))} of ${fmtUsd(limit)}`;
   return t.priced ? `${fmtUsd(spent(t))}, no limit` : `${fmtTokens(used(t))} tokens, no spending limit`;
 };
 
@@ -109,8 +110,8 @@ export function TaskProblem({ task: t, onBudget }: { task: Task; onBudget: () =>
           </Button>
         }
       >
-        It used {spendLimit(t) ? spendLine(t) : `${+t.hours.toFixed(1)} of ${t.budget.hours} h`}. Raise the budget and
-        it goes on where it stopped.
+        It used {spendLimit(t) !== undefined ? spendLine(t) : `${+t.hours.toFixed(1)} of ${t.budget.hours} h`}. Raise
+        the budget and it goes on where it stopped.
       </Callout>
     );
   return (
@@ -136,7 +137,11 @@ export function BudgetDialog({ task, open, onClose }: { task: Task; open: boolea
       setHours(task.budget.hours);
     }
   }, [open, task.budget.usd, task.budget.hours]);
-  const [save, busy] = useAction(() => call("task.budget", { id: task.id, usd, hours }));
+  const limit = spendLimit(task);
+  // no Spending field, no dollars sent: saving the hours must not put a $0 limit on a task that has none
+  const [save, busy] = useAction(() =>
+    call("task.budget", { id: task.id, hours, ...(limit !== undefined && { usd }) }),
+  );
   return (
     <Dialog
       open={open}
@@ -153,8 +158,8 @@ export function BudgetDialog({ task, open, onClose }: { task: Task; open: boolea
       }
     >
       <div className="flex flex-col gap-4 *:data-[slot=button]:self-start">
-        <Meter value={spent(task)} max={spendLimit(task)} label="Spent so far" detail={spendLine(task)} />
-        {spendLimit(task) > 0 && (
+        <Meter value={spent(task)} max={limit ?? 0} label="Spent so far" detail={spendLine(task)} />
+        {limit !== undefined && (
           <NumberField
             label="Spending"
             hint="Every model call the task makes counts at its model's rates, its scheduled runs' too."
@@ -304,7 +309,8 @@ export function Tasks() {
 
 function TaskRow({ task: t }: { task: Task }) {
   const k = KIND[t.kind] ?? { label: t.kind, icon: "tasks" };
-  const pct = spendLimit(t) ? Math.min(100, (spent(t) / spendLimit(t)) * 100) : 0;
+  const limit = spendLimit(t);
+  const pct = limit ? Math.min(100, (spent(t) / limit) * 100) : 0;
   return (
     <li>
       <Link
@@ -344,7 +350,7 @@ function TaskRow({ task: t }: { task: Task }) {
           </span>
           <span className="text-muted-foreground">
             {t.priced ? fmtUsd(spent(t)) : fmtTokens(used(t))}
-            {spendLimit(t) > 0 && ` / ${fmtUsd(spendLimit(t))}`}
+            {limit !== undefined && ` / ${fmtUsd(limit)}`}
           </span>
         </span>
         <span className="justify-self-end">
@@ -671,7 +677,7 @@ export function TaskPage({ id }: { id: string }) {
                   Its model has no price, so only the hours limit stops this task. Add a price in Settings › Workers.
                 </Callout>
               )}
-              <Meter value={spent(t)} max={spendLimit(t)} label="Spending" detail={spendLine(t)} />
+              <Meter value={spent(t)} max={spendLimit(t) ?? 0} label="Spending" detail={spendLine(t)} />
               <Meter
                 value={t.hours}
                 max={t.budget.hours}
