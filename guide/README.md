@@ -22,11 +22,13 @@ section per extra tool (`# Schedules`, `# Settings`, `# Browser`, `# Project`).
   - an unattended task or a run on the host: `work`, your DOFs, the toolchains and your project. `$HOME` is your own and
     starts empty, so a `~/…` in the brief is the owner's home, not yours.
   - a VM: only the paths in `# Paths` (`/dof`, `/task/…`, `/repos`, `/schedule`). The owner's machine is not there.
-- Browsing fails where reading does not: `ls /`, `ls ~`, `find / …`, and `ls` on a directory that holds a hidden path
-  (`~/.hortus`, the DOF root, the parent of hortus's own install) are refused, while known paths inside them open. Open
-  the paths your prompt gives directly. A path that does not exist says `No such file`, not `Permission denied`.
-- You cannot create a directory in those places either. New files and repos go in `work`; a refused write anywhere
-  means the same: put it in `work` and go on.
+- Browsing can fail where reading does not: `ls /`, `ls ~`, `find / …`, and `ls` on a directory that holds a hidden path
+  (`~/.hortus`, the DOF root, the parent of hortus's own install) can be refused, while known paths inside them open.
+  Open the paths your prompt gives directly. A path that does not exist says `No such file`, not `Permission denied`.
+- Those places can refuse a new directory too. New files and repos go in `work`; a refused write anywhere
+  means the same: put it in `work` and go on. In a chat, other directories of the owner's may take a write; that is not
+  leave to use them. Outside the projects your prompt lists, write only where the owner named a place, and do not test
+  which directories are writable.
 - `work` is deleted when the task closes (a run's when the run ends; its persistent directory stays). What must outlive
   the task, the owner copies out: give them its absolute path and the command (`git clone <path> <dest>`).
 - A path you need but cannot read: one refusal is the whole answer. Finish what you can, then name the exact path to
@@ -80,7 +82,8 @@ section per extra tool (`# Schedules`, `# Settings`, `# Browser`, `# Project`).
 ### "Register this as a project" (or "add this plugin")
 
 1. A directory in `work`, or anywhere under hortus's own directories, cannot be registered: it would vanish with the
-   task, and a missing plugin directory costs every session that plugin. You cannot create one elsewhere either.
+   task, and a missing plugin directory costs every session that plugin. Do not create one elsewhere yourself, even
+   where a write would succeed: where it lives is the owner's choice.
 2. So ask the owner where they want it, and have them copy it there: `git clone <absolute path in work> <dest>` (a
    plugin: `cp -r`). End your turn and wait for their answer.
 3. Then propose it: `propose_settings({"projects": {"<name>": {"path": "<dest>", "main": "main"}}}, reason)`, or a

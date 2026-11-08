@@ -31,6 +31,12 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   // a brief's `~/x` is the owner's, and a Worker burnt its budget on what cannot pass
   assert.match(prompt(forge), /`~\/…` in the brief is the owner's home[^\n]*One refused or missing read[^\n]*`done`/);
   assert.match(prompt(forge), /waiting requests are dropped[^\n]*without `done`/); // a live Worker's reply died with its task
+  // a live Worker probed 11 rounds of tool calls before it found what this error means
+  assert.match(prompt(forge), /`could not read Username` on a push means no credential goes to that host/);
+  // two of two live chats wrote to the owner's home unasked, because it let them
+  const chat = { ...forge, kind: "chat" as const };
+  assert.match(prompt(chat), /write only where the owner named a place/);
+  assert.doesNotMatch(prompt(forge), /write only where the owner named a place/); // an unattended task cannot write there
   assert.equal(b.system, a.system, "byte-identical across turns");
   assert.doesNotMatch(a.system, /coding agent/);
   assert.deepEqual(a.messages, [{ role: "user", content: "Do the test thing." }]);
