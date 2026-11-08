@@ -1054,8 +1054,8 @@ test("a Worker's dollars: each token type at its model's rate, the budget's line
 
     ctx.db
       .prepare("UPDATE tasks SET budget = ?, kind = 'unattended', metered_usd = ? WHERE id = 'T'")
-      .run(JSON.stringify({ usd: 10, hours: 1 }), 10 + ctx.config.worker.context_window - 1);
-    assert.equal((await call("none")).status, 200, "the agent's summary call, past its own stop");
+      .run(JSON.stringify({ usd: 10, hours: 1 }), 10 + 2 * ctx.config.worker.context_window - 1);
+    assert.equal((await call("none")).status, 200, "the agent's summary call, past its own stop, at the write rate");
     ctx.db.prepare("UPDATE tasks SET metered_usd = metered_usd + 1000 WHERE id = 'T'").run();
     const over = await call("json");
     assert.equal(over.status, 403);

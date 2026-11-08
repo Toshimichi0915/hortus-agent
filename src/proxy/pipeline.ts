@@ -1148,8 +1148,9 @@ async function slot(c: Client): Promise<() => void> {
 }
 
 /**
- * Where the proxy refuses a session's model calls: its `usd` plus one context at its model's input rate, for what follows
- * the agent's own stop. Undefined for a model with no price, which has no spending limit.
+ * Where the proxy refuses a session's model calls: its `usd` plus one context at its model's input or cache write rate,
+ * whichever is higher, for what follows the agent's own stop: the summary call misses the cache (no tools, another system
+ * prompt), so its context is written again. Undefined for a model with no price, which has no spending limit.
  */
 export function overdrawnUsd(
   usd: number,
@@ -1157,7 +1158,7 @@ export function overdrawnUsd(
   who: { provider?: string | undefined; model?: string | undefined } = c.worker,
 ): number | undefined {
   const p = priceOf(c.prices, who.provider, who.model);
-  return p && usd + (c.worker.context_window * p.input) / 1e6;
+  return p && usd + (c.worker.context_window * Math.max(p.input, p.cache_write ?? 0)) / 1e6;
 }
 
 interface MeteredUsage {
