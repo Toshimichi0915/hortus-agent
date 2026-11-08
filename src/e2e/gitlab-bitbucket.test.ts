@@ -34,7 +34,7 @@ const complete = async (req, onText) => {
   const n = existsSync(file) ? readFileSync(file, "utf8").split("\\n").filter(Boolean).length : 0;
   appendFileSync(file, JSON.stringify({ messages: req.messages, tools: req.tools.map((t) => t.name) }) + "\\n");
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   const last = req.messages.at(-1);
   if (id.startsWith("planner-")) {
     const batch = req.messages[0].content;

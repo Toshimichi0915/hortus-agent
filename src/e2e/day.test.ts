@@ -32,7 +32,7 @@ let n = 0;
 const complete = async (req, onText) => {
   n++;
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   const last = req.messages.at(-1);
   const id = (process.env.HORTUS_TASK ?? "").split("/").at(-3);
   if (id.startsWith("planner-")) {

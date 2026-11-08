@@ -21,7 +21,7 @@ const complete = async (req, onText) => {
   const last = req.messages.at(-1);
   const text = "echo: " + String(last.content ?? "").split("\\n").at(-1);
   onText(text);
-  return { role: "assistant", text, toolCalls: [], usage: { input: 10, output: 5, cached: 0 } };
+  return { role: "assistant", text, toolCalls: [], usage: { input: 10, output: 5, cacheRead: 0 } };
 };
 export default { providers: { fake: { create: () => ({ complete, listModels: async () => ["m"] }) } } };
 `;

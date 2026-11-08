@@ -23,7 +23,7 @@ const complete = async (req, onText) => {
   const n = done.filter((r) => r.tools.length).length;
   appendFileSync(reqs, JSON.stringify({ system: req.system, messages: req.messages, tools: req.tools.map((t) => t.name),
     effort: req.effort, home: process.env.HOME, cwd: process.cwd() }) + "\\n");
-  if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [], usage: { input: 7, output: 3, cached: 0 } };
+  if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [], usage: { input: 7, output: 3, cacheRead: 0 } };
   const script = JSON.parse(readFileSync(dir + "fake-script.json", "utf8"));
   const t = script[n] ?? { text: "idle" };
   if (t.inbox) writeFileSync(dir + "ctl/inbox/" + String(t.inbox.seq).padStart(6, "0") + ".json", JSON.stringify(t.inbox));
@@ -35,7 +35,7 @@ const complete = async (req, onText) => {
     role: "assistant",
     text: t.text ?? "",
     toolCalls: (t.calls ?? []).map((c, i) => ({ id: "c" + n + "_" + i, name: c.name, input: c.input })),
-    usage: { input: 10, output: 5, cached: 0, ...t.usage },
+    usage: { input: 10, output: 5, cacheRead: 0, ...t.usage },
   };
 };
 export default { providers: { fake: { create: () => ({ complete, listModels: async () => ["m"] }) } } };
@@ -44,7 +44,7 @@ export default { providers: { fake: { create: () => ({ complete, listModels: asy
 export interface Turn {
   text?: string;
   calls?: { name: string; input: unknown }[];
-  usage?: { input: number; output: number; cached?: number };
+  usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number };
   throw?: string;
   kill?: boolean;
   inbox?: Record<string, unknown>;

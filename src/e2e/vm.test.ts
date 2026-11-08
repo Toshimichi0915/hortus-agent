@@ -47,7 +47,7 @@ const complete = async (req) => {
   const prior = existsSync(reqs) ? readFileSync(reqs, "utf8").split("\\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   const n = prior.filter((r) => r.tools.length).length;
   appendFileSync(reqs, JSON.stringify({ messages: req.messages, tools: req.tools.map((t) => t.name) }) + "\\n");
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [], usage };
   let t;
   if (existsSync(dir + "fake-script.json")) t = JSON.parse(readFileSync(dir + "fake-script.json", "utf8"))[n];

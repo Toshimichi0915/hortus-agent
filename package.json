@@ -22,7 +22,7 @@
     "web:build": "tsc -p web && vite build web"
   },
   "dependencies": {
-    "@hortus/core": "^1.2.0",
+    "@hortus/core": "^2.0.0",
     "@simplewebauthn/server": "^14.0.0",
     "croner": "^11.0.0",
     "quickjs-emscripten": "^0.32.0",

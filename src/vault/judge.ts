@@ -47,7 +47,7 @@ export function prompt(category: string, summary: unknown, task: { title?: strin
 const day = (): string => today(ctx().config);
 
 /** What a call cost, counted as a Planner batch's is: the day's total is one, and one limit. */
-function addUsage(u: { input: number; output: number; cached: number }): void {
+function addUsage(u: { input: number; output: number; cacheRead: number }): void {
   const { prices, planner } = ctx().config;
   const price = priceOf(prices, planner.provider, planner.model);
   ctx()
@@ -124,7 +124,7 @@ export async function judge(category: string, summary: unknown, taskId: string |
     addUsage({
       input: n(u?.prompt_tokens) || n(u?.total_tokens) || Math.ceil((p.system.length + p.user.length) / 4),
       output: n(u?.completion_tokens),
-      cached: n(u?.prompt_tokens_details?.cached_tokens),
+      cacheRead: n(u?.prompt_tokens_details?.cached_tokens),
     });
     const content = body.choices?.[0]?.message?.content ?? "";
     // json_object is not honoured by every provider: take the outermost {...} of the answer

@@ -32,7 +32,7 @@ const on = (a: string) => ONLY.has(a);
 const FAKE = `
 const complete = async (req, onText) => {
   if (!req.tools.length) return { role: "assistant", text: "notes", toolCalls: [] };
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   const content = String(req.messages.at(-1).content ?? "");
   const done = content.includes("!done");
   const text = "echo: " + content.split("\\n").at(-1);

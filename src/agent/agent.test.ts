@@ -244,12 +244,25 @@ test("a dollar budget: each token type at the model's rate; the stop says what i
     price: { input: 1e6, cache_read: 1e5, output: 1e6 },
   });
   // 5 fresh + 10 read at a tenth + 2 output: $8 a turn, over $10 at the second
-  const turn = { calls: [bash("echo a")], usage: { input: 15, output: 2, cached: 10 } };
+  const turn = { calls: [bash("echo a")], usage: { input: 15, output: 2, cacheRead: 10 } };
   script(dir, Array(4).fill(turn));
   const r = await run(dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(withTools(dir).length, 2);
   assert.match(outbox(dir)[0]?.text ?? "", /^budget exceeded: \$16\.00\/\$10, 0\.\d\d\/10 hours$/);
+});
+
+test("a dollar budget: a cache write counts at its rate, so the Worker stops where the proxy counts it", async () => {
+  const dir = setup({
+    budget: { usd: 10, hours: 10 },
+    price: { input: 1e6, cache_read: 1e5, cache_write: 2e6, output: 1e6 },
+  });
+  // 6 written: $12, where the input rate would read $6 and go on
+  script(dir, [{ calls: [bash("echo a")], usage: { input: 6, output: 0, cacheWrite: 6 } }, { calls: [done("ok")] }]);
+  const r = await run(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(withTools(dir).length, 1);
+  assert.match(outbox(dir)[0]?.text ?? "", /^budget exceeded: \$12\.00\/\$10, /);
 });
 
 test("no dollars in the budget, as for a model with no price: only the hours stop it", async () => {
@@ -401,6 +414,19 @@ test("scan: the cursor ignores a brief that starts like an inbox marker", () => 
     `${user("[inbox 99] from=owner\nthe brief")}\n${user("[inbox 2] from=owner\nhi")}\n`,
   );
   assert.equal(scan(dir).cursor, 2);
+});
+
+test("scan: cache reads and writes at their rates, and a file from before core 2 says `cached`", () => {
+  const dir = join(setup(), "out", "sessions");
+  const asst = (usage: unknown) => JSON.stringify({ type: "message", message: { role: "assistant", usage } });
+  mkdirSync(dir, { recursive: true });
+  const lines = [
+    asst({ input: 10, output: 0, cached: 10 }),
+    asst({ input: 10, output: 0, cacheRead: 5, cacheWrite: 5 }),
+  ];
+  writeFileSync(join(dir, "1_a.jsonl"), `${lines.join("\n")}\n`);
+  const price = { input: 1e6, cache_read: 1e5, cache_write: 2e6, output: 1e6 };
+  assert.ok(Math.abs(scan(dir, price).usd - (1 + 0.5 + 10)) < 1e-9);
 });
 
 test("scan: planted null lines and bogus usage neither throw nor bend the token count", () => {

@@ -33,11 +33,11 @@ test("prices: a model's rates, its dated name's, and what a call costs", () => {
   assert.equal(priceOf(prices, "constructor", "name"), undefined, "nor as a provider");
 
   // 1M each: 700k fresh + 200k read + 100k written, then output
-  const u = { input: 1e6, cached: 2e5, written: 1e5, output: 1e6 };
+  const u = { input: 1e6, cacheRead: 2e5, cacheWrite: 1e5, output: 1e6 };
   assert.ok(Math.abs(usageCost(u, opus) - (0.7 * 4 + 0.2 * 0.2 + 0.1 * 5 + 20)) < 1e-9);
   assert.ok(Math.abs(usageCost(u, gpt) - (0.7 * 2 + 0.2 * 0.1 + 0.1 * 2 + 10)) < 1e-9, "a write at input by default");
   // a Worker's own file or `curl` reports what it likes: more cached than input cannot pay it back
-  assert.equal(usageCost({ input: 10, cached: 1e9, written: 1e9, output: 0 }, { ...gpt, cache_read: 0 }), 0);
+  assert.equal(usageCost({ input: 10, cacheRead: 1e9, cacheWrite: 1e9, output: 0 }, { ...gpt, cache_read: 0 }), 0);
 
   assert.deepEqual(highestPrice(listed), { input: 10, cache_read: 1, cache_write: 10, output: 50 });
   assert.deepEqual(highestPrice({}), { input: 0, cache_read: 0, cache_write: 0, output: 0 });

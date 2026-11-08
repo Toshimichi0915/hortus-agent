@@ -23,7 +23,7 @@ const complete = async (req, onText) => {
   const id = (process.env.HORTUS_TASK ?? "").split("/").at(-3);
   appendFileSync(DIR + "/" + id + ".jsonl", JSON.stringify({ messages: req.messages, tools: req.tools.map((t) => t.name) }) + "\\n");
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   const last = req.messages.at(-1);
   if (last.role === "tool") {
     const text = "tool said: " + last.results.map((r) => r.output).join("\\n").slice(0, 2000);

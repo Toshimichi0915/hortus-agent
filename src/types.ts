@@ -370,11 +370,11 @@ export const CACHED_WEIGHT = 0.1;
 
 /**
  * Tokens of a model call as a card shows them when its model has no price, and nothing stops at them. `input` includes
- * `cached`, as core and the proxy both report it.
+ * `cacheRead`, as core and the proxy both report it.
  */
-export function budgetTokens(u: { input: number; output: number; cached?: number }): number {
-  const cached = Math.min(u.cached ?? 0, u.input);
-  return u.input - cached + Math.ceil(cached * CACHED_WEIGHT) + u.output;
+export function budgetTokens(u: { input: number; output: number; cacheRead?: number }): number {
+  const read = Math.min(u.cacheRead ?? 0, u.input);
+  return u.input - read + Math.ceil(read * CACHED_WEIGHT) + u.output;
 }
 
 /** What a task's session runs on: the chat's own pick (a run: its chat's), or the Workers'. */
@@ -427,19 +427,19 @@ export function highestPrice(listed: Record<string, ModelPrice>): ModelPrice {
 }
 
 /**
- * Dollars of one model call. `input` includes `cached` and `written`, as core and the proxy report it. ponytail: one rate
+ * Dollars of one model call. `input` includes `cacheRead` and `cacheWrite`, as core and the proxy report it. ponytail: one rate
  * per token type, so a provider's surcharge past a prompt size is not counted; tiers in `prices` if that bites.
  */
 export function usageCost(
-  u: { input: number; output: number; cached?: number; written?: number },
+  u: { input: number; output: number; cacheRead?: number; cacheWrite?: number },
   p: ModelPrice,
 ): number {
-  const cached = Math.min(u.cached ?? 0, u.input);
-  const written = Math.min(u.written ?? 0, u.input - cached);
+  const read = Math.min(u.cacheRead ?? 0, u.input);
+  const write = Math.min(u.cacheWrite ?? 0, u.input - read);
   return (
-    ((u.input - cached - written) * p.input +
-      cached * p.cache_read +
-      written * (p.cache_write ?? p.input) +
+    ((u.input - read - write) * p.input +
+      read * p.cache_read +
+      write * (p.cache_write ?? p.input) +
       u.output * p.output) /
     1e6
   );

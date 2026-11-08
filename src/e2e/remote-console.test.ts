@@ -33,7 +33,7 @@ const HOST = "console.test";
 const FAKE = `
 const complete = async (req, onText) => {
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
-  const usage = { input: 10, output: 5, cached: 0 };
+  const usage = { input: 10, output: 5, cacheRead: 0 };
   const say = (text) => { for (const w of text.split(/(?<= )/)) onText(w); return text; };
   const last = req.messages.at(-1);
   if (last.role === "tool") {

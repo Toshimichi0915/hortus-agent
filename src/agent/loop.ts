@@ -46,7 +46,14 @@ export function scan(dir: string, price?: ModelPrice): { tokens: number; usd: nu
       }
       const m = e?.type === "message" ? e.message : undefined;
       if (m?.role === "assistant") {
-        const u = { input: n(m.usage?.input), output: n(m.usage?.output), cached: n(m.usage?.cached) };
+        // a file from before core 2 says `cached`
+        const old = m.usage as { cached?: unknown } | undefined;
+        const u = {
+          input: n(m.usage?.input),
+          output: n(m.usage?.output),
+          cacheRead: n(m.usage?.cacheRead) || n(old?.cached),
+          cacheWrite: n(m.usage?.cacheWrite),
+        };
         tokens += budgetTokens(u);
         if (price) usd += usageCost(u, price);
       }

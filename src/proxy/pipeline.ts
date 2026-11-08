@@ -1163,8 +1163,8 @@ export function overdrawnUsd(
 interface MeteredUsage {
   input: number;
   output: number;
-  cached: number;
-  written: number;
+  cacheRead: number;
+  cacheWrite: number;
   model?: string | undefined;
 }
 
@@ -1189,8 +1189,9 @@ function usageOf(v: unknown): MeteredUsage | undefined {
   return {
     input: n("prompt_tokens") || n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
     output: n("completion_tokens") || n("output_tokens"),
-    cached: n("cache_read_input_tokens") || (details && typeof details === "object" ? n("cached_tokens", details) : 0),
-    written: n("cache_creation_input_tokens"),
+    cacheRead:
+      n("cache_read_input_tokens") || (details && typeof details === "object" ? n("cached_tokens", details) : 0),
+    cacheWrite: n("cache_creation_input_tokens"),
     model: [o?.model, o?.message?.model, o?.response?.model].find((m): m is string => typeof m === "string"),
   };
 }
@@ -1221,8 +1222,8 @@ function meterStream(p: Prepared, r: Readable): void {
   let bytes = p.raw.body?.length ?? 0;
   let input = 0;
   let output = 0;
-  let cached = 0;
-  let written = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
   let model: string | undefined;
   let seen = false;
   // at least a token each: Anthropic's last `output_tokens` comes at the end, so a client that hangs up before it had the
@@ -1237,8 +1238,8 @@ function meterStream(p: Prepared, r: Readable): void {
       seen = true;
       input = Math.max(input, u.input); // Anthropic's arrive in two events, each cumulative
       output = Math.max(output, u.output);
-      cached = Math.max(cached, u.cached);
-      written = Math.max(written, u.written);
+      cacheRead = Math.max(cacheRead, u.cacheRead);
+      cacheWrite = Math.max(cacheWrite, u.cacheWrite);
       model = u.model ?? model;
     } catch {} // not JSON: nothing to count
   };
@@ -1250,7 +1251,7 @@ function meterStream(p: Prepared, r: Readable): void {
   });
   r.once("close", () => {
     line(carry);
-    const u = seen ? { input, cached, written, model, output: Math.max(output, deltas) } : undefined;
+    const u = seen ? { input, cacheRead, cacheWrite, model, output: Math.max(output, deltas) } : undefined;
     charge(p, u ? budgetTokens(u) : Math.ceil(bytes / 4), u);
   });
 }
