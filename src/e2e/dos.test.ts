@@ -211,5 +211,13 @@ test("20 Workers each holding 64 request bodies open: a byte budget per client",
   // 64 each in the suite (over the budget 4×; MAX_INFLIGHT each held the loop ~650 ms with 4,800 refusals at once)
   const r = await measure("bodies", 64, 15_000, 600, 20);
   const each = BODY_BUDGET / (1024 * 1024);
-  assert.deepEqual(r, { "gave up": 20 * each, 429: 20 * (64 - each) });
+  const { "gave up": held, ...refused } = r;
+  assert.equal(held, 20 * each);
+  // a refusal is a 429 on a connection hortusd then closes with the body unread: a client still writing it may see the
+  // close first (up to 11 of 960 in the full file), as a reset or a broken pipe
+  for (const k of Object.keys(refused)) assert.match(k, /^(429|error (ECONNRESET|EPIPE))/);
+  assert.equal(
+    Object.values(refused).reduce((a, b) => a + b, 0),
+    20 * (64 - each),
+  );
 });
