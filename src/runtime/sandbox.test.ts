@@ -660,7 +660,8 @@ function suite(): void {
       // the real tool, as a Worker scoped to the DOF calls it: the whole output goes to a temp file past the limit
       const tools = fileURLToPath(new URL("../../node_modules/@hortus/core/dist/tools.js", import.meta.url));
       const body = `const { bashTool } = await import(${JSON.stringify(tools)});
-        console.log(await bashTool.execute({ command: "cat ${join(H, "dof/slack/C1/channel.md")}; seq 1 20000" }));`;
+        const ctx = { signal: new AbortController().signal, cwd: process.cwd() };
+        console.log(await bashTool.execute({ command: "cat ${join(H, "dof/slack/C1/channel.md")}; seq 1 20000" }, ctx));`;
       const a = await run("LA", ["slack"], [process.execPath, "--input-type=module", "-e", body]);
       const file = /Full output: (.+?)\]/.exec(a.out)?.[1];
       assert.ok(file, a.out);

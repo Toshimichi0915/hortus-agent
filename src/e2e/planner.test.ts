@@ -29,7 +29,8 @@ const FAKE = (dir: string) => `
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const DIR = ${JSON.stringify(dir)};
 const EVENT = /^- \\[(e\\d+)\\] (\\S+)[^(\\n]* \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   const id = (process.env.HORTUS_TASK ?? "").split("/").at(-3);
   const file = DIR + "/" + id + ".jsonl";
   const n = existsSync(file) ? readFileSync(file, "utf8").split("\\n").filter(Boolean).length : 0;

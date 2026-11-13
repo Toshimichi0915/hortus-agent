@@ -31,7 +31,8 @@ const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).path
 const HOST = "console.test";
 
 const FAKE = `
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
   const usage = { input: 10, output: 5, cacheRead: 0 };
   const say = (text) => { for (const w of text.split(/(?<= )/)) onText(w); return text; };

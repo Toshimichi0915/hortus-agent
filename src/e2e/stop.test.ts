@@ -24,7 +24,8 @@ const CLIENT = "127.0.0.3";
 const BOUND_MS = 15_000;
 
 const FAKE = `
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   const content = String(req.messages.at(-1).content ?? "");
   if (content.includes("!hang")) { onText("hanging"); await new Promise(() => {}); }
   return { role: "assistant", text: "ok", usage: { input: 1, output: 1, cacheRead: 0 }, toolCalls: [] };

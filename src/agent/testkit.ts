@@ -18,10 +18,10 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { fileURLToPath } from "node:url";
 const dir = fileURLToPath(new URL("../../../../../", import.meta.url));
 const reqs = dir + "fake-requests.jsonl";
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
   const done = existsSync(reqs) ? readFileSync(reqs, "utf8").split("\\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
   const n = done.filter((r) => r.tools.length).length;
-  appendFileSync(reqs, JSON.stringify({ system: req.system, messages: req.messages, tools: req.tools.map((t) => t.name),
+  appendFileSync(reqs, JSON.stringify({ system: req.system, messages: req.messages.map(({ entryId, ...m }) => m), tools: req.tools.map((t) => t.name),
     effort: req.effort, home: process.env.HOME, cwd: process.cwd() }) + "\\n");
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [], usage: { input: 7, output: 3, cacheRead: 0 } };
   const script = JSON.parse(readFileSync(dir + "fake-script.json", "utf8"));
@@ -30,7 +30,7 @@ const complete = async (req, onText) => {
   if (t.delay) await new Promise((r) => setTimeout(r, t.delay));
   if (t.kill) process.kill(process.pid, "SIGKILL");
   if (t.throw) throw new Error(t.throw);
-  if (t.text) onText(t.text);
+  if (t.text) cb?.text?.(t.text);
   return {
     role: "assistant",
     text: t.text ?? "",
@@ -184,6 +184,8 @@ export function sessionFiles(dir: string): { name: string; messages: { role: str
       messages: text
         .split("\n")
         .filter(Boolean)
-        .map((l) => JSON.parse(l).message),
+        .map((l) => JSON.parse(l))
+        .filter((e) => e.type === "message")
+        .map((e) => e.message),
     }));
 }

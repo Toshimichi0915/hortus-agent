@@ -29,7 +29,8 @@ const FAKE = (dir: string) => `
 const DIR = ${JSON.stringify(dir)};
 const EVENT = /^- \\[(e\\d+)\\] (\\S+)[^(\\n]* \\(([^)]*)\\) at \\S+\\n(<<<quoted[^\\n]*\\n[\\s\\S]*?\\n>>>\\S*|[^\\n]*)/gm;
 let n = 0;
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   n++;
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };
   const usage = { input: 10, output: 5, cacheRead: 0 };
@@ -56,7 +57,7 @@ const complete = async (req, onText) => {
   return { role: "assistant", text: "", toolCalls: m ? [{ id: "c" + n, name: "bash", input: { command: m[1] } }] : [], usage };
 };
 const p = { create: () => ({ complete, listModels: async () => ["m"] }) };
-export default { providers: { fake: p, openai: p } };
+export default { providers: { fake: p, openai: { wrap: () => p } } };
 `;
 
 /** day <k> thread|issue|plain → one task; scope.dofs from the kind (the narrow choice the Planner prompt asks for) */

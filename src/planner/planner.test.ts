@@ -82,7 +82,7 @@ test("a follow-up's tag names a closed task's project; the prompt names the DOF 
   };
   assert.match(renderBatch(c, [e], []), /matches task T \(done, project p\)/);
   const system: string[] = [];
-  const start = plannerPlugin({ paths: { dof: "/d/dof" } } as TaskJson).on?.session_start as (a: unknown) => void;
+  const start = plannerPlugin({ paths: { dof: "/d/dof" } } as TaskJson).on?.prompt as (a: unknown) => void;
   start({ system });
   assert.match(system.join(), /hits are under: \/d\/dof/);
   // reviews and CI reach a PR's task only while it is open

@@ -46,18 +46,14 @@ export function replyText(reply: { text: string; toolCalls: { name: string; inpu
 
 async function complete(agent: Agent, task: TaskJson, system: string, messages: Message[]): Promise<string> {
   const { provider, model } = await agent.resolve({ provider: task.provider, model: task.model });
-  const reply = await provider.complete(
-    {
-      model,
-      system,
-      // ends on a user turn whatever the last message was
-      messages: [...messages, { role: "user", content: ASK }],
-      tools: [],
-      ...(task.effort && { effort: task.effort }),
-    },
-    () => {},
-    () => {},
-  );
+  const reply = await provider.complete({
+    model,
+    system,
+    // ends on a user turn whatever the last message was
+    messages: [...messages, { role: "user", content: ASK }],
+    tools: [],
+    ...(task.effort && { effort: task.effort }),
+  });
   // not in the session (no tool calls, not context): its tokens go to a sidecar `scan` adds (out/aux-tokens)
   const used = reply.usage ? budgetTokens(reply.usage) : 0;
   const add = (name: string, n: number) => {

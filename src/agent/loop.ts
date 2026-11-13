@@ -158,7 +158,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
     on: {
       text: (text) => out({ type: "text", text }),
       thinking: (text) => out({ type: "thinking", text }),
-      tool_call: (c) => out({ type: "tool_call", id: c.id, name: c.name, input: c.input }),
+      tool_call: ({ call: c }) => out({ type: "tool_call", id: c.id, name: c.name, input: c.input }),
       message: async (m) => {
         if (m.role === "assistant") {
           if (m.usage && task.price) usd += usageCost(m.usage, task.price);
@@ -167,7 +167,7 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
           errors = 0;
           if (m.usage) context();
         } else if (m.role === "tool") unreported += resultTokens(m);
-        await append([m]); // per message, so a crash loses nothing
+        outMessage(m); // core saved it to the session, per message, so a crash loses nothing
         // polled here directly (one readdir + stat per tool result), not only by the timer, so steering lands right
         // after the tool that was running; no inotify (virtiofs)
         if (m.role === "tool" && (done || hasInbox() || stopped() || overBudget() || contextFull())) abort.abort();
@@ -176,15 +176,18 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
   };
   const agent = await createAgent({
     extra: [
-      kindPlugin((summary) => {
-        done = true;
-        emptyDone = !summary;
-      }),
-      observer,
+      {
+        name: "hortus:task",
+        plugin: kindPlugin((summary) => {
+          done = true;
+          emptyDone = !summary;
+        }),
+      },
+      { name: "hortus:observer", plugin: observer },
     ],
   });
   const { provider } = await agent.resolve({ provider: task.provider, model: task.model });
-  window = (await provider.contextWindow?.(task.model).catch(() => undefined)) ?? task.context_window;
+  window = (await provider.info?.(task.model).catch(() => undefined))?.contextWindow ?? task.context_window;
   context();
 
   // STOP is the owner's button: abort a stream too (a running tool still finishes, its result is kept)
@@ -225,7 +228,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       abort = new AbortController();
       try {
         const { signal } = abort;
-        await agent.run(session.getState().messages, {
+        await agent.run(undefined, {
+          session,
           provider: task.provider,
           model: task.model,
           signal,

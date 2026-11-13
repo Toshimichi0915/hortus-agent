@@ -10,7 +10,7 @@ export function out(line: StdoutLine): void {
 export function outMessage(m: Message): void {
   if (m.role === "tool")
     for (const r of m.results) {
-      const output = r.image ? (r.output ? `[image] ${r.output}` : "[image]") : r.output;
+      const output = r.images?.length ? (r.output ? `[image] ${r.output}` : "[image]") : r.output;
       out({ type: "tool_result", id: r.id, output, ...(r.isError && { isError: true }) });
     }
   out({ type: "message", role: m.role });

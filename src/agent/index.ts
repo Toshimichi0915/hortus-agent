@@ -1,7 +1,4 @@
-/**
- * hortus-agent's entry. The bin imports @hortus/core first with HOME = ctl/home, so by the time this
- * module loads, core has read the task's ~/.hortus and HOME is the session's again.
- */
+/** hortus-agent's entry. The bin points HORTUS_HOME at ctl/home/.hortus, where core reads the task's config. */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { TaskJson } from "../types.ts";

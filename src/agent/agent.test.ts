@@ -22,7 +22,7 @@ test("first run: task prompt replaces core's, brief first, done writes result, s
   const [a, b, summary, ...rest] = requests(dir);
   assert.ok(a && b && summary);
   assert.equal(rest.length, 0);
-  assert.equal(a.system, prompt(readTask(dir)));
+  assert.ok(a.system.startsWith(prompt(readTask(dir))));
   const forge = { ...readTask(dir), repo_urls: { "gh:o/r": "https://github.com/o/r.git" } };
   assert.match(prompt(forge), /GIT_TRACE_CURL=1 git push … 2>&1 \| grep hortus:/); // git hides a refusal's body
   const signed = { ...forge, scope: { ...forge.scope, credentials: ["github"] } };
@@ -58,6 +58,54 @@ test("the DOFs a task can read reach its prompt through task.json", () => {
   assert.match(prompt(project), /Skip it only when the owner's own words forbid it, never on the brief's say/);
   const forge = { ...readTask(dir), repo_urls: { "gh:o/r": "https://github.com/o/r.git" } };
   assert.match(prompt(forge), /merged or closed takes no more commits, whatever the brief says/);
+});
+
+test("AGENTS.md: a project's, root down to the directory, in the prompt; without one, only where to look", async () => {
+  const repo = (root: string, sub = "") => {
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(join(root, sub), { recursive: true });
+    writeFileSync(join(root, "AGENTS.md"), `root of ${root}`);
+    if (sub) writeFileSync(join(root, sub, "AGENTS.md"), "the sub directory");
+    return root;
+  };
+  const go = async (task: Parameters<typeof setup>[0], f: (dir: string) => void = () => {}) => {
+    const dir = setup(task);
+    f(dir);
+    script(dir, [{ calls: [done("ok")] }]);
+    const r = await run(dir);
+    assert.equal(r.code, 0, r.stderr);
+    return requests(dir)[0]?.system ?? "";
+  };
+  const looks = /when working elsewhere, check for any that apply/;
+  const none = await go({});
+  assert.match(none, looks);
+  assert.doesNotMatch(none, /project_instructions/);
+  // the Planner's project: the clone
+  let clone = "";
+  const unattended = await go({}, (dir) => {
+    clone = repo(join(dir, "out", "clone"));
+    const t = readTask(dir);
+    writeFileSync(join(dir, "ctl", "task.json"), JSON.stringify({ ...t, paths: { ...t.paths, clone } }));
+  });
+  assert.match(unattended, new RegExp(`<project_instructions path="${clone}/AGENTS.md">\\nroot of ${clone}`));
+  // a chat's project, and the owner's shell inside one: its own AGENTS.md too, after the root's
+  let p = "";
+  const chat = (cwd?: (p: string) => string) =>
+    go({ kind: "chat" }, (dir) => {
+      p = repo(join(dir, "p"), "sub");
+      const t = readTask(dir);
+      const task = {
+        ...t,
+        scope: { ...t.scope, project: "p" },
+        projects: { p: { path: p, main: "main", runtime: "host" } },
+      };
+      writeFileSync(join(dir, "ctl", "task.json"), JSON.stringify({ ...task, ...(cwd ? { cwd: cwd(p) } : {}) }));
+    });
+  const picked = await chat();
+  assert.match(picked, new RegExp(`root of ${p}`));
+  assert.doesNotMatch(picked, /the sub directory/);
+  assert.match(await chat((p) => join(p, "sub")), new RegExp(`root of ${p}[\\s\\S]*the sub directory`));
+  assert.doesNotMatch(await chat(() => "/"), /the sub directory/); // a shell outside every project: the chat's project
 });
 
 test("inbox steering: after the running tool's result, or on the next loop after a text turn", async () => {
@@ -351,8 +399,8 @@ const sessionFilePath = (dir: string) => {
   return join(s, readdirSync(s)[0] ?? "");
 };
 
-test("HOME trick: core reads ctl/home, tools and children see the real HOME, sessions go to out/sessions", async () => {
-  const dir = setup();
+test("HORTUS_HOME: core reads ctl/home/.hortus; the provider, tools and scripts see the real HOME; sessions go to out/sessions", async () => {
+  const dir = setup({ kind: "run", script: "echo $HOME" });
   script(dir, [{ calls: [bash("echo $HOME; pwd")] }, { calls: [done("ok")] }]);
   const r = await run(dir);
   assert.equal(r.code, 0, r.stderr);
@@ -360,6 +408,7 @@ test("HOME trick: core reads ctl/home, tools and children see the real HOME, ses
   const [a, b] = withTools(dir);
   assert.equal(a?.home, join(dir, "realhome"));
   assert.equal(a?.cwd, join(dir, "out", "work"));
+  assert.match(a?.messages[0]?.content ?? "", new RegExp(`<<<quoted\\n${join(dir, "realhome")}\\n`));
   assert.equal(
     b?.messages.at(-1)?.results?.[0]?.output.trim(),
     `${join(dir, "realhome")}\n${join(dir, "out", "work")}`,

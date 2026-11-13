@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --no-warnings=ExperimentalWarning
 /**
- * hortus-agent --task <dir>: the Worker. @hortus/core reads homedir() once at import, so HOME points at
- * <dir>/ctl/home for that import only; tools and their children see the session's HOME.
+ * hortus-agent --task <dir>: the Worker. @hortus/core reads its config, secrets and plugins from HORTUS_HOME, the task's
+ * <dir>/ctl/home/.hortus; HOME stays the session's, for tools and their children too.
  */
 import { join, resolve } from "node:path";
 
@@ -11,14 +11,7 @@ if (!dir) {
   console.error("usage: hortus-agent --task <task dir>");
   process.exit(64);
 }
-const home = process.env.HOME;
-process.env.HOME = join(resolve(dir), "ctl", "home");
-try {
-  await import("@hortus/core");
-} finally {
-  if (home === undefined) delete process.env.HOME;
-  else process.env.HOME = home;
-}
+process.env.HORTUS_HOME = join(resolve(dir), "ctl", "home", ".hortus");
 const { main } = await import("../agent/index.ts");
 try {
   process.exit(await main(process.argv.slice(2)));

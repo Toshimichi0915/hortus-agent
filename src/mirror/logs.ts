@@ -76,7 +76,10 @@ function renderMessage(m: Message): string {
     const calls = m.toolCalls.map((c) => fenced("json", pretty({ name: c.name, input: c.input })));
     return [m.text, ...calls].filter(Boolean).join("\n\n");
   }
-  return m.results.map((r) => (r.image ? "[image]" : fenced("", excerpt(r.output)))).join("\n\n");
+  // a session from before core 4 has `image`, not `images`
+  return m.results
+    .map((r) => (r.images?.length || "image" in r ? "[image]" : fenced("", excerpt(r.output))))
+    .join("\n\n");
 }
 
 /** Same as core's reader: a line cut short by a crash is skipped (and so is anything but an object). */

@@ -30,7 +30,8 @@ const ONLY = new Set(process.env.HORTUS_TEST_SOAK_ONLY?.split(",") ?? ALL);
 const on = (a: string) => ONLY.has(a);
 
 const FAKE = `
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   if (!req.tools.length) return { role: "assistant", text: "notes", toolCalls: [] };
   const usage = { input: 10, output: 5, cacheRead: 0 };
   const content = String(req.messages.at(-1).content ?? "");

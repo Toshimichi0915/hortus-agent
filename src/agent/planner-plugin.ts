@@ -1,10 +1,10 @@
 /**
  * The planner plugin: what a Planner batch is. Its tools are the five verdict RPCs
  * through `hortusd.internal` (role `planner` is stamped by the proxy) plus core's `bash` and `read`; core's `edit` and
- * `write` are overridden by name with tools that refuse (core: later plugins override same-named tools), and the
+ * `write` are wrapped by tools that refuse (core: a plain tool named like an earlier one is a conflict), and the
  * task plugin's `send`/`done` are never loaded. The system prompt is fixed text, byte-identical across batches.
  */
-import { type Plugin, type Tool, tool } from "@hortus/core";
+import { type Plugin, type Tool, type ToolWrap, tool } from "@hortus/core";
 import { z } from "zod";
 import type { TaskJson } from "../types.ts";
 import { taskRpc } from "./rpc.ts";
@@ -50,15 +50,19 @@ const Ids = z.array(z.string()).min(1).describe('event ids from the batch, e.g. 
 export function plannerPlugin(task: TaskJson): Plugin {
   const rpc = (name: string, description: string, inputSchema: z.ZodObject): Tool =>
     tool({ name, description, inputSchema, execute: async (input) => JSON.stringify(await call(task, name, input)) });
-  const refuse = (name: string): Tool =>
-    tool({
-      name,
-      description: "Not available to the Planner.",
-      inputSchema: z.object({}).loose(),
-      execute: async () => {
-        throw new Error(`${name} is not available to the Planner`);
-      },
-    });
+  const refuse = (name: string): ToolWrap => ({
+    name,
+    optional: true,
+    wrap: () =>
+      tool({
+        name,
+        description: "Not available to the Planner.",
+        inputSchema: z.object({}).loose(),
+        execute: async () => {
+          throw new Error(`${name} is not available to the Planner`);
+        },
+      }),
+  });
   return {
     tools: [
       rpc(
@@ -108,7 +112,7 @@ export function plannerPlugin(task: TaskJson): Plugin {
       // replaces core's builtin prompt (and anything earlier plugins pushed)
       // the mirrors' root: a hit of `dof search` is a path under it, and without it no hit could be opened (the Planner hunted
       // for it, a follow-up on a closed task costing up to 183k tokens)
-      session_start: ({ system: parts }) =>
+      prompt: ({ system: parts }) =>
         void parts.splice(
           0,
           parts.length,

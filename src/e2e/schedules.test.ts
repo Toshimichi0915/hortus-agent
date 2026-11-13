@@ -19,7 +19,8 @@ const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).path
 const FAKE = (dir: string) => `
 import { appendFileSync } from "node:fs";
 const DIR = ${JSON.stringify(dir)};
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   const id = (process.env.HORTUS_TASK ?? "").split("/").at(-3);
   appendFileSync(DIR + "/" + id + ".jsonl", JSON.stringify({ messages: req.messages, tools: req.tools.map((t) => t.name) }) + "\\n");
   if (!req.tools.length) return { role: "assistant", text: "notes from fake", toolCalls: [] };

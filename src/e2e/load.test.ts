@@ -16,7 +16,8 @@ const hasScope = spawnSync("systemd-run", ["--user", "--scope", "-q", "--", "tru
 const bin = (name: string) => new URL(`../bin/${name}.js`, import.meta.url).pathname;
 
 const FAKE = `
-const complete = async (req, onText) => {
+const complete = async (req, cb) => {
+  const onText = (t) => cb?.text?.(t);
   if (!req.tools.length) return { role: "assistant", text: "notes", toolCalls: [] };
   const last = req.messages.at(-1);
   const text = "echo: " + String(last.content ?? "").split("\\n").at(-1);
