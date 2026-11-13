@@ -60,13 +60,18 @@ export const ScheduleWhen = ({ s }: { s: Schedule }) => (
 
 function Item({ s }: { s: Schedule }) {
   const [unset, busy] = useAction(() => call("schedule.unset", { id: s.id }), "Unscheduled");
+  // text is the run's whole brief (it can be pages): its first line is the title, the rest folds away
+  const [head = "", ...rest] = s.text.trim().split("\n");
+  const body = rest.join("\n").trim();
   return (
     <li className="grid grid-cols-[32px_minmax(0,1fr)] items-start gap-3.5 py-3.5 first:pt-0.5 last:pb-0 sm:grid-cols-[36px_minmax(0,1fr)_auto] max-sm:[&>button]:col-start-2 max-sm:[&>button]:justify-self-start">
       <span className="grid size-8 place-items-center rounded-lg bg-brand/10 text-brand sm:size-9" aria-hidden="true">
         <Icon name={s.cron || s.every_sec ? "refresh" : "calendar"} size={18} />
       </span>
       <div className="min-w-0">
-        <p className="font-medium">{s.text}</p>
+        <p className="line-clamp-2 font-medium wrap-anywhere" title={head}>
+          {head}
+        </p>
         <p className="mt-0.5 text-[13px] text-foreground/80">{describe(s)}</p>
         <div className="mt-1.5 mb-1 flex flex-wrap gap-x-4.5 gap-y-1 text-xs text-muted-foreground">
           <span>
@@ -85,6 +90,14 @@ function Item({ s }: { s: Schedule }) {
             )}
           </span>
         </div>
+        {body && (
+          <details className="[&>summary]:cursor-pointer [&>summary]:text-[13px] [&>summary]:font-medium [&>summary]:text-foreground/80 [&[open]>summary]:mb-2">
+            <summary>Full instructions</summary>
+            <div className="max-h-72 overflow-auto rounded-md border bg-muted/50 p-2.5 text-xs wrap-anywhere">
+              <Markdown text={body} />
+            </div>
+          </details>
+        )}
         {s.summary && (
           <details className="[&>summary]:cursor-pointer [&>summary]:text-[13px] [&>summary]:font-medium [&>summary]:text-foreground/80 [&[open]>summary]:mb-2 [&>pre]:max-h-72 [&>pre]:overflow-auto [&>pre]:rounded-md [&>pre]:border [&>pre]:bg-muted/50 [&>pre]:p-2.5 [&>pre]:text-xs [&>pre]:wrap-anywhere [&>pre]:whitespace-pre-wrap">
             <summary>What the last run said</summary>
