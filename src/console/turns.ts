@@ -95,7 +95,6 @@ export function toTurns(rows: TurnRow[]): Turn[] {
     switch (b.type) {
       case "message":
         if (last?.kind === "text") last.closed = true;
-        t.since = r.created;
         break;
       case "thinking":
         if (last?.kind === "thinking") last.text += str(b.text);

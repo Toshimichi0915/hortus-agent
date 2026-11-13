@@ -98,6 +98,7 @@ test("a live turn's progress: its time and commands since its last output", () =
     at("2026-01-01T00:00:01.000Z", { type: "text", text: "a reply between runs" }),
     at("2026-01-01T00:00:02.000Z", { type: "thinking", text: "hm" }),
     at("2026-01-01T00:00:03.000Z", bash),
+    at("2026-01-01T00:00:03.500Z", { type: "message", role: "tool" }),
     at("2026-01-01T00:00:04.000Z", bash),
     at("2026-01-01T00:00:05.000Z", { type: "tool_call", id: "r", name: "read", input: {} }),
   ]);
