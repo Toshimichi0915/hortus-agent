@@ -93,6 +93,8 @@ const migrations: string[] = [
   "ALTER TABLE tasks ADD COLUMN provider TEXT; ALTER TABLE tasks ADD COLUMN model TEXT;",
   // a project's own origins went: the global list is the one list
   "ALTER TABLE tasks DROP COLUMN origins;",
+  // the project a chat's recurring row gives its runs (a chat names any of its projects; null: the task's own)
+  "ALTER TABLE schedules ADD COLUMN project TEXT;",
 ];
 
 const TAINT_MAX = 5;

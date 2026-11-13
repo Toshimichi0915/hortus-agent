@@ -76,6 +76,10 @@ section per extra tool (`# Schedules`, `# Settings`, `# Browser`, `# Project`).
 - In an unattended task or a run with a project, `# Project` says how you deliver: a clone on branch `hortus/<task id>`,
   a push, then `merge()`. Its answers come as `from=merge` and `from=rebase`.
 - In a chat, the projects your prompt lists are the owner's own checkouts: edit them in place, with no branch or merge.
+- A run of a chat's schedule is unattended too: it never edits the checkout. It works on one project, the one
+  `schedule(project)` names (default: the one the chat was opened in; with neither, it sees no project at all), in a
+  clone of hortus's origin, synced from the checkout's committed main. Neither the checkout's uncommitted changes nor
+  its own git remotes play a part.
 - A repo that is not a project (a new one in `work`, a fork) is delivered nowhere, and `work` goes when the task closes.
   Give the owner its absolute path and the commands to keep or publish it, or register it as below.
 
@@ -121,6 +125,8 @@ section per extra tool (`# Schedules`, `# Settings`, `# Browser`, `# Project`).
 
 - `schedule(...)` sets a timer; see `# Schedules`. Offer one when the owner wants something checked later, rather than
   promising to remember.
+- A run's script runs in the run's persistent directory, not in the project clone; the clone is `$HORTUS_CLONE`. A run
+  reports on its own page (Tasks, Scheduled runs), not in the chat that set it.
 - Extra model tools come from hortus plugins: directories the owner lists (absolute paths) in `worker.plugins`, copied
   into each session. You cannot install one yourself: build and test it in `work` (with a fake `HOME`), then follow
   "Register this as a project" above.

@@ -312,6 +312,22 @@ test("scope: a chat parent's run on a project is an unattended host task (never 
   assert.equal(runs.start(row(s2.id) as runs.ScheduleRow, new Date(T)).runtime, "vm");
 });
 
+test("project: a chat names one for its runs; an unknown name, a one-shot wake or a non-chat is refused", async () => {
+  const plain = parent(undefined, "chat");
+  const { id } = await set(plain.id, { cron: "0 9 * * *", project: "foo" });
+  const r = runs.start(row(id) as runs.ScheduleRow, new Date(T));
+  assert.equal(r.project, "foo");
+  assert.equal(r.runtime, "host");
+  assert.ok(tasks.taskJson(ctx.config, r).paths.clone);
+  await assert.rejects(set(plain.id, { every: 600, project: "nope" }), /no project nope \(foo\)/);
+  await assert.rejects(set(plain.id, { at: new Date(T + DAY).toISOString(), project: "foo" }), /wakes this chat/);
+  const u = parent(undefined, "unattended");
+  await assert.rejects(set(u.id, { every: 600, project: "foo" }), /only a chat names a project/);
+  // its own project, named again, is no change
+  const own = parent(undefined, "unattended", "foo");
+  assert.equal(row((await set(own.id, { every: 600, project: "foo" })).id)?.project, null);
+});
+
 test("run exit: usage charged to the parent, summary kept as last-summary.md; over budget → no more firings", async () => {
   const told: string[] = [];
   tasks.hooks.failed = (t) => void told.push(t);

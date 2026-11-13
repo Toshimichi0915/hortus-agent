@@ -80,6 +80,7 @@ const SetInput = z.object({
   cron: z.string().optional(),
   tz: z.string().optional(),
   script: z.string().optional(),
+  project: z.string().optional(),
 });
 
 export function set(
@@ -90,6 +91,20 @@ export function set(
   // a run outlives its parent's close, which deleted the rows: one set now would fire under a closed task for good
   if (tasks.isClosed(tasks.get(taskId).status)) throw new RpcError("invalid", `task ${taskId} is closed`);
   const { text, at, every, cron, script } = input;
+  const owner = tasks.get(taskId);
+  // a chat edits every project in place, so naming one for its runs widens nothing; any other task has its own or none
+  const project = input.project === owner.project ? undefined : input.project;
+  if (project !== undefined) {
+    if (owner.kind !== "chat")
+      throw new RpcError("invalid", `only a chat names a project; this task's runs have ${owner.project ?? "none"}`);
+    if (!ctx?.config.projects[project])
+      throw new RpcError(
+        "invalid",
+        `no project ${project} (${Object.keys(ctx?.config.projects ?? {}).join(", ") || "none registered"})`,
+      );
+    if (at !== undefined && script === undefined)
+      throw new RpcError("invalid", "a one-shot `at` without a script wakes this chat, not a run: drop `project`");
+  }
   if ([at, every, cron].filter((v) => v !== undefined).length !== 1)
     throw new RpcError("invalid", "give exactly one of at, every, cron");
   const tz = input.tz ?? ctx?.config.owner.tz ?? "UTC";
@@ -132,8 +147,8 @@ export function set(
   }
   const r = db()
     .prepare(
-      `INSERT INTO schedules(task_id, fire_at, every_sec, cron, tz, text, script, expires_at, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO schedules(task_id, fire_at, every_sec, cron, tz, text, script, expires_at, created, project)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       taskId,
@@ -145,6 +160,7 @@ export function set(
       script ?? null,
       expires === undefined ? null : iso(expires),
       iso(now),
+      project ?? null,
     ) as { id: number };
   log().info("scheduled", { id: r.id, task: taskId, fire_at: iso(fire) });
   bus.emit("tasks", { id: taskId });

@@ -16,6 +16,16 @@ export function scheduleTools(task: TaskJson): Tool[] {
         cron: z.string().optional(),
         tz: z.string().optional(),
         script: z.string().optional(),
+        ...(task.kind === "chat"
+          ? {
+              project: z
+                .string()
+                .optional()
+                .describe(
+                  `the project its runs work on (a name from your prompt's projects; default ${task.scope.project ?? "none"})`,
+                ),
+            }
+          : {}),
       }),
       execute: async (input) => {
         const r = await taskRpc<{ id: number; fire_at: string; expires_at: string | null }>(

@@ -26,6 +26,8 @@ export interface ScheduleRow {
   expires_at: string | null;
   last_run: string | null;
   created: string;
+  /** a chat's pick for its runs; null: the task's own project */
+  project: string | null;
 }
 
 let ctx: Ctx | undefined;
@@ -74,6 +76,7 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
   const p = tasks.get(row.task_id);
   const b = parse(p.budget, ctx?.config.worker.budget ?? { usd: 0, hours: 0 });
   if (row.every_sec || row.cron) mkdirSync(paths.schedule(row.id), { recursive: true });
+  const project = row.project ?? p.project;
   const run = tasks.create({
     kind: "run",
     parent: p.id,
@@ -84,7 +87,7 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
     }`,
     event_keys: [`schedule:${row.id}`],
     scope: parse(p.scope, {}),
-    ...(p.project ? { project: p.project } : {}),
+    ...(project ? { project } : {}),
     ...(p.provider && p.model ? { provider: p.provider, model: p.model } : {}),
     // a run is unattended, so a chat's (which has no budget) is held to the chat's whole budget on its own
     budget:

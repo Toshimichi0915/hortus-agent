@@ -12,9 +12,11 @@ export interface ScriptResult {
   stderr: string;
 }
 
-export function runScript(script: string, cwd: string, timeoutMs = 3600_000): Promise<ScriptResult> {
+/** `clone`: the run's project clone, as `$HORTUS_CLONE` (the script's cwd is the schedule dir, not the clone). */
+export function runScript(script: string, cwd: string, timeoutMs = 3600_000, clone?: string): Promise<ScriptResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-c", script], { cwd, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const env = clone ? { ...process.env, HORTUS_CLONE: clone } : process.env;
+    const child = spawn("bash", ["-c", script], { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     child.stdout.on("data", (d: Buffer) => {

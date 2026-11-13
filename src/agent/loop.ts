@@ -200,7 +200,8 @@ export async function runTask(dir: string, task: TaskJson, kindPlugin: KindPlugi
       const last = task.kind === "run" && task.paths.schedule && readSummary(task.paths.schedule);
       if (last) first.push(`[previous run's summary]\n${quote(last)}`);
       if (task.kind === "run" && task.script) {
-        const r = await runScript(task.script, task.paths.schedule ?? task.paths.work);
+        const clone = task.paths.clone && existsSync(task.paths.clone) ? task.paths.clone : undefined;
+        const r = await runScript(task.script, task.paths.schedule ?? task.paths.work, undefined, clone);
         if (r.code === 0 && !r.killed && !r.stdout.trim()) {
           writeOutbox(dir, "result", ""); // a quiet watch: no model call, hortusd deletes the run
           out({ type: "status", text: "script: nothing to do" });

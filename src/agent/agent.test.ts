@@ -454,6 +454,11 @@ test("run kind: a script past its time limit is killed and reported", async () =
   assert.match(formatScript(r, 300), /^\[script\] killed after 0.3 s/);
 });
 
+test("run kind: the script gets the project clone as $HORTUS_CLONE, unset without one", async () => {
+  assert.equal((await runScript('echo "$HORTUS_CLONE"', "/tmp", 5000, "/x/clone")).stdout, "/x/clone\n");
+  assert.equal((await runScript("printenv HORTUS_CLONE || echo unset", "/tmp")).stdout, "unset\n");
+});
+
 test("scan: the cursor ignores a brief that starts like an inbox marker", () => {
   const dir = join(setup(), "out", "sessions");
   const user = (content: string) => JSON.stringify({ type: "message", message: { role: "user", content } });
