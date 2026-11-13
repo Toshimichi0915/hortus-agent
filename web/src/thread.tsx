@@ -107,7 +107,7 @@ export function Thread({ id, rows, live, earlier }: { id: string; rows: Row[]; l
         t.role === "user" ? (
           <UserTurn key={t.key} turn={t} />
         ) : (
-          <AssistantTurn key={t.key} turn={t} live={live && i === turns.length - 1} cut={i === 0 && cut > 0} />
+          <AssistantTurn key={t.key} turn={t} live={live && i === turns.length - 1} />
         ),
       )}
     </>
@@ -135,7 +135,7 @@ const UserTurn = memo(function UserTurn({ turn }: { turn: Turn }) {
   );
 });
 
-const AssistantTurn = memo(function AssistantTurn({ turn, live, cut }: { turn: Turn; live: boolean; cut: boolean }) {
+const AssistantTurn = memo(function AssistantTurn({ turn, live }: { turn: Turn; live: boolean }) {
   const segs: (Part | Part[])[] = [];
   for (const p of turn.parts) {
     if (p.kind === "text" || p.kind === "error") segs.push(p);
@@ -158,7 +158,7 @@ const AssistantTurn = memo(function AssistantTurn({ turn, live, cut }: { turn: T
         {segs.map((s, i) => {
           const end = i === segs.length - 1;
           const key = `${turn.key}.${i}`;
-          if (Array.isArray(s)) return <Activity key={key} steps={s} turn={turn} cut={cut} live={live && end} />;
+          if (Array.isArray(s)) return <Activity key={key} steps={s} turn={turn} live={live && end} />;
           if (s.kind === "text")
             return (
               <Markdown
@@ -321,7 +321,7 @@ function liveText(steps: Part[]): ReactNode {
   return "Working";
 }
 
-function Activity({ steps, turn, cut, live }: { steps: Part[]; turn: Turn; cut: boolean; live: boolean }) {
+function Activity({ steps, turn, live }: { steps: Part[]; turn: Turn; live: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   // the elapsed time counts seconds, faster than the shared useNow tick
@@ -371,7 +371,7 @@ function Activity({ steps, turn, cut, live }: { steps: Part[]; turn: Turn; cut: 
             >
               {live ? liveText(steps) : summarize(steps)}
             </span>
-            {live && <span className="font-mono text-xs whitespace-nowrap">{progress(turn, Date.now(), cut)}</span>}
+            {live && <span className="font-mono text-xs whitespace-nowrap">{progress(turn, steps, Date.now())}</span>}
             {!live && failed > 0 && (
               <span className="text-xs whitespace-nowrap text-destructive">
                 {plural(failed, "1 step failed", "# steps failed")}

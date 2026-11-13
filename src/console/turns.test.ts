@@ -90,22 +90,27 @@ test("done's summary is the turn's text", () => {
   );
 });
 
-test("a live turn's progress: its time from the first row, and the commands of the whole turn", () => {
+test("a live turn's progress: its time and commands since its last output", () => {
   const at = (created: string, body: unknown): TurnRow => ({ seq: 1, body, created });
   const bash = { type: "tool_call", id: "c", name: "bash", input: { command: "ls" } };
   const [t] = toTurns([
     at("2026-01-01T00:00:00.000Z", bash),
     at("2026-01-01T00:00:01.000Z", { type: "text", text: "a reply between runs" }),
-    at("2026-01-01T00:00:02.000Z", bash),
-    at("2026-01-01T00:00:03.000Z", { type: "tool_call", id: "r", name: "read", input: {} }),
+    at("2026-01-01T00:00:02.000Z", { type: "thinking", text: "hm" }),
+    at("2026-01-01T00:00:03.000Z", bash),
+    at("2026-01-01T00:00:04.000Z", bash),
+    at("2026-01-01T00:00:05.000Z", { type: "tool_call", id: "r", name: "read", input: {} }),
   ]);
   assert.ok(t);
-  const after = (ms: number) => Date.parse("2026-01-01T00:00:00.000Z") + ms;
-  assert.equal(progress(t, after(59_000)), "59s · 2 commands");
-  assert.equal(progress(t, after(12 * 60_000 + 30_000)), "12m 30s · 2 commands");
-  assert.equal(progress(t, after(72 * 60_000 + 30_000)), "1h 12m 30s · 2 commands");
-  assert.equal(progress(t, after(60 * 60_000)), "1h 0m 0s · 2 commands");
-  assert.equal(progress(t, after(72 * 60_000), true), "1h 12m 0s+ · 2+ commands");
-  assert.equal(progress(t, after(-5000)), "0s · 2 commands", "a client clock behind the daemon's");
-  assert.equal(progress({ ...t, started: null, parts: [] }, after(0)), "");
+  const steps = t.parts.slice(t.parts.findIndex((p) => p.kind === "text") + 1);
+  const after = (ms: number) => Date.parse("2026-01-01T00:00:01.000Z") + ms;
+  assert.equal(progress(t, steps, after(59_000)), "59s · 2 commands");
+  assert.equal(progress(t, steps, after(12 * 60_000 + 30_000)), "12m 30s · 2 commands");
+  assert.equal(progress(t, steps, after(72 * 60_000 + 30_000)), "1h 12m 30s · 2 commands");
+  assert.equal(progress(t, steps, after(60 * 60_000)), "1h 0m 0s · 2 commands");
+  assert.equal(progress(t, steps, after(-5000)), "0s · 2 commands", "a client clock behind the daemon's");
+  const [first] = toTurns([at("2026-01-01T00:00:00.000Z", bash)]);
+  assert.ok(first);
+  assert.equal(progress(first, first.parts, after(-1000)), "0s · 1 command", "no output yet: from the turn's start");
+  assert.equal(progress({ ...t, since: null }, [], after(0)), "");
 });

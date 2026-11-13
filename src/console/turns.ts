@@ -28,9 +28,10 @@ export type Part =
 export interface Turn {
   role: "user" | "assistant";
   key: number;
-  /** the turn's first row and its latest */
-  started: string | null;
+  /** the turn's latest row */
   at: string | null;
+  /** the row of the turn's last output (text, an error), or its first row: what a live turn's time counts from */
+  since: string | null;
   parts: Part[];
 }
 
@@ -78,15 +79,15 @@ export function toTurns(rows: TurnRow[]): Turn[] {
       turns.push({
         role: "user",
         key: r.seq,
-        started: r.created,
         at: r.created,
+        since: r.created,
         parts: [{ kind: "text", text: str(b.text) }],
       });
       continue;
     }
     let t = turns.at(-1);
     if (!t || t.role === "user") {
-      t = { role: "assistant", key: r.seq, started: r.created, at: r.created, parts: [] };
+      t = { role: "assistant", key: r.seq, at: r.created, since: r.created, parts: [] };
       turns.push(t);
     }
     t.at = r.created;
@@ -94,6 +95,7 @@ export function toTurns(rows: TurnRow[]): Turn[] {
     switch (b.type) {
       case "message":
         if (last?.kind === "text") last.closed = true;
+        t.since = r.created;
         break;
       case "thinking":
         if (last?.kind === "thinking") last.text += str(b.text);
@@ -103,7 +105,10 @@ export function toTurns(rows: TurnRow[]): Turn[] {
         t.parts.push({ kind: "tool", id: str(b.id), name: str(b.name), input: b.input });
         // `done`'s summary is the answer (a chat's reply, a task's result): it shows as text, not only as a step
         const summary = b.name === "done" ? (b.input as { summary?: unknown } | null)?.summary : undefined;
-        if (summary) t.parts.push({ kind: "text", text: str(summary), closed: true });
+        if (summary) {
+          t.parts.push({ kind: "text", text: str(summary), closed: true });
+          t.since = r.created;
+        }
         break;
       }
       case "tool_result": {
@@ -119,11 +124,13 @@ export function toTurns(rows: TurnRow[]): Turn[] {
         break;
       case "error":
         t.parts.push({ kind: "error", text: str(b.message) });
+        t.since = r.created;
         break;
       default: {
         const text = str(b.text ?? b);
         if (last?.kind === "text" && !last.closed) last.text += text;
         else t.parts.push({ kind: "text", text });
+        t.since = r.created;
       }
     }
   }
@@ -131,20 +138,19 @@ export function toTurns(rows: TurnRow[]): Turn[] {
 }
 
 /**
- * How long a live turn has run and the commands it ran: "1h 12m 30s · 13 commands". `cut`: the stream's last 1000 rows start
- * inside this turn, so its first rows are missing and both numbers are floors ("+").
+ * How long a live turn has worked since its last output and the commands it ran since (`steps`, the parts after that
+ * output): "1h 12m 30s · 13 commands".
  */
-export function progress(t: Turn, now: number, cut = false): string {
-  const plus = cut ? "+" : "";
+export function progress(t: Turn, steps: Part[], now: number): string {
   const bits: string[] = [];
-  if (t.started) {
-    const s = Math.floor(Math.max(0, now - Date.parse(t.started)) / 1000);
+  if (t.since) {
+    const s = Math.floor(Math.max(0, now - Date.parse(t.since)) / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor(s / 60) % 60;
-    bits.push(`${h ? `${h}h ` : ""}${h || m ? `${m}m ` : ""}${s % 60}s${plus}`);
+    bits.push(`${h ? `${h}h ` : ""}${h || m ? `${m}m ` : ""}${s % 60}s`);
   }
-  const n = t.parts.filter((p) => p.kind === "tool" && p.name === "bash").length;
-  if (n) bits.push(`${n}${plus} ${n === 1 ? "command" : "commands"}`);
+  const n = steps.filter((p) => p.kind === "tool" && p.name === "bash").length;
+  if (n) bits.push(`${n} ${n === 1 ? "command" : "commands"}`);
   return bits.join(" · ");
 }
 
