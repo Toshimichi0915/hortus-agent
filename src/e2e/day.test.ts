@@ -170,10 +170,13 @@ before(async () => {
   gh.associations.set("toshi", "OWNER");
   await gh.repo("o/r", "the repo");
   judge = createServer((req, res) => {
-    req.resume();
+    let body = "";
+    req.on("data", (c) => (body += c));
     req.on("end", () => {
-      judged++;
-      const content = JSON.stringify({ verdict: "allow", reason: "routine" });
+      // a chat's naming call (task.chat › retitle) asks for no JSON; only the judge's count
+      const json = body.includes("json_object");
+      if (json) judged++;
+      const content = json ? JSON.stringify({ verdict: "allow", reason: "routine" }) : "「a chat」";
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ choices: [{ message: { content } }], usage: { total_tokens: 10 } }));
     });
@@ -328,6 +331,16 @@ test("a day: 40 Planner-routed tasks and 10 chats; scope.dofs [] keeps 5 auto-ju
   const chats: string[] = [];
   for (let i = 0; i < 10; i++)
     chats.push((await api<{ id: string }>("task.open", { text: `!bash sh ${join(fake, "worker.sh")}` })).id);
+  // a first message longer than the sidebar's row is named by the Planner's model, its quotes stripped
+  await until(
+    () =>
+      db(
+        (d) =>
+          d.prepare("SELECT COUNT(*) n FROM tasks WHERE kind = 'chat' AND title = 'a chat'").get() as { n: number },
+      ).n === 10,
+    20_000,
+    "the chats' names",
+  );
 
   const rows = () =>
     db((d) =>

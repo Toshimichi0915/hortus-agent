@@ -28,6 +28,8 @@ export interface ScheduleRow {
   created: string;
   /** a chat's pick for its runs; null: the task's own project */
   project: string | null;
+  /** the Worker's short name for it; null: from before labels */
+  label: string | null;
 }
 
 let ctx: Ctx | undefined;
@@ -80,7 +82,7 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
   const run = tasks.create({
     kind: "run",
     parent: p.id,
-    title: `${p.title} @ ${local(fired, row.tz ?? ctx?.config.owner.tz ?? "UTC")}`,
+    title: `${row.label ?? p.title} @ ${local(fired, row.tz ?? ctx?.config.owner.tz ?? "UTC")}`,
     // wrapped like any non-owner text: a Worker that read a stranger may have written it
     brief: `A timer of this task fired. What it was set to do, as the task wrote it then:\n${quote(row.text)}${
       row.expires_at ? `\n\n${expiry(row.expires_at)}` : ""

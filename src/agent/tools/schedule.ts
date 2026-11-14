@@ -11,6 +11,13 @@ export function scheduleTools(task: TaskJson): Tool[] {
       description: `Set a timer for this task. Exactly one of \`at\` (ISO 8601 time, one-shot), \`every\` (seconds, ≥ 300) or \`cron\` (5 fields, evaluated in \`tz\`, IANA, default ${task.tz}). \`script\`: bash (≤ 16 KB) run before the model at each firing. Returns the id.`,
       inputSchema: z.object({
         text: z.string().min(1).describe("what to do when it fires"),
+        label: z
+          .string()
+          .min(1)
+          .max(28)
+          .describe(
+            "a short name for the owner's Schedules list, in the owner's language: ≤ 28 Latin letters or 14 Japanese characters",
+          ),
         at: z.string().optional(),
         every: z.number().int().optional(),
         cron: z.string().optional(),

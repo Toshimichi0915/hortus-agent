@@ -201,6 +201,10 @@ test("a run: title, brief, budget = what the parent has left, its script and /sc
   const [r] = runsOf(p.id);
   assert.ok(r);
   assert.equal(r.title, "watch @ 2026-06-01 19:00");
+  // a labelled row names its runs, its label's whitespace collapsed
+  const labelled = await set(p.id, { every: 3600, text: "is it there?", label: " the\nprobe ", tz: "Asia/Tokyo" });
+  assert.equal(row(labelled.id)?.label, "the probe");
+  assert.equal(runs.start(row(labelled.id) as runs.ScheduleRow, new Date(T)).title, "the probe @ 2026-06-01 19:00");
   // non-owner text, and it says when the timer ends
   assert.match(r.brief, /<<<quoted\nis it there\?\n>>>/);
   assert.match(r.brief, /timers expire at \d{4}-/);

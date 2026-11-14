@@ -358,6 +358,8 @@ export interface Schedule {
   cron: string | null;
   tz: string | null;
   text: string;
+  /** the Worker's short name; null: from before labels */
+  label: string | null;
   last_run: string | null;
   expires_at: string | null;
   summary: string | null;

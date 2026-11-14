@@ -107,6 +107,7 @@ export interface ScheduleListRow {
   cron: string | null;
   tz: string | null;
   text: string | null;
+  label: string | null;
   last_run: string | null;
   expires_at: string | null;
   /** the latest run's summary (`withSummaries`) */

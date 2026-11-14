@@ -76,6 +76,7 @@ function removeRow(id: number): void {
 
 const SetInput = z.object({
   text: z.string().min(1),
+  label: z.string().optional(),
   at: z.string().optional(),
   every: z.number().int().optional(),
   cron: z.string().optional(),
@@ -148,8 +149,8 @@ export function set(
   }
   const r = db()
     .prepare(
-      `INSERT INTO schedules(task_id, fire_at, every_sec, cron, tz, text, script, expires_at, created, project)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO schedules(task_id, fire_at, every_sec, cron, tz, text, script, expires_at, created, project, label)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .get(
       taskId,
@@ -162,6 +163,7 @@ export function set(
       expires === undefined ? null : iso(expires),
       iso(now),
       project ?? null,
+      input.label?.replace(/\s+/g, " ").trim().slice(0, 80) || null,
     ) as { id: number };
   log().info("scheduled", { id: r.id, task: taskId, fire_at: iso(fire) });
   bus.emit("tasks", { id: taskId });

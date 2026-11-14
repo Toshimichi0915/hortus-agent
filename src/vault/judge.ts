@@ -57,31 +57,33 @@ function addUsage(u: { input: number; output: number; cacheRead: number }): void
     .run(day(), budgetTokens(u), price ? usageCost(u, price) : 0);
 }
 
-export async function judge(category: string, summary: unknown, taskId: string | null): Promise<Verdict> {
-  const c = ctx();
-  const task = taskId
-    ? (c.db.prepare("SELECT title, brief FROM tasks WHERE id = ?").get(taskId) as
-        | { title: string | null; brief: string | null }
-        | undefined)
-    : undefined;
-  const p = prompt(category, summary, task ?? {});
-  const esc = (reason: string): Verdict => {
-    log.info("escalate", { category, task: taskId, reason });
-    return { verdict: "escalate", reason, prompt_hash: p.hash };
-  };
+/** Why `complete` made no call: the Planner's model is not set up, or its day is spent. */
+export class Unavailable extends Error {}
+
+/**
+ * One chat-completions call to the Planner's provider and model, counted in its day (`addUsage`); the answer's text.
+ * Throws `Unavailable` before any call, anything else for a failed one.
+ */
+export async function complete(system: string, user: string, json = false): Promise<string> {
+  let c: ReturnType<typeof ctx>;
+  try {
+    c = ctx();
+  } catch (e) {
+    throw new Unavailable((e as Error).message);
+  }
   const { provider, model, daily_usd } = c.config.planner;
-  if (!provider || !model) return esc("judge: planner.provider and planner.model are not set");
+  if (!provider || !model) throw new Unavailable("planner.provider and planner.model are not set");
   const used = c.db.prepare("SELECT usd FROM planner_usage WHERE day = ?").get(day()) as { usd: number } | undefined;
   // a model with no price has no limit
   if (priceOf(c.config.prices, provider, model) && (used?.usd ?? 0) >= daily_usd)
-    return esc("judge: the Planner's daily spending limit is reached today");
+    throw new Unavailable("the Planner's daily spending limit is reached today");
   let p0: ReturnType<typeof providerSecret>;
   try {
     p0 = providerSecret(provider);
   } catch (e) {
-    return esc(`judge: ${(e as Error).message}`);
+    throw new Unavailable((e as Error).message);
   }
-  if (!p0.endpoint) return esc(`judge: no endpoint for provider ${provider}`);
+  if (!p0.endpoint) throw new Unavailable(`no endpoint for provider ${provider}`);
   // ponytail: anthropic via its OpenAI-compatible endpoint; a native Messages call if that layer drifts
   const url = `${p0.endpoint}${p0.type === "anthropic" ? "/v1" : ""}/chat/completions`;
   const auth: Record<string, string> =
@@ -95,10 +97,10 @@ export async function judge(category: string, summary: unknown, taskId: string |
         body: JSON.stringify({
           model,
           temperature: 0,
-          response_format: { type: "json_object" },
+          ...(json ? { response_format: { type: "json_object" } } : {}),
           messages: [
-            { role: "system", content: p.system },
-            { role: "user", content: p.user },
+            { role: "system", content: system },
+            { role: "user", content: user },
           ],
         }),
       });
@@ -122,11 +124,30 @@ export async function judge(category: string, summary: unknown, taskId: string |
     const n = (x: unknown) => (typeof x === "number" && x > 0 && x < 1e12 ? x : 0);
     const u = body.usage;
     addUsage({
-      input: n(u?.prompt_tokens) || n(u?.total_tokens) || Math.ceil((p.system.length + p.user.length) / 4),
+      input: n(u?.prompt_tokens) || n(u?.total_tokens) || Math.ceil((system.length + user.length) / 4),
       output: n(u?.completion_tokens),
       cacheRead: n(u?.prompt_tokens_details?.cached_tokens),
     });
-    const content = body.choices?.[0]?.message?.content ?? "";
+    return body.choices?.[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function judge(category: string, summary: unknown, taskId: string | null): Promise<Verdict> {
+  const c = ctx();
+  const task = taskId
+    ? (c.db.prepare("SELECT title, brief FROM tasks WHERE id = ?").get(taskId) as
+        | { title: string | null; brief: string | null }
+        | undefined)
+    : undefined;
+  const p = prompt(category, summary, task ?? {});
+  const esc = (reason: string): Verdict => {
+    log.info("escalate", { category, task: taskId, reason });
+    return { verdict: "escalate", reason, prompt_hash: p.hash };
+  };
+  try {
+    const content = await complete(p.system, p.user, true);
     // json_object is not honoured by every provider: take the outermost {...} of the answer
     const json = content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1);
     const v = JSON.parse(json) as { verdict?: unknown; reason?: unknown };
@@ -136,9 +157,8 @@ export async function judge(category: string, summary: unknown, taskId: string |
     log.info("verdict", { category, task: taskId, verdict: v.verdict, reason });
     return { verdict: v.verdict, reason, prompt_hash: p.hash };
   } catch (e) {
+    if (e instanceof Unavailable) return esc(`judge: ${e.message}`);
     log.error("judge failed", e, { category, task: taskId });
     return esc(`judge failed: ${(e as Error).message}`.slice(0, 300));
-  } finally {
-    clearTimeout(timer);
   }
 }

@@ -177,8 +177,8 @@ test("schedule(at = now + 2 min), done → waiting; at the tick the task resumes
 }, async () => {
   const at = new Date(Date.now() + 2 * 60_000).toISOString();
   const text = [
-    `!call schedule {"text":"too often","every":60}`,
-    `!call schedule {"text":"check the build again","at":"${at}"}`,
+    `!call schedule {"text":"too often","label":"x","every":60}`,
+    `!call schedule {"text":"check the build again","label":"build","at":"${at}"}`,
     "!done",
   ].join("\n");
   const { id } = await api<{ id: string }>("task.open", { text });
@@ -215,7 +215,7 @@ test("an hourly script row: quiet → the run is deleted without logs; output �
   skip,
 }, async () => {
   const script = "n=$(cat count 2>/dev/null || echo 0); echo $((n+1)) > count; cat flag 2>/dev/null || true";
-  const input = JSON.stringify({ text: "report what the script found", every: 3600, script });
+  const input = JSON.stringify({ text: "report what the script found", label: "report", every: 3600, script });
   const { id } = await api<{ id: string }>("task.open", { text: `!call schedule ${input}\n!done` });
   await waitStatus(id, "waiting");
   const [row] = schedules(id);

@@ -116,8 +116,9 @@ function Item({ s }: { s: Schedule }) {
   const [fire, firing] = useAction(() => call("schedule.fire", { id: s.id }), "Run started");
   const [open, setOpen] = useState(false);
   const recurring = Boolean(s.cron || s.every_sec);
-  // text is the run's whole brief (it can be pages): its first line is the title, the whole of it folds away
-  const head = s.text.trim().split("\n")[0] ?? "";
+  // text is the run's whole brief (it can be pages): the Worker's label is the title (a row from before labels: the
+  // text's first line), the whole of it folds away
+  const head = s.label ?? s.text.trim().split("\n")[0] ?? "";
   const panel = `schedule-${s.id}`;
   return (
     <li className="group/item">

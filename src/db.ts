@@ -101,6 +101,8 @@ const migrations: string[] = [
   CREATE INDEX schedule_runs_row ON schedule_runs(schedule_id, fired);
   INSERT INTO schedule_runs SELECT CAST(substr(k.value, 10) AS INTEGER), t.id, t.created
     FROM tasks t, json_each(t.event_keys) k WHERE t.kind = 'run' AND json_valid(t.event_keys) AND k.value LIKE 'schedule:%';`,
+  // a row's short name for the Schedules list and its runs' titles (null: from before this; the text's first line)
+  "ALTER TABLE schedules ADD COLUMN label TEXT;",
 ];
 
 const TAINT_MAX = 5;
