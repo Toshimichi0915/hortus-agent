@@ -363,6 +363,14 @@ export interface Schedule {
   summary: string | null;
 }
 
+/** One firing of a schedule (schedule.runs); `status` null: the run was deleted, as it never reached the model. */
+export interface ScheduleRun {
+  task_id: string;
+  fired: string;
+  status: "queued" | "running" | "waiting" | "done" | "failed" | null;
+  tokens: number;
+}
+
 export interface Snapshot {
   sha: string;
   ts: string;

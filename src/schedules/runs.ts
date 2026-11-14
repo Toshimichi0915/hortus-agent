@@ -95,6 +95,18 @@ export function start(row: ScheduleRow, fired: Date): tasks.TaskRow {
         ? { usd: b.usd, hours: b.hours }
         : { usd: Math.max(0, b.usd - usdOf(p)), hours: Math.max(0, b.hours - (p.hours ?? 0)) },
   });
+  const d = ctx?.db;
+  if (d) {
+    d.prepare("INSERT INTO schedule_runs(schedule_id, task_id, fired) VALUES (?, ?, ?)").run(
+      row.id,
+      run.id,
+      fired.toISOString(),
+    );
+    // ponytail: the newest 200 firings a row; a page of older ones if the owner ever wants them
+    d.prepare(
+      "DELETE FROM schedule_runs WHERE schedule_id = ? AND rowid NOT IN (SELECT rowid FROM schedule_runs WHERE schedule_id = ? ORDER BY fired DESC LIMIT 200)",
+    ).run(row.id, row.id);
+  }
   // read by taskJson at the run's start (the dispatcher starts it on a later tick, never synchronously)
   if (row.script) writeFileSync(join(paths.ctl(run.id), "script.sh"), row.script);
   return run;

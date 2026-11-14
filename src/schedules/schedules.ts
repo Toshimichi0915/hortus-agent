@@ -70,6 +70,7 @@ function ownerOf(caller: Caller): string {
 
 function removeRow(id: number): void {
   db().prepare("DELETE FROM schedules WHERE id = ?").run(id);
+  db().prepare("DELETE FROM schedule_runs WHERE schedule_id = ?").run(id);
   rmSync(paths.schedule(id), { recursive: true, force: true });
 }
 
@@ -185,6 +186,14 @@ function advance(row: ScheduleRow, now: number): boolean {
   return true;
 }
 
+/** The row's run that is still queued or running, if any: a row never has two at once. */
+const activeRun = (id: number) =>
+  db()
+    .prepare(
+      "SELECT t.id FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ? AND t.status IN ('queued', 'running')",
+    )
+    .get(`schedule:${id}`) as { id: string } | undefined;
+
 /** One pass: expired rows deleted, due rows advanced and fired. Skipped while PAUSED. */
 export function tick(): void {
   if (!ctx || existsSync(paths.paused())) return;
@@ -218,11 +227,7 @@ export function tick(): void {
         });
         continue;
       }
-      const busy = d
-        .prepare(
-          "SELECT t.id FROM task_refs r JOIN tasks t ON t.id = r.task_id WHERE r.ref = ? AND t.status IN ('queued', 'running')",
-        )
-        .get(`schedule:${row.id}`) as { id: string } | undefined;
+      const busy = activeRun(row.id);
       if (busy) {
         log().info("skipped: a run of this schedule is still active", { id: row.id, run: busy.id });
         continue;
@@ -272,6 +277,40 @@ define("schedule.list", {
         )
         .all() as unknown as ScheduleListRow[],
     ),
+});
+
+/** The owner fires a recurring row now: a run like the tick's, and the row's next firing stays where it was. */
+define("schedule.fire", {
+  roles: ["owner"],
+  input: z.object({ id: z.number().int() }),
+  run({ id }) {
+    const row = db().prepare("SELECT * FROM schedules WHERE id = ?").get(id) as unknown as ScheduleRow | undefined;
+    if (!row) throw new RpcError("not_found", `no schedule ${id}`);
+    if (!row.every_sec && !row.cron)
+      throw new RpcError("invalid", `schedule ${id} is a one-shot; it fires once, on time`);
+    if (runs.overBudget(tasks.get(row.task_id)))
+      throw new RpcError("invalid", `task ${row.task_id} is over budget; raise it first`);
+    const busy = activeRun(id);
+    if (busy) throw new RpcError("invalid", `a run of this schedule is still active (${busy.id})`);
+    const now = clock.now();
+    db().prepare("UPDATE schedules SET last_run = ? WHERE id = ?").run(iso(now), id);
+    const run = runs.start(row, new Date(now));
+    bus.emit("tasks", { id: row.task_id });
+    return { id: run.id };
+  },
+});
+
+/** A row's firings, newest first: `status` null when the run was deleted (it never reached the model). */
+define("schedule.runs", {
+  roles: ["owner"],
+  input: z.object({ id: z.number().int() }),
+  run: ({ id }) =>
+    db()
+      .prepare(
+        `SELECT r.task_id, r.fired, t.status, COALESCE(json_extract(t.usage, '$.tokens'), 0) AS tokens
+         FROM schedule_runs r LEFT JOIN tasks t ON t.id = r.task_id WHERE r.schedule_id = ? ORDER BY r.fired DESC`,
+      )
+      .all(id),
 });
 
 const drop = <T>(list: T[], x: T) => {

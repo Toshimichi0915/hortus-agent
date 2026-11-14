@@ -95,6 +95,12 @@ const migrations: string[] = [
   "ALTER TABLE tasks DROP COLUMN origins;",
   // the project a chat's recurring row gives its runs (a chat names any of its projects; null: the task's own)
   "ALTER TABLE schedules ADD COLUMN project TEXT;",
+  // each firing of a row, outliving its run's task (a run that never reached the model is deleted); backfilled from the
+  // runs still there
+  `CREATE TABLE schedule_runs(schedule_id INTEGER, task_id TEXT, fired TEXT);
+  CREATE INDEX schedule_runs_row ON schedule_runs(schedule_id, fired);
+  INSERT INTO schedule_runs SELECT CAST(substr(k.value, 10) AS INTEGER), t.id, t.created
+    FROM tasks t, json_each(t.event_keys) k WHERE t.kind = 'run' AND json_valid(t.event_keys) AND k.value LIKE 'schedule:%';`,
 ];
 
 const TAINT_MAX = 5;

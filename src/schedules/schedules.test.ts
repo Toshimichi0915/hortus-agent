@@ -410,13 +410,34 @@ test("an empty result: the run is closed at once and leaves no logs entry; one t
   assert.equal(hits.n, 0);
   assert.ok(existsSync(paths.schedule(id)), "the row and its directory stay");
 
-  const spent = runs.start(row(id) as runs.ScheduleRow, new Date(T));
+  const spent = runs.start(row(id) as runs.ScheduleRow, new Date(T + MIN));
   ctx.db.prepare(`UPDATE tasks SET usage = '{"tokens":30}', status = 'waiting' WHERE id = ?`).run(spent.id);
   runs.onExit(tasks.get(spent.id), [{ seq: 1, type: "result", text: "", ts: "" }]);
   // the row closes first now, so `done` alone is the start of the close: wait for its end
   await until(() => tasks.get(spent.id).status === "done" && !existsSync(paths.task(spent.id)), 3000, "the run closed");
   assert.ok(!existsSync(join(paths.logs(), spent.id)));
   assert.equal(JSON.parse(tasks.get(p.id).usage ?? "").runs, 30);
+
+  // the history keeps both firings, newest first: the deleted one has no task left
+  const owner: Caller = { role: "owner" };
+  const history = (await call("schedule.runs", { id }, owner)) as object[];
+  assert.deepEqual(
+    history.map((r) => ({ ...r })),
+    [
+      { task_id: spent.id, fired: new Date(T + MIN).toISOString(), status: "done", tokens: 30 },
+      { task_id: quiet.id, fired: new Date(T).toISOString(), status: null, tokens: 0 },
+    ],
+  );
+
+  // the owner fires it now: a run, the next firing unmoved; a second while it is active is refused
+  const next = row(id)?.fire_at;
+  const { id: now } = (await call("schedule.fire", { id }, owner)) as { id: string };
+  assert.equal(tasks.get(now).kind, "run");
+  assert.equal(row(id)?.fire_at, next);
+  await assert.rejects(call("schedule.fire", { id }, owner), /still active/);
+  await assert.rejects(call("schedule.fire", { id }, worker(p.id)), /not allowed for worker/);
+  await call("schedule.unset", { id }, owner);
+  assert.deepEqual(await call("schedule.runs", { id }, owner), []);
 });
 
 test("unschedule: a run acts on its parent's rows; another task's row is forbidden; the owner may remove any", async () => {
