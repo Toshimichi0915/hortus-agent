@@ -4,7 +4,7 @@
     "anthropic": {
       "type": "token",
       "hosts": ["api.anthropic.com"],
-      "locations": ["header:x-api-key"]
+      "locations": ["header:x-api-key", "header:authorization"]
     }
   },
   "consequential": ["DELETE **", "POST **/files", "POST **/messages/batches", "POST **/organizations/**"]
