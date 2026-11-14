@@ -6,6 +6,7 @@ import { tokens as fmt } from "../../../src/console/text.ts";
 import { contextOf } from "../../../src/console/turns.ts";
 import {
   type Approval,
+  bus,
   type Config,
   type Credential,
   call,
@@ -59,6 +60,8 @@ export async function deleteChat(id: string): Promise<void> {
   });
   if (!ok) return;
   await call("task.delete", { id });
+  // the sidebar holds older chats as fetched (main.tsx › AppSidebar)
+  bus.dispatchEvent(new CustomEvent("chat-deleted", { detail: id }));
   remember(`draft.${id}`, "");
   if (location.pathname === `/chat/${id}`) navigate("/");
 }

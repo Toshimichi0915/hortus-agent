@@ -1,5 +1,5 @@
 /** The console's shell: the sidebar (new chat, pages, recent chats, settings, pause), the routes, toasts. */
-import { Component, type ReactNode, StrictMode, useEffect, useState } from "react";
+import { Component, type ReactNode, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { call, type Task, useCall } from "./api.ts";
+import { below, chatRows } from "../../src/console/forms.ts";
+import { bus, call, PAGE, type Task, useCall } from "./api.ts";
 import "./index.css";
 import { ApprovalPage, Approvals, LoginView } from "./pages/approvals.tsx";
 import { Conversation, deleteChat, Home } from "./pages/chat.tsx";
@@ -230,10 +231,57 @@ function AppSidebar() {
   const { setOpenMobile } = useSidebar();
   const tasks = useCall<Task[]>("task.list", {}, ["tasks", "approvals"]);
   const pending = useCall<number>("approval.count", {}, ["approvals"]);
-  const [all, setAll] = useState(false);
+  // infinite scroll: the newest page is live; older pages are fetched once, by cursor, as the list's end comes into view
+  // ponytail: an older chat deleted from the CLI stays until a reload; topic events with ids if that matters
+  const head = useCall<Task[]>("task.list", { kind: "chat", limit: PAGE }, ["tasks", "approvals"]);
+  const [kept, setKept] = useState<Task[]>([]);
+  const [done, setDone] = useState(false);
+  const chats = chatRows(head.data ?? [], kept, PAGE);
+  const more = !done && chats.length >= PAGE;
+  const end = useRef<HTMLLIElement>(null);
+  const loading = useRef(false);
+  // the head's rows are kept too: one a new chat pushes out of the head stays, below it
+  useEffect(() => setKept((k) => chatRows(head.data ?? [], k, PAGE)), [head.data]);
+  useEffect(() => {
+    const drop = (e: Event) => setKept((k) => k.filter((r) => r.id !== (e as CustomEvent<string>).detail));
+    bus.addEventListener("chat-deleted", drop);
+    return () => bus.removeEventListener("chat-deleted", drop);
+  }, []);
+  const last = chats.at(-1);
+  useEffect(() => {
+    const el = end.current;
+    if (!el || !more || !last) return;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const io = new IntersectionObserver(
+      async ([e]) => {
+        if (!e?.isIntersecting || loading.current) return;
+        loading.current = true;
+        try {
+          const page = await call<Task[]>("task.list", {
+            kind: "chat",
+            limit: PAGE,
+            before: { updated: last.updated, id: last.id },
+          });
+          if (page.length < PAGE) setDone(true);
+          setKept((k) => [...k.filter((r) => below(last, r) || r.id === last.id), ...page]);
+        } catch {
+          // a daemon restarting: again in a while, while in view
+          io.unobserve(el);
+          retry = setTimeout(() => io.observe(el), 5000);
+        } finally {
+          loading.current = false;
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => {
+      clearTimeout(retry);
+      io.disconnect();
+    };
+  }, [more, last]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a navigation closes the phone's drawer
   useEffect(() => setOpenMobile(false), [path, setOpenMobile]);
-  const chats = (tasks.data ?? []).filter((t) => t.kind === "chat").sort((a, b) => b.updated.localeCompare(a.updated));
   const working = (tasks.data ?? []).filter((t) => t.status === "running").length;
   return (
     <Sidebar>
@@ -262,7 +310,7 @@ function AppSidebar() {
           <SidebarGroupContent>
             {chats.length ? (
               <SidebarMenu>
-                {(all ? chats : chats.slice(0, 15)).map((c) => (
+                {chats.map((c) => (
                   <SidebarMenuItem key={c.id}>
                     <SidebarMenuButton asChild isActive={path === `/chat/${c.id}`}>
                       <Link
@@ -284,16 +332,14 @@ function AppSidebar() {
                     </SidebarMenuAction>
                   </SidebarMenuItem>
                 ))}
-                {chats.length > 15 && (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton className="text-muted-foreground" onClick={() => setAll(!all)}>
-                      {all ? "Show fewer" : `Show all ${chats.length}`}
-                    </SidebarMenuButton>
+                {more && (
+                  <SidebarMenuItem ref={end} className="px-2 py-1 text-[13px] text-muted-foreground">
+                    Loading…
                   </SidebarMenuItem>
                 )}
               </SidebarMenu>
             ) : (
-              <p className="px-2 text-[13px] text-muted-foreground">{tasks.data ? "Your chats show up here." : ""}</p>
+              <p className="px-2 text-[13px] text-muted-foreground">{head.data ? "Your chats show up here." : ""}</p>
             )}
           </SidebarGroupContent>
         </SidebarGroup>

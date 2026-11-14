@@ -20,6 +20,7 @@ import { remoteUrl, startRemote, stopRemote } from "./remote.ts";
 import {
   CLOSED_SQL,
   consoleLog,
+  KIND_SQL,
   lastReplies,
   line,
   OPEN_SQL,
@@ -70,16 +71,26 @@ define("task.list", {
     .object({
       limit: z.number().int().positive().max(500).default(50),
       skip: z.number().int().nonnegative().default(0),
+      // one kind (the sidebar's chats): one list, open or not, last touched first, paged by the row before
+      // (src/console/forms.ts › chatRows)
+      kind: z.enum(["chat", "unattended", "run", "planner"]).optional(),
+      before: z.object({ updated: z.string(), id: z.string() }).optional(),
     })
     .loose()
     .default({ limit: 50, skip: 0 }),
-  run({ limit, skip }) {
+  run({ limit, skip, kind, before }) {
     const db = ctx().db;
     const pending = db.prepare(COUNT_PENDING);
-    return [
-      ...(db.prepare(OPEN_SQL).all(limit, skip) as unknown as TaskRow[]),
-      ...(db.prepare(CLOSED_SQL).all(limit, skip) as unknown as TaskRow[]),
-    ].map((t) => ({ ...taskOut(t), pending: (pending.get(t.id) as { n: number }).n }));
+    return (
+      kind
+        ? (db
+            .prepare(KIND_SQL)
+            .all({ kind, limit, updated: before?.updated ?? null, id: before?.id ?? null }) as unknown as TaskRow[])
+        : [
+            ...(db.prepare(OPEN_SQL).all(limit, skip) as unknown as TaskRow[]),
+            ...(db.prepare(CLOSED_SQL).all(limit, skip) as unknown as TaskRow[]),
+          ]
+    ).map((t) => ({ ...taskOut(t), pending: (pending.get(t.id) as { n: number }).n }));
   },
 });
 

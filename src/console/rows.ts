@@ -43,6 +43,9 @@ export const OPEN_SQL =
   "SELECT * FROM tasks WHERE status NOT IN ('done', 'failed') ORDER BY updated DESC LIMIT ? OFFSET ?";
 export const CLOSED_SQL =
   "SELECT * FROM tasks WHERE status IN ('done', 'failed') ORDER BY closed DESC LIMIT ? OFFSET ?";
+export const KIND_SQL = `SELECT * FROM tasks WHERE kind = $kind
+  AND ($updated IS NULL OR updated < $updated OR (updated = $updated AND id < $id))
+  ORDER BY updated DESC, id DESC LIMIT $limit`;
 
 /** The last 64 KB of `out/console.log` (a VM's serial output, an unattended session's stdout and stderr). */
 export function consoleLog(ctx: Ctx, t: Pick<TaskRow, "id" | "kind">): string | null {

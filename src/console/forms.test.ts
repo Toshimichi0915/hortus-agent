@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
 import { Config } from "../config.ts";
-import { fieldErrors, pageAt, pageWindow, SLACK, sameJson } from "./forms.ts";
+import { chatRows, fieldErrors, pageAt, pageWindow, SLACK, sameJson } from "./forms.ts";
 
 test("sameJson: key order is no change, at any depth, and a real difference is", () => {
   // a draft's first model comes last, and hortusd answers in its schema's order: "unsaved changes" right after a save
@@ -89,4 +89,23 @@ test("pageAt: page 2 holds still when rows land or leave above it", () => {
   // a later page's window starts SLACK before it
   assert.deepEqual(pageWindow(50, 50), { skip: 40, limit: 70 });
   assert.deepEqual(pageAt(list(200).slice(40, 110), 50, 50, (x) => x).rows[0], 149);
+});
+
+test("chatRows: the live head over the rows seen before, no gap and no stale copy", () => {
+  const r = (id: string, updated: string) => ({ id, updated });
+  const ids = (rows: { id: string }[]) => rows.map((x) => x.id).join("");
+  // head of 2, then the page before "b": c, d
+  let kept = [...chatRows([r("a", "09"), r("b", "08")], [], 2), r("c", "07"), r("d", "06")];
+  assert.equal(ids(kept), "abcd");
+  // a new chat pushes b out of the head: b stays, below it
+  kept = chatRows([r("n", "10"), r("a", "09")], kept, 2);
+  assert.equal(ids(kept), "nabcd");
+  // d touched: back in the head, not twice
+  kept = chatRows([r("d", "11"), r("n", "10")], kept, 2);
+  assert.equal(ids(kept), "dnabc");
+  // n deleted: the head reaches down to a, and n, above a, is gone
+  kept = chatRows([r("d", "11"), r("a", "09")], kept, 2);
+  assert.equal(ids(kept), "dabc");
+  // a head short of the limit is the whole list
+  assert.equal(ids(chatRows([r("d", "11")], kept, 2)), "d");
 });

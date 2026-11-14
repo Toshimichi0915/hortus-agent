@@ -12,6 +12,7 @@ import { logger } from "../log.ts";
 import * as paths from "../paths.ts";
 import { call, define } from "../rpc.ts";
 import { tempDir } from "../test/until.ts";
+import { below } from "./forms.ts";
 import { bus, consoleModule } from "./index.ts";
 import { errorLine } from "./rows.ts";
 import { sse } from "./server.ts";
@@ -337,6 +338,19 @@ test("500 tasks: task.list under 200 ms, with what the budget line reads", async
   const page = JSON.parse((await list()).body).result as { id: string; usage: unknown; metered: number }[];
   assert.ok(performance.now() - t0 < 200, "task.list under 200 ms");
   assert.equal(page.length, 100);
+  // the sidebar's chats: one kind, open and closed in one list, last touched first, paged by the row before, to the end
+  type Row = { id: string; kind: string; status: string; updated: string };
+  const chats: Row[] = [];
+  for (;;) {
+    const last = chats.at(-1);
+    const input = { kind: "chat", limit: 120, ...(last && { before: { updated: last.updated, id: last.id } }) };
+    const page = JSON.parse((await post("task.list", input)).body).result as Row[];
+    chats.push(...page);
+    if (page.length < 120) break;
+  }
+  assert.equal(new Set(chats.map((t) => t.id)).size, 500, "all 500, none twice, though 60 share each minute");
+  assert.ok(chats.every((t, i) => t.kind === "chat" && (i === 0 || below(t, chats[i - 1] ?? t))));
+  assert.equal(JSON.parse((await post("task.list", { kind: "run" })).body).result.length, 0);
   // live: usage is written when a session ends, so a running one showed 0 while the proxy had counted 1.5M; the
   // card shows the larger (tasks.tsx › spent)
   ctx.db.prepare("UPDATE tasks SET metered = 1500000 WHERE id = 't1'").run();

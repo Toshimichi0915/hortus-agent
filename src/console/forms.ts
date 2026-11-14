@@ -62,3 +62,22 @@ export function pageAt<T>(
   const start = i >= 0 && (i + limit <= rows.length || rows.length < w.limit) ? i : skip - w.skip;
   return { rows: rows.slice(start, start + limit), more: rows.length > start + limit };
 }
+
+interface Ranked {
+  id: string;
+  updated: string;
+}
+/** `a` sorts after `b` in a list last touched first: task.list's `kind` order (src/console/rows.ts › KIND_SQL). */
+export const below = (a: Ranked, b: Ranked) => a.updated < b.updated || (a.updated === b.updated && a.id < b.id);
+
+/**
+ * The sidebar's chats: `head`, the newest `limit` and live, over `kept`, the rows seen before (older pages, fetched once
+ * by cursor, and rows the head held). A kept row below the head's last is as last seen; one above it the head has, or it
+ * is gone (deleted, or touched and back in the head). A head short of `limit` is the whole list.
+ */
+export function chatRows<T extends Ranked>(head: readonly T[], kept: readonly T[], limit: number): T[] {
+  const last = head.at(-1);
+  if (!last || head.length < limit) return [...head];
+  const ids = new Set(head.map((r) => r.id));
+  return [...head, ...kept.filter((r) => !ids.has(r.id) && below(r, last))];
+}
