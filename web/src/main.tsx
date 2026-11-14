@@ -1,7 +1,6 @@
 /** The console's shell: the sidebar (new chat, pages, recent chats, settings, pause), the routes, toasts. */
 import { Component, type ReactNode, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Label } from "@/components/ui/label";
 import {
   Sidebar,
   SidebarContent,
@@ -20,7 +19,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Switch } from "@/components/ui/switch";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { below, chatRows } from "../../src/console/forms.ts";
 import { bus, call, PAGE, type Task, useCall } from "./api.ts";
@@ -43,16 +41,13 @@ import {
   errorText,
   Icon,
   type IconName,
-  isDark,
   Link,
   Logo,
   navigate,
   Page,
   Toasts,
-  theme,
   useAction,
   useLocation,
-  useStore,
 } from "./ui.tsx";
 
 /** The old console's addresses, and the bare section roots */
@@ -207,25 +202,6 @@ function PauseControl() {
   );
 }
 
-/** Light or dark for this browser; "Match my device" stays in Settings › General. */
-function ThemeSwitch() {
-  const dark = isDark(useStore(theme));
-  return (
-    <SidebarMenuItem>
-      <Label className="flex h-8 items-center gap-2 rounded-md px-2 font-normal hover:bg-sidebar-accent">
-        <Icon name={dark ? "moon" : "sun"} size={16} />
-        <span className="flex-1">Dark mode</span>
-        <Switch
-          size="sm"
-          checked={dark}
-          className="data-[state=checked]:bg-brand"
-          onCheckedChange={(on) => theme.set(on ? "dark" : "light")}
-        />
-      </Label>
-    </SidebarMenuItem>
-  );
-}
-
 function AppSidebar() {
   const { path } = useLocation();
   const { setOpenMobile } = useSidebar();
@@ -347,7 +323,6 @@ function AppSidebar() {
       <SidebarFooter className="border-t">
         <SidebarMenu>
           <NavLink to="/settings/general" under="/settings" icon="settings" label="Settings" />
-          <ThemeSwitch />
           <PauseControl />
         </SidebarMenu>
       </SidebarFooter>
