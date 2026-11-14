@@ -59,13 +59,27 @@ export async function deleteChat(id: string): Promise<void> {
   });
   if (!ok) return;
   await call("task.delete", { id });
+  remember(`draft.${id}`, "");
   if (location.pathname === `/chat/${id}`) navigate("/");
 }
 
-/** Unsent text per chat ("" is the new chat), kept across navigation. */
 const touch = () => matchMedia("(pointer: coarse)").matches;
 
-const drafts = new Map<string, string>();
+/** Per-browser memory that survives navigation and reloads; a blocked storage only forgets. */
+const remembered = <T,>(key: string, fallback: T): T => {
+  try {
+    const v = localStorage.getItem(`hortus.${key}`);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+};
+const remember = (key: string, v: unknown) => {
+  try {
+    if (v === "" || v === null) localStorage.removeItem(`hortus.${key}`);
+    else localStorage.setItem(`hortus.${key}`, JSON.stringify(v));
+  } catch {}
+};
 
 function Composer({
   draftKey,
@@ -89,14 +103,14 @@ function Composer({
   autoFocus?: boolean;
   tools?: ReactNode;
 }) {
-  const [value, setValue] = useState(drafts.get(draftKey) ?? "");
+  const [value, setValue] = useState(() => remembered(`draft.${draftKey}`, ""));
   const ref = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
   useEffect(() => {
-    drafts.set(draftKey, value);
+    remember(`draft.${draftKey}`, value);
   }, [draftKey, value]);
   useLayoutEffect(() => {
     const t = ref.current;
@@ -108,7 +122,7 @@ function Composer({
     const text = value.trim();
     if (!text || busy || blocked) return;
     setValue("");
-    drafts.delete(draftKey);
+    remember(`draft.${draftKey}`, "");
     // a failed send gives the text back
     if ((await onSend(text)) === undefined) setValue(text);
   };
@@ -322,15 +336,24 @@ export function Home() {
   const creds = useCall<Credential[]>("credential.list", {}, ["settings"]);
   const tasks = useCall<Task[]>("task.list", {}, ["tasks"]);
   const pending = useCall<Approval[]>("approval.list", {}, ["approvals"]);
-  const [cwd, setCwd] = useState("");
+  const [cwd, setCwd] = useState(() => remembered("cwd", ""));
+  useEffect(() => remember("cwd", cwd), [cwd]);
   // none: the chat follows the Workers' model in Settings
-  const [pick, setPick] = useState<ModelPick | null>(null);
+  const [pick, setPick] = useState<ModelPick | null>(() => remembered("pick", null));
+  useEffect(() => remember("pick", pick), [pick]);
   const [open, opening] = useAction(async (text: string) => {
     const r = await call<{ id: string }>("task.open", { text, ...(cwd ? { cwd } : {}), ...pick });
     navigate(`/chat/${r.id}`);
     return r;
   });
   const config = cfg.data?.config;
+  // a remembered pick whose project or credential is gone falls back to the default once the lists load
+  useEffect(() => {
+    if (config && cwd && !Object.values(config.projects ?? {}).some((p) => p.path === cwd)) setCwd("");
+  }, [config, cwd]);
+  useEffect(() => {
+    if (creds.data && pick && !creds.data.some((c) => c.name === pick.provider)) setPick(null);
+  }, [creds.data, pick]);
   const projects = Object.entries(config?.projects ?? {});
   const waiting = (pending.data ?? []).filter((a) => a.status === "pending");
   const working = (tasks.data ?? []).filter((t) => t.status === "running" || t.status === "queued");
